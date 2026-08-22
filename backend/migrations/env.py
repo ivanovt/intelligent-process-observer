@@ -14,6 +14,7 @@ _SRC_ROOT = _BACKEND_ROOT / "src"
 sys.path.insert(0, str(_SRC_ROOT))
 
 from app.core.settings import get_settings  # noqa: E402
+from app.infrastructure.persistence import models  # noqa: F401, E402
 from app.infrastructure.persistence.database import Base  # noqa: E402
 
 config = context.config

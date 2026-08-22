@@ -1,0 +1,1 @@
+"""Prometheus acquisition boundary."""
