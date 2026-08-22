@@ -1,0 +1,33 @@
+schema: spec-driven
+
+context: |
+  Project: Intelligent Process Observer, a master-thesis MVP implemented as a monorepo and modular monolith.
+  Backend: Python >=3.13, FastAPI, Pydantic, pydantic-settings, SQLAlchemy async, Alembic, PostgreSQL through Psycopg 3, uv, Ruff, and pytest.
+  Frontend: React, TypeScript, Vite, npm, and ESLint. Keep the bootstrap and implementation stack minimal.
+  Local development: WSL2 Ubuntu 22.04; Docker Engine runs in WSL; PostgreSQL runs through Docker Compose; backend and frontend run directly in WSL.
+  Architecture is authoritative under docs/architecture/. Before behavioral changes, read docs/architecture/README.md and only the relevant architecture, ADR, and contract documents.
+  Architecture precedence: newer ADR > current concept/architecture/contract document > older example/working note.
+  Open or Deferred architecture items are not implicit requirements. Stop and request a decision when correct implementation depends on a missing, open, deferred, or conflicting architectural decision.
+  Architecture documents are read-only for development agents unless the user explicitly approves an architecture update.
+  OpenSpec defines implementation behavior and concrete changes; it must not replace or duplicate the architecture package.
+  Small mechanical and unambiguous changes may bypass OpenSpec. New or changed behavior, contracts, interactions, lifecycle semantics, or acceptance criteria require an OpenSpec change.
+  OpenSpec artifacts, code, repository instructions, and development documentation are written in English. Existing architecture documents may remain in Bulgarian.
+  Human approval is required before implementation/apply. Once approved, scope and behavioral semantics are frozen until the user explicitly approves a revision.
+  Do not add, remove, or replace dependencies without explicit user approval.
+
+rules:
+  proposal:
+    - Add an Architecture References section listing relevant docs/architecture paths and ADRs, or state N/A when none apply.
+    - Keep the change bounded to one coherent feature or behavioral change.
+    - Do not invent behavior to resolve Open or Deferred architecture decisions.
+  specs:
+    - Describe observable behavior and acceptance scenarios rather than implementation detail.
+    - Use explicit GIVEN/WHEN/THEN scenarios where applicable.
+    - Do not restate architecture documents; reference them from proposal/design when needed.
+  design:
+    - Add an Architecture References section and explain how the design conforms to those constraints.
+    - Surface unresolved architecture questions instead of choosing silently.
+    - Keep implementation choices within the approved stack unless the user explicitly approves a dependency or stack change.
+  tasks:
+    - Include tests or verification for changed behavior.
+    - Include make check as the final local verification step before archive and pull request.
