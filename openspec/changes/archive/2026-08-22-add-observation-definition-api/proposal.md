@@ -6,7 +6,8 @@ The MVP needs persisted, engineer-authored Observation configuration before it c
 
 - Add atomic creation and persisted reads for predefined Observation definitions with owned Lenses and Metric-only Relationships.
 - Add compact linked list results, complete Observation detail, and individual Lens/Relationship detail reads.
-- Define versioned typed contracts for Metric, Alert, and Log Lens configuration, deployment capability discovery, and non-persisting Lens preflight validation.
+- Implement the versioned Metric Lens contract, Prometheus capability discovery, and non-persisting Metric preflight validation.
+- Reserve the agreed Alert and Log definition boundaries for follow-up changes without implementing their provider integrations in this change.
 - Reject invalid aggregate topology, adapter/source references, and Relationship vocabulary without partially persisting a definition.
 - Keep definitions distinct from all runs, results, policies, scheduling, and execution behavior.
 
@@ -23,8 +24,9 @@ None.
 ## Impact
 
 - Affected backend: API contracts/routes, domain validation, capability discovery, persistence/migration, and tests.
-- No frontend, Observation/Lens runtime endpoint, dependency, or architecture-document change is proposed.
-- Concrete Alert/Log preflight execution remains blocked by unresolved Jira Track and Release/Loki integration contracts; this change does not invent them.
+- No frontend, Observation/Lens runtime endpoint, or architecture-document change is proposed.
+- Promote the existing `httpx` package to a runtime dependency with version range `>=0.28,<1` for the async Prometheus adapter.
+- Alert/Jira Track and Release and Log/Loki integrations are explicitly deferred; their opaque-query/provider-adapter boundary is recorded in the design for follow-up work.
 
 ## Architecture References
 

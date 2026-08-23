@@ -6,6 +6,7 @@ requires-python = ">=3.13"
 dependencies = [
     "alembic",
     "fastapi",
+    "httpx>=0.28,<1",
     "pydantic-settings",
     "psycopg[binary]",
     "sqlalchemy",
@@ -14,7 +15,6 @@ dependencies = [
 
 [dependency-groups]
 dev = [
-    "httpx",
     "pytest",
     "ruff",
 ]

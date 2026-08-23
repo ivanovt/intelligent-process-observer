@@ -1,0 +1,1 @@
+"""Observation definition application boundary."""
