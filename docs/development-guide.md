@@ -2,6 +2,8 @@
 
 This guide defines the initial development workflow for the Intelligent Process Observer repository. It is intentionally minimal: the goal is to make local development, testing, specification, and review easy before introducing additional tooling.
 
+> **Quick contributor workflow:** See [`development-workflow.md`](development-workflow.md) for the concise OpenSpec → review → implementation → archive process and reusable skill reference. This document remains the detailed environment/setup guide.
+
 ## 1. Scope of this guide
 
 This guide starts at repository level. It assumes the host environment already provides:
@@ -476,21 +478,26 @@ The project adds two governance constraints on top of OpenSpec's mechanics:
 4. Read the relevant architecture/ADR/contract files.
 5. Explore first when the requirement is still unclear.
 6. Propose the OpenSpec change.
-7. Review proposal/specs/design/tasks.
+7. Run `$ipo-review-plan <change-id>` and correct planning findings.
 8. Obtain explicit human approval.
 9. Apply/implement the approved tasks.
-10. Run make check.
-11. Archive the OpenSpec change in the feature branch.
-12. Review the resulting openspec/specs/ and archive diff.
-13. Run make check again if archive changed validated content.
-14. Commit the completed branch.
-15. Open a PR.
-16. Let required GitHub Actions CI pass.
-17. Review code + specs + Reviewer Notes.
-18. Squash merge to main.
+10. Run `make check`.
+11. Run `$openspec-verify-change <change-id>` when the optional verify workflow is installed.
+12. Run `$ipo-review-implementation <change-id>` in a fresh reviewer context when practical.
+13. Triage findings, apply targeted fixes, and use `$ipo-verify-findings` until blocking findings are resolved or withdrawn.
+14. Archive the OpenSpec change in the feature branch.
+15. Review the resulting `openspec/specs/` and archive diff.
+16. Run `make check` again if archive changed validated content.
+17. Commit the completed branch.
+18. Open a PR.
+19. Let required GitHub Actions CI pass.
+20. Review code + specs + Reviewer Notes.
+21. Squash merge to main.
 ```
 
 The archive-before-PR convention intentionally makes one PR contain the implementation, the canonical spec update, and the archived change. This avoids an additional post-merge archive PR in a solo-development workflow.
+
+
 
 ### 12.2 Approval gate
 
@@ -518,6 +525,19 @@ STOP
 ```
 
 The agent may update task checkboxes and make local implementation choices inside approved boundaries without reopening the entire specification.
+
+### 12.3 Reusable review skills
+
+The project maintains reusable report-only review skills under `.agents/skills/ipo-*`:
+
+- `$ipo-review-plan <change-id>` — architecture/spec/design/task review before human approval;
+- `$ipo-review-implementation <change-id>` — independent implementation/code/test review before archive;
+- `$ipo-verify-findings <change-id> ...` — bounded re-check of accepted findings after targeted fixes.
+
+The optional official `$openspec-verify-change <change-id>` workflow should be enabled alongside the core OpenSpec workflows and run after implementation. Configure it with `openspec config profile`, keep the core workflows selected, enable `verify`, then run `openspec update` for the repository.
+
+Use `docs/development-workflow.md` as the concise contributor-facing process.
+
 
 ## 13. OpenSpec architecture references
 
