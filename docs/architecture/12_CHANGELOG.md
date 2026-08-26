@@ -1,5 +1,30 @@
 # Changelog
 
+## 6.3 — 2026-08-26
+
+- added ADR-159 clarifying ADR-021 with an exact pair-relative near-zero guard,
+  inclusive stable boundary, zero/zero behavior, and no absolute epsilon;
+- added ADR-160 clarifying ADR-025 with exact unknown removal, stable-neutral
+  directional projection, directional runs, `direction_changes`, and deterministic
+  oscillating/reversing/sustained/mixed priority mechanics;
+- completed the remaining Metric History implementation semantics without changing
+  the accepted History vocabulary, direction algorithm, configuration precedence, or
+  default tolerance.
+
+## 6.2 — 2026-08-26
+
+- added ADR-153 with fixed normalized deterministic Metric trend/variability rules;
+- added ADR-154 and ADR-155 with the Metric optional registry (`spike`,
+  `oscillation`, `stuck_signal`), three-attempt budget, and each-tool-once policy;
+- added ADR-156 with the opaque `dataset_ref` boundary, minimal typed agent completion,
+  usable-core agent failure semantics, and resilient insufficient-quality path;
+- added ADR-157 with partial behavior for unavailable or analytically insufficient
+  configured Metric references and primary partial-reason precedence;
+- added ADR-158 with event-time History chronology, overlapping-window eligibility,
+  deterministic ordering, and infrastructure-failure distinction;
+- narrowed the Metrics backlog to genuinely unresolved prompt wording,
+  production model/provider limits, and future Prometheus transport details.
+
 ## 6.1 — 2026-08-26
 
 - added ADR-152, selecting PydanticAI as the MVP agent-framework integration mechanism after the completed Alert and Observation Reasoning/RAG framework experiments;
