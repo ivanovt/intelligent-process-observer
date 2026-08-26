@@ -225,9 +225,9 @@ Do not invent domain tables during infrastructure/bootstrap work.
 - npm
 - ESLint
 
-Do not add a UI library, Tailwind, a frontend test framework, a Python formatter separate from Ruff, a message broker, workflow engine, distributed worker system, or agent framework during bootstrap.
+Do not add a UI library, Tailwind, a frontend test framework, a Python formatter separate from Ruff, a message broker, workflow engine, or distributed worker system during bootstrap.
 
-The application is a modular monolith. Deterministic orchestration remains plain Python/`asyncio` unless a later explicitly approved decision changes that. The agent framework remains intentionally undecided until the planned comparison experiment is completed.
+The application is a modular monolith. Deterministic orchestration remains plain Python/`asyncio` unless a later explicitly approved decision changes that. PydanticAI is the approved MVP agent-framework integration mechanism (ADR-152); it must not replace framework-neutral domain contracts, deterministic orchestration, or domain-owned execution constraints. Add its production dependency only within the approved scope of the first production agent feature that requires it.
 
 ## 12. Canonical local commands
 

@@ -1,5 +1,13 @@
 # Changelog
 
+## 6.1 — 2026-08-26
+
+- added ADR-152, selecting PydanticAI as the MVP agent-framework integration mechanism after the completed Alert and Observation Reasoning/RAG framework experiments;
+- the ADR records a human project-fit tie-break, not an experimental claim of technical superiority over LangChain;
+- retained framework-neutral domain contracts, deterministic orchestration, budgets, evidence validation, findings freeze, and retrieval constraints as the owners of runtime semantics;
+- clarified that the decision does not select a production model/provider, retrieval stack, vector database, embedding model, observability product, or evidence-reference grammar;
+- recorded the shared insufficient-knowledge/refinement validation issue as follow-up work for a future production Observation Reasoning/knowledge-retrieval feature.
+
 ## 6.0 — 2026-08-19
 
 Добавен и фиксиран Logs Architecture package:

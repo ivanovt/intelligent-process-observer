@@ -860,7 +860,7 @@ Do not add tools preemptively. Consider an addition only after a concrete need a
 - a nested `AGENTS.md` when stable subsystem-specific rules repeat;
 - stricter type/coverage/security gates when they catch a real class of defects;
 - a UI component library when real admin screens are being built;
-- an agent framework only after the planned PydanticAI vs LangChain experiment.
+- PydanticAI in the first approved production agent feature that requires it. ADR-152 records the MVP framework decision; the dependency is intentionally not added preemptively.
 
 The default answer to "might this be useful later?" is to keep the workspace simple until the need is demonstrated.
 
