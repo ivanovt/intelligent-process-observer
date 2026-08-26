@@ -287,10 +287,32 @@ intentionally common domain behavior. The isolated evidence-reference typo in
 one live response is not repeatable framework evidence. No production framework
 should be selected from this Alert spike alone.
 
-## 12. Next action
+## 12. Contemporaneous next action
 
-Run the planned Observation Reasoning / RAG framework spike before selecting a
-production framework. It should focus on bounded retrieval, multi-step context
-handling, native trajectory inspection, and deterministic testing of retrieval
-tool loops. A human can then review combined framework evidence and decide
-whether a production framework ADR is warranted.
+At the time this Alert-only report was completed, the next action was the
+planned Observation Reasoning / RAG framework spike. It subsequently ran; the
+current human decision is recorded in the next section and ADR-152.
+
+## 13. Post-experiment human architecture decision
+
+The Alert experiment conclusion above remains **CLOSE / INCONCLUSIVE**. It is
+not retrospectively a PydanticAI victory. The subsequent Observation Reasoning /
+RAG spike also remained experimentally inconclusive. Both experiments showed
+that PydanticAI and LangChain can satisfy the required bounded-agent semantics
+when the critical contracts and execution constraints remain framework-neutral.
+
+After review of both completed spikes, the human architecture decision selected
+PydanticAI for the MVP as a project-fit tie-break: the backend already uses
+Pydantic for typed contracts, PydanticAI binds structured outputs directly to
+Pydantic models, adapter implementation sizes were comparable, and LangChain's
+broader orchestration abstraction showed no compensating benefit in the MVP
+scenarios. Budgets, evidence validation, findings freeze, retrieval constraints,
+and other critical runtime semantics remain domain-owned rather than
+framework-owned.
+
+LangChain remains a technically viable alternative. The decision does not select
+a production model, provider, vector database, embedding model, RAG backend,
+retrieval-ranking strategy, observability product, or production
+evidence-reference grammar. See [`framework_decision.md`](framework_decision.md)
+and ADR-152 for the authoritative decision record and the shared Reasoning/RAG
+refinement follow-up.

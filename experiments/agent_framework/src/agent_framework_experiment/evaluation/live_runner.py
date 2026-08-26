@@ -4,9 +4,7 @@ from __future__ import annotations
 
 import argparse
 import asyncio
-import json
 import os
-import re
 from collections.abc import Callable
 from datetime import UTC, datetime
 from pathlib import Path
@@ -17,6 +15,7 @@ from agent_framework_experiment.agents.pydantic_ai import PydanticAIAlertAnalysi
 from agent_framework_experiment.domain.contracts import AlertAnalysisInput, ExperimentSettings
 from agent_framework_experiment.evaluation.evaluator import evaluate_live_result
 from agent_framework_experiment.fixtures.cases import ALL_CASES, ExperimentCase
+from agent_framework_experiment.shared.runtime import checkpoint_json, sanitize_error_detail
 
 
 class LiveAgent(Protocol):
@@ -62,14 +61,6 @@ async def run_case(
     return outcomes
 
 
-def sanitize_error_detail(detail: str) -> str:
-    """Keep provider failure evidence without preserving account-identifying metadata."""
-
-    redacted = re.sub(r"user_[A-Za-z0-9_-]+", "[REDACTED_USER]", detail)
-    redacted = re.sub(r"sk-[A-Za-z0-9_-]+", "[REDACTED_KEY]", redacted)
-    return redacted[:1_000]
-
-
 async def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--mode", choices=("preflight", "matrix"), default="matrix")
@@ -100,8 +91,7 @@ async def main() -> int:
     output.parent.mkdir(parents=True, exist_ok=True)
 
     def checkpoint() -> None:
-        report["updated_at"] = datetime.now(UTC).isoformat()
-        output.write_text(json.dumps(report, indent=2) + "\n", encoding="utf-8")
+        checkpoint_json(output, report)
 
     checkpoint()
     for framework, agent in _agents(settings).items():

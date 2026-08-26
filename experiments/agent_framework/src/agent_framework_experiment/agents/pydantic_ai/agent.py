@@ -2,13 +2,10 @@
 
 from __future__ import annotations
 
-import os
 from collections.abc import Iterable
 
-from openai import AsyncOpenAI
 from pydantic_ai import Agent
 from pydantic_ai.models.openai import OpenAIChatModel, OpenAIChatModelSettings
-from pydantic_ai.providers.openai import OpenAIProvider
 
 from agent_framework_experiment.agents.common import render_input, run_scripted_trajectory
 from agent_framework_experiment.domain.contracts import (
@@ -19,22 +16,17 @@ from agent_framework_experiment.domain.contracts import (
     ToolExecutionResult,
 )
 from agent_framework_experiment.domain.instructions import SYSTEM_INSTRUCTIONS
+from agent_framework_experiment.shared.openrouter import (
+    build_pydantic_openrouter_model,
+    provider_preferences,
+)
 from agent_framework_experiment.tools.executor import AnalyticalToolExecutor
 
 
 def build_model(settings: ExperimentSettings, *, api_key: str | None = None) -> OpenAIChatModel:
     """Build the OpenRouter-compatible Chat Completions client with no retries."""
 
-    client = AsyncOpenAI(
-        api_key=api_key or os.environ.get("OPENROUTER_KEY"),
-        base_url=settings.base_url,
-        timeout=settings.model_timeout_seconds,
-        max_retries=settings.provider_retries,
-    )
-    return OpenAIChatModel(
-        settings.model,
-        provider=OpenAIProvider(openai_client=client),
-    )
+    return build_pydantic_openrouter_model(settings, api_key=api_key)
 
 
 class PydanticAIAlertAnalysisAgent:
@@ -64,7 +56,7 @@ class PydanticAIAlertAnalysisAgent:
                 max_tokens=self.settings.max_output_tokens,
                 parallel_tool_calls=self.settings.parallel_tool_calls,
                 openai_reasoning_effort=self.settings.reasoning_effort,
-                extra_body={"provider": self._provider_preferences()},
+                extra_body={"provider": provider_preferences(self.settings)},
             ),
             retries=self.settings.framework_retries,
             tool_timeout=self.settings.analytical_tool_timeout_seconds,
@@ -80,14 +72,6 @@ class PydanticAIAlertAnalysisAgent:
         """Use the common canonical input and experiment-local evidence catalog."""
 
         return render_input(input_data)
-
-    def _provider_preferences(self) -> dict[str, object]:
-        preferences: dict[str, object] = {
-            "allow_fallbacks": self.settings.allow_provider_fallbacks,
-        }
-        if self.settings.provider_order:
-            preferences["order"] = list(self.settings.provider_order)
-        return preferences
 
     async def analyze(
         self,

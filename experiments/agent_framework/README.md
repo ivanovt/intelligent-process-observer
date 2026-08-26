@@ -2,7 +2,13 @@
 
 This isolated experiment compares PydanticAI and LangChain for the bounded Alert
 Analysis Agent, using one fixed model configuration for both adapters. It is not
-production application code and does not select a production framework on its own.
+production application code and did not select a production framework on its own.
+
+The Alert spike conclusion remains **CLOSE / INCONCLUSIVE**. The subsequent
+Observation Reasoning / RAG spike also remained experimentally inconclusive.
+The separate human architecture tie-break selected PydanticAI for the MVP;
+see [`framework_decision.md`](framework_decision.md) and ADR-152. That decision
+does not reinterpret either experiment as a PydanticAI benchmark victory.
 
 ## Scope and guardrails
 

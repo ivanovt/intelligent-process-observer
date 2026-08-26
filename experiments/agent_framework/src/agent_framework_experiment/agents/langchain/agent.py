@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import os
 from collections.abc import Iterable
 
 from langchain.agents import create_agent
@@ -19,31 +18,14 @@ from agent_framework_experiment.domain.contracts import (
     ToolExecutionResult,
 )
 from agent_framework_experiment.domain.instructions import SYSTEM_INSTRUCTIONS
+from agent_framework_experiment.shared.openrouter import build_langchain_openrouter_model
 from agent_framework_experiment.tools.executor import AnalyticalToolExecutor
 
 
 def build_model(settings: ExperimentSettings, *, api_key: str | None = None) -> ChatOpenAI:
     """Build OpenRouter-compatible ChatOpenAI with explicit client retry settings."""
 
-    return ChatOpenAI(
-        model=settings.model,
-        api_key=api_key or os.environ.get("OPENROUTER_KEY"),
-        base_url=settings.base_url,
-        use_responses_api=False,
-        reasoning_effort=settings.reasoning_effort,
-        max_tokens=settings.max_output_tokens,
-        timeout=settings.model_timeout_seconds,
-        max_retries=settings.provider_retries,
-        model_kwargs={"parallel_tool_calls": settings.parallel_tool_calls},
-        extra_body={"provider": provider_preferences(settings)},
-    )
-
-
-def provider_preferences(settings: ExperimentSettings) -> dict[str, object]:
-    preferences: dict[str, object] = {"allow_fallbacks": settings.allow_provider_fallbacks}
-    if settings.provider_order:
-        preferences["order"] = list(settings.provider_order)
-    return preferences
+    return build_langchain_openrouter_model(settings, api_key=api_key)
 
 
 class LangChainAlertAnalysisAgent:

@@ -20,10 +20,10 @@
 
 **Status:** Accepted
 
-**Context**  
+**Context**
 Системата трябва да наблюдава един процес/система от различни гледни точки — метрики, аларми, логове и други източници.
 
-**Decision**  
+**Decision**
 `Observation` е основната конфигурационна единица и съдържа множество `Lens` конфигурации.
 
 **Consequences**
@@ -2448,6 +2448,82 @@ Observation Reasoning не може да използва `LogAnalysisResult.kno
 - запазва глобалното правило findings-before-knowledge;
 - избягва duplicate retrieval, когато Lens-local RAG вече е намерил релевантна документация;
 - provenance остава задължителна.
+
+---
+
+## ADR-152 — Select PydanticAI as the MVP agent framework
+
+**Status:** Accepted
+
+**Context**
+Intelligent Process Observer requires bounded LLM agents with typed inputs and
+outputs, deterministic domain-owned execution constraints, optional tools, and
+later bounded knowledge retrieval. PydanticAI and LangChain were evaluated in
+two controlled engineering spikes: the Alert Analysis Agent spike and the
+Observation Reasoning / RAG spike. Both frameworks satisfied the relevant
+architecture. Neither spike demonstrated a defensible, material, repeatable
+technical advantage for either framework, so a project-fit tie-break is
+required.
+
+**Decision**
+Use PydanticAI for production MVP agent implementations.
+
+- Keep domain contracts, tools, budgets, orchestration rules, persistence
+  contracts, and execution invariants framework-neutral.
+- Treat PydanticAI as an adapter/integration mechanism, not the owner of domain
+  workflow semantics.
+- Use Pydantic models as the typed agent contract boundary.
+- Do not allow framework-specific abstractions to leak unnecessarily into
+  domain or application layers.
+
+**Rationale**
+- direct fit with the existing Pydantic-based backend contract strategy;
+- direct structured-output model binding;
+- lower conceptual surface for current MVP needs;
+- no compensating LangChain advantage was demonstrated in the evaluated
+  workflows;
+- a simpler dependency and abstraction story for a modular-monolith MVP;
+- framework-neutral boundaries keep a future migration possible.
+
+**Consequences**
+
+Positive:
+- one agent framework is fixed for MVP implementation;
+- production agent work can proceed without another framework-comparison gate;
+- Pydantic contracts remain central;
+- architectural ambiguity is reduced;
+- experiment-only adapters are no longer production decision blockers.
+
+Trade-offs:
+- LangChain-specific graph/orchestration capabilities are not adopted for the
+  MVP;
+- future advanced workflows may require reassessing PydanticAI sufficiency;
+- framework migration remains a non-zero cost even with framework-neutral
+  boundaries.
+
+**Rejected alternative — LangChain**
+LangChain is technically viable and passed the relevant experiment semantics.
+It is not selected because the evaluated MVP scenarios did not demonstrate
+enough benefit to justify its broader abstraction surface. This is not a claim
+that LangChain is technically inferior.
+
+**Scope**
+This ADR selects only `agent framework = PydanticAI`. It does not select a
+production LLM model or provider, vector database, embedding model, RAG backend,
+retrieval-ranking strategy, observability product, or production
+evidence-reference grammar. GPT-5.6 Terra and OpenRouter were experiment
+configuration only. PydanticAI is not added as a production dependency by this
+ADR; that change belongs to the first approved production agent feature that
+requires it.
+
+**Follow-up**
+The experiments exposed a shared Observation Reasoning / RAG design concern:
+the boundary between partially useful/insufficient retrieval, refinement,
+knowledge availability, and final-hypothesis `knowledge_refs` validation. It
+occurred across both framework variants and is not framework-selection evidence.
+A future production Observation Reasoning/knowledge-retrieval change must make
+that behavior explicit without promoting the experiment-local convention to a
+production rule prematurely.
 
 ---
 
