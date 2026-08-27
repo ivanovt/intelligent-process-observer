@@ -4,7 +4,7 @@
 **Artifact type:** Non-normative execution plan
 **Approved OpenSpec change:** `add-metrics-analysis-pipeline`
 **Planning branch:** `feature/add-metrics-analysis-pipeline`
-**Implementation candidate branch:** Not created; creation is outside this refinement pass.
+**Implementation candidate branch:** `experiment/codex-add-metrics-analysis-pipeline`
 
 ## Human approval record
 
@@ -67,7 +67,7 @@ VS-06 has both VS-03 and VS-05 as direct dependencies. VS-09 has VS-04, VS-06, a
 
 | Slice | Goal | Depends on | Risk | Status | Commit | Handoff |
 |---|---|---|---|---|---|---|
-| VS-01 | Persist one representative completed-sufficient good-series Metric run end to end | none | high-risk | PLANNED | - | - |
+| VS-01 | Persist one representative completed-sufficient good-series Metric run end to end | none | high-risk | IN_PROGRESS | - | - |
 | VS-02 | Persist degraded and completed-insufficient current-quality behavior | VS-01 | high-risk | PLANNED | - | - |
 | VS-03 | Persist every mandatory current-failure outcome | VS-02 | high-risk | PLANNED | - | - |
 | VS-04 | Add independent reference comparison and reference-caused partial persistence | VS-03 | high-risk | PLANNED | - | - |
