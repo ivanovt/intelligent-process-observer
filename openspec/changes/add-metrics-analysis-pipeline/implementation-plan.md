@@ -1,10 +1,18 @@
 # Implementation Plan — add-metrics-analysis-pipeline
 
-**Status:** DRAFT
+**Status:** APPROVED
 **Artifact type:** Non-normative execution plan
 **Approved OpenSpec change:** `add-metrics-analysis-pipeline`
 **Planning branch:** `feature/add-metrics-analysis-pipeline`
 **Implementation candidate branch:** Not created; creation is outside this refinement pass.
+
+## Human approval record
+
+- Implementation plan approved for execution.
+- Approved dependency scope for VS-08:
+  `pydantic-ai-slim>=2,<3`
+- Provider extras: not approved / must not be added.
+- This records an already-made dependency approval; it does not create a new decision.
 
 ## Authority and constraints
 
