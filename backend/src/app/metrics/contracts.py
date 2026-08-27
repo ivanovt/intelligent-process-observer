@@ -98,6 +98,61 @@ class MetricSeriesAvailable(StrictMetricModel):
     source: Literal["prometheus"]
 
 
+class MetricSeriesUnavailable(StrictMetricModel):
+    """A provider port could not make the requested series available."""
+
+    state: Literal["unavailable"] = "unavailable"
+    diagnostic: str = Field(min_length=1, max_length=512)
+
+
+class MetricSeriesAcquisitionFailure(StrictMetricModel):
+    """A provider port failed while acquiring the requested series."""
+
+    state: Literal["failure"] = "failure"
+    diagnostic: str = Field(min_length=1, max_length=512)
+
+
+class MetricSeriesAcquisitionTimeout(StrictMetricModel):
+    """A provider port timed out while acquiring the requested series."""
+
+    state: Literal["timeout"] = "timeout"
+    diagnostic: str = Field(min_length=1, max_length=512)
+
+
+MetricSeriesAcquisitionOutcome = (
+    MetricSeriesAvailable
+    | MetricSeriesUnavailable
+    | MetricSeriesAcquisitionFailure
+    | MetricSeriesAcquisitionTimeout
+)
+
+
+class MetricCurrentSeriesMalformed(StrictMetricModel):
+    """Current series validation rejected duplicate or out-of-window samples."""
+
+    category: Literal["series_malformed"] = "series_malformed"
+    diagnostic: str = Field(min_length=1, max_length=512)
+
+
+class MetricMandatoryAnalysisFailure(StrictMetricModel):
+    """An unexpected mandatory calculation, semantic, or result-build failure."""
+
+    category: Literal["mandatory_analysis"] = "mandatory_analysis"
+    diagnostic: str = Field(min_length=1, max_length=512)
+
+
+class MetricCurrentAcquisitionFailed(StrictMetricModel):
+    """A current provider outcome could not produce usable data."""
+
+    category: Literal["acquisition"] = "acquisition"
+    diagnostic: str = Field(min_length=1, max_length=512)
+
+
+MetricCurrentFailure = (
+    MetricCurrentAcquisitionFailed | MetricCurrentSeriesMalformed | MetricMandatoryAnalysisFailure
+)
+
+
 class MetricEvidence(StrictMetricModel):
     mean: FiniteFloat
     std: FiniteFloat = Field(ge=0)
@@ -245,6 +300,35 @@ class MetricCompletedStatus(StrictMetricModel):
     state: Literal["completed"] = "completed"
 
 
+class CurrentMetricAcquisitionFailedError(StrictMetricModel):
+    code: Literal["current_metric_acquisition_failed"] = "current_metric_acquisition_failed"
+    message: Literal["Current metric data acquisition failed."] = (
+        "Current metric data acquisition failed."
+    )
+
+
+class CurrentMetricSeriesMalformedError(StrictMetricModel):
+    code: Literal["current_metric_series_malformed"] = "current_metric_series_malformed"
+    message: Literal["Current metric series is malformed."] = "Current metric series is malformed."
+
+
+class MandatoryMetricAnalysisFailedError(StrictMetricModel):
+    code: Literal["mandatory_metric_analysis_failed"] = "mandatory_metric_analysis_failed"
+    message: Literal["Mandatory metric analysis failed."] = "Mandatory metric analysis failed."
+
+
+MetricFailedError = (
+    CurrentMetricAcquisitionFailedError
+    | CurrentMetricSeriesMalformedError
+    | MandatoryMetricAnalysisFailedError
+)
+
+
+class MetricFailedStatus(StrictMetricModel):
+    state: Literal["failed"] = "failed"
+    error: Annotated[MetricFailedError, Field(discriminator="code")]
+
+
 class MetricCurrentEvidence(StrictMetricModel):
     mean: FiniteFloat
     std: FiniteFloat = Field(ge=0)
@@ -276,6 +360,17 @@ class CompletedInsufficientMetricResult(StrictMetricModel):
     status: MetricCompletedStatus = Field(default_factory=MetricCompletedStatus)
     analysis_window: MetricAnalysisWindow
     data_quality: Literal["insufficient"]
+    provenance: MetricResultProvenance
+
+
+class FailedMetricResult(StrictMetricModel):
+    """Traceability-only result for an unproducible mandatory current core."""
+
+    schema_version: Literal["1.0"] = "1.0"
+    lens_type: Literal["metric"] = "metric"
+    identity: MetricIdentity
+    status: MetricFailedStatus
+    analysis_window: MetricAnalysisWindow
     provenance: MetricResultProvenance
 
 

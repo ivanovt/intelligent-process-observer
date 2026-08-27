@@ -15,6 +15,10 @@ from app.metrics.contracts import (
 )
 
 
+class MetricSeriesMalformedError(ValueError):
+    """The series violates the provider-data contract before quality assessment."""
+
+
 def prepare_series(
     samples: tuple[MetricSample, ...], window: MetricAnalysisWindow
 ) -> PreparedSeries:
@@ -25,10 +29,10 @@ def prepare_series(
     """
 
     if any(sample.timestamp < window.from_ or sample.timestamp > window.to for sample in samples):
-        raise ValueError("Metric sample is outside the analysis window")
+        raise MetricSeriesMalformedError("Metric sample is outside the analysis window")
     ordered_samples = tuple(sorted(samples, key=lambda sample: sample.timestamp))
     if len({sample.timestamp for sample in ordered_samples}) != len(ordered_samples):
-        raise ValueError("Metric samples must have unique timestamps")
+        raise MetricSeriesMalformedError("Metric samples must have unique timestamps")
     ordered = tuple(sample for sample in ordered_samples if math.isfinite(sample.value))
     if len(ordered) < 3:
         return PreparedInsufficientSeries(data_quality="insufficient", samples=ordered)

@@ -14,9 +14,17 @@ from app.infrastructure.persistence.runtime_contracts import (
 from app.metrics.contracts import (
     CompletedInsufficientMetricResult,
     CompletedSufficientMetricResult,
+    CurrentMetricAcquisitionFailedError,
+    CurrentMetricSeriesMalformedError,
+    FailedMetricResult,
+    MandatoryMetricAnalysisFailedError,
+    MetricCurrentAcquisitionFailed,
     MetricCurrentEvidence,
+    MetricCurrentFailure,
+    MetricCurrentSeriesMalformed,
     MetricCurrentState,
     MetricEvidenceSection,
+    MetricFailedStatus,
     MetricLensExecutionContext,
     MetricResultProvenance,
     MetricSemantics,
@@ -81,6 +89,37 @@ class MetricResultBuilder:
         envelope = LensAnalysisResultInput(
             result_type=LensType.METRIC,
             status=LensRunStatus.COMPLETED,
+            schema_version=result.schema_version,
+            identity=LensResultIdentity(**context.identity.model_dump()),
+            provenance=result.provenance.model_dump(mode="json"),
+            payload=payload,
+        )
+        return result, envelope
+
+    def failed(
+        self, context: MetricLensExecutionContext, failure: MetricCurrentFailure
+    ) -> tuple[FailedMetricResult, LensAnalysisResultInput]:
+        """Build the exact public failure from a typed, non-public stage outcome."""
+
+        if isinstance(failure, MetricCurrentAcquisitionFailed):
+            error = CurrentMetricAcquisitionFailedError()
+        elif isinstance(failure, MetricCurrentSeriesMalformed):
+            error = CurrentMetricSeriesMalformedError()
+        else:
+            error = MandatoryMetricAnalysisFailedError()
+        result = FailedMetricResult(
+            identity=context.identity,
+            status=MetricFailedStatus(error=error),
+            analysis_window=context.analysis_window,
+            provenance=MetricResultProvenance(
+                source=context.provider_scope.adapter_type,
+                generated_at=self._clock(),
+            ),
+        )
+        payload = result.model_dump(mode="json", by_alias=True)
+        envelope = LensAnalysisResultInput(
+            result_type=LensType.METRIC,
+            status=LensRunStatus.FAILED,
             schema_version=result.schema_version,
             identity=LensResultIdentity(**context.identity.model_dump()),
             provenance=result.provenance.model_dump(mode="json"),

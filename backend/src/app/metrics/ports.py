@@ -11,14 +11,14 @@ from app.metrics.contracts import (
     MetricHistoryEmpty,
     MetricLensExecutionContext,
     MetricProviderScope,
-    MetricSeriesAvailable,
+    MetricSeriesAcquisitionOutcome,
 )
 
 
 class MetricSeriesProvider(Protocol):
     async def acquire(
         self, scope: MetricProviderScope, window: MetricAnalysisWindow
-    ) -> MetricSeriesAvailable: ...
+    ) -> MetricSeriesAcquisitionOutcome: ...
 
 
 class MetricsAnalysisAgent(Protocol):
