@@ -67,7 +67,7 @@ VS-06 has both VS-03 and VS-05 as direct dependencies. VS-09 has VS-04, VS-06, a
 
 | Slice | Goal | Depends on | Risk | Status | Commit | Handoff |
 |---|---|---|---|---|---|---|
-| VS-01 | Persist one representative completed-sufficient good-series Metric run end to end | none | high-risk | IN_PROGRESS | - | - |
+| VS-01 | Persist one representative completed-sufficient good-series Metric run end to end | none | high-risk | COMPLETE | 54fc2de | `implementation/VS-01-handoff.md` |
 | VS-02 | Persist degraded and completed-insufficient current-quality behavior | VS-01 | high-risk | PLANNED | - | - |
 | VS-03 | Persist every mandatory current-failure outcome | VS-02 | high-risk | PLANNED | - | - |
 | VS-04 | Add independent reference comparison and reference-caused partial persistence | VS-03 | high-risk | PLANNED | - | - |
