@@ -14,13 +14,17 @@ from app.infrastructure.persistence.runtime_contracts import LensRunStatus
 from app.metrics.contracts import (
     FIXED_ALLOWED_TOOLS,
     MetricAgentCompletion,
+    MetricAgentInsufficientRequest,
+    MetricAgentOperationalFailure,
     MetricAgentUsableRequest,
     MetricLensExecutionContext,
     MetricSemantics,
-    PreparedGoodSeries,
+    PreparedInsufficientSeries,
+    PreparedSeries,
+    PreparedUsableSeries,
 )
 from app.metrics.ports import MetricHistoryReader, MetricsAnalysisAgent, MetricSeriesProvider
-from app.metrics.preprocessing import prepare_good_series
+from app.metrics.preprocessing import prepare_series
 from app.metrics.result_builder import MetricResultBuilder
 from app.metrics.semantics import semanticize_mandatory
 
@@ -30,9 +34,10 @@ PhaseRecorder = Callable[[str], None]
 @dataclass(frozen=True)
 class MetricPreTransactionAnalysis:
     context: MetricLensExecutionContext
-    prepared: PreparedGoodSeries
-    semantics: MetricSemantics
-    dataset_ref: str
+    prepared: PreparedSeries
+    semantics: MetricSemantics | None
+    dataset_ref: str | None
+    insufficient_agent_outcome: MetricAgentCompletion | MetricAgentOperationalFailure | None
 
 
 class MetricAnalysisPipeline:
@@ -61,16 +66,37 @@ class MetricAnalysisPipeline:
         self._record_phase("provider_acquisition")
         available = await self._provider.acquire(context.provider_scope, context.analysis_window)
         self._record_phase("current_preparation")
-        prepared = prepare_good_series(available.samples, context.analysis_window)
+        prepared = prepare_series(available.samples, context.analysis_window)
+        if isinstance(prepared, PreparedInsufficientSeries):
+            request = MetricAgentInsufficientRequest(
+                identity=context.identity,
+                analysis_window=context.analysis_window,
+                data_quality="insufficient",
+            )
+            self._record_phase("agent_execution")
+            try:
+                outcome = await self._agent.complete(request)
+                completion = MetricAgentCompletion.model_validate(outcome)
+            except Exception:
+                completion = MetricAgentOperationalFailure()
+            return MetricPreTransactionAnalysis(
+                context=context,
+                prepared=prepared,
+                semantics=None,
+                dataset_ref=None,
+                insufficient_agent_outcome=completion,
+            )
+
+        usable_prepared: PreparedUsableSeries = prepared
         self._record_phase("mandatory_semanticization")
-        semantics = semanticize_mandatory(prepared, context.analysis_window)
+        semantics = semanticize_mandatory(usable_prepared, context.analysis_window)
         dataset_ref = uuid4().hex
         request = MetricAgentUsableRequest(
             identity=context.identity,
             analysis_window=context.analysis_window,
             analysis_objectives=context.analysis_objectives,
-            data_quality="good",
-            evidence=prepared.evidence,
+            data_quality=usable_prepared.data_quality,
+            evidence=usable_prepared.evidence,
             semantics=semantics,
             allowed_tools=FIXED_ALLOWED_TOOLS,
             dataset_ref=dataset_ref,
@@ -79,7 +105,11 @@ class MetricAnalysisPipeline:
         completion = await self._agent.complete(request)
         MetricAgentCompletion.model_validate(completion)
         return MetricPreTransactionAnalysis(
-            context=context, prepared=prepared, semantics=semantics, dataset_ref=dataset_ref
+            context=context,
+            prepared=usable_prepared,
+            semantics=semantics,
+            dataset_ref=dataset_ref,
+            insufficient_agent_outcome=None,
         )
 
     async def persist_terminal(
@@ -92,11 +122,16 @@ class MetricAnalysisPipeline:
 
         if lens_run.status != LensRunStatus.RUNNING.value:
             raise ValueError("Metric pipeline requires an already-running LensRun")
-        self._record_phase("history_read")
-        await self._history_reader.load_empty(session, analysis.context)
-        _, envelope = self._result_builder.completed_sufficient(
-            analysis.context, analysis.prepared, analysis.semantics
-        )
+        if isinstance(analysis.prepared, PreparedInsufficientSeries):
+            _, envelope = self._result_builder.completed_insufficient(analysis.context)
+        else:
+            self._record_phase("history_read")
+            await self._history_reader.load_empty(session, analysis.context)
+            if analysis.semantics is None:
+                raise RuntimeError("usable Metric analysis requires mandatory semantics")
+            _, envelope = self._result_builder.completed_sufficient(
+                analysis.context, analysis.prepared, analysis.semantics
+            )
         self._record_phase("lens_run_transition")
         await self._repository.advance_lens_run(session, lens_run, LensRunStatus.COMPLETED)
         self._record_phase("artifact_insertion_flush")

@@ -83,7 +83,9 @@ class MetricLensExecutionContext(StrictMetricModel):
 
 class MetricSample(StrictMetricModel):
     timestamp: datetime
-    value: FiniteFloat
+    # Acquisition data deliberately admits non-finite values.  Preparation owns
+    # their deterministic removal; no public Metric evidence can contain them.
+    value: float
 
     @field_validator("timestamp")
     @classmethod
@@ -132,6 +134,24 @@ class PreparedGoodSeries(StrictMetricModel):
     residuals: tuple[FiniteFloat, ...]
 
 
+class PreparedDegradedSeries(StrictMetricModel):
+    data_quality: Literal["degraded"]
+    samples: tuple[MetricSample, ...]
+    evidence: MetricEvidence
+    residuals: tuple[FiniteFloat, ...]
+
+
+class PreparedInsufficientSeries(StrictMetricModel):
+    """A successful quality determination with no mandatory analytical core."""
+
+    data_quality: Literal["insufficient"]
+    samples: tuple[MetricSample, ...]
+
+
+PreparedUsableSeries = PreparedGoodSeries | PreparedDegradedSeries
+PreparedSeries = PreparedUsableSeries | PreparedInsufficientSeries
+
+
 class SpikeToolDescriptor(StrictMetricModel):
     name: Literal["spike"] = "spike"
     capability: Literal["isolated_extreme_detection"] = "isolated_extreme_detection"
@@ -166,7 +186,7 @@ class MetricAgentUsableRequest(StrictMetricModel):
     identity: MetricIdentity
     analysis_window: MetricAnalysisWindow
     analysis_objectives: tuple[str, ...]
-    data_quality: Literal["good"]
+    data_quality: Literal["good", "degraded"]
     evidence: MetricEvidence
     semantics: MetricSemantics
     allowed_tools: MetricToolDescriptors
@@ -180,8 +200,24 @@ class MetricAgentUsableRequest(StrictMetricModel):
         return value
 
 
+class MetricAgentInsufficientRequest(StrictMetricModel):
+    identity: MetricIdentity
+    analysis_window: MetricAnalysisWindow
+    data_quality: Literal["insufficient"]
+
+
 class MetricAgentCompletion(StrictMetricModel):
     state: Literal["completed"] = "completed"
+
+
+class MetricAgentOperationalFailure(StrictMetricModel):
+    """Transient insufficient-agent failure; it never becomes public result data."""
+
+    state: Literal["operational_failure"] = "operational_failure"
+
+
+MetricAgentRequest = MetricAgentUsableRequest | MetricAgentInsufficientRequest
+MetricAgentOutcome = MetricAgentCompletion | MetricAgentOperationalFailure
 
 
 class MetricHistoryEmpty(StrictMetricModel):
@@ -227,9 +263,19 @@ class CompletedSufficientMetricResult(StrictMetricModel):
     identity: MetricIdentity
     status: MetricCompletedStatus = Field(default_factory=MetricCompletedStatus)
     analysis_window: MetricAnalysisWindow
-    data_quality: Literal["good"]
+    data_quality: Literal["good", "degraded"]
     current_state: MetricCurrentState
     evidence: MetricEvidenceSection
+    provenance: MetricResultProvenance
+
+
+class CompletedInsufficientMetricResult(StrictMetricModel):
+    schema_version: Literal["1.0"] = "1.0"
+    lens_type: Literal["metric"] = "metric"
+    identity: MetricIdentity
+    status: MetricCompletedStatus = Field(default_factory=MetricCompletedStatus)
+    analysis_window: MetricAnalysisWindow
+    data_quality: Literal["insufficient"]
     provenance: MetricResultProvenance
 
 

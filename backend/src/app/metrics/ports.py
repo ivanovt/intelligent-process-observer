@@ -5,8 +5,8 @@ from __future__ import annotations
 from typing import Protocol
 
 from app.metrics.contracts import (
-    MetricAgentCompletion,
-    MetricAgentUsableRequest,
+    MetricAgentOutcome,
+    MetricAgentRequest,
     MetricAnalysisWindow,
     MetricHistoryEmpty,
     MetricLensExecutionContext,
@@ -22,7 +22,7 @@ class MetricSeriesProvider(Protocol):
 
 
 class MetricsAnalysisAgent(Protocol):
-    async def complete(self, request: MetricAgentUsableRequest) -> MetricAgentCompletion: ...
+    async def complete(self, request: MetricAgentRequest) -> MetricAgentOutcome: ...
 
 
 class MetricHistoryReader(Protocol):

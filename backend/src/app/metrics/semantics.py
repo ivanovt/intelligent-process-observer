@@ -9,12 +9,12 @@ from app.metrics.contracts import (
     MetricSemantics,
     MetricTrend,
     MetricVariability,
-    PreparedGoodSeries,
+    PreparedUsableSeries,
 )
 
 
 def semanticize_mandatory(
-    prepared: PreparedGoodSeries, window: MetricAnalysisWindow
+    prepared: PreparedUsableSeries, window: MetricAnalysisWindow
 ) -> MetricSemantics:
     evidence = prepared.evidence
     duration = (window.to - window.from_).total_seconds()
