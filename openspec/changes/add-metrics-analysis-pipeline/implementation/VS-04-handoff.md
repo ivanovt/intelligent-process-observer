@@ -28,6 +28,19 @@ Verification:
 - `cd backend && IPO_TEST_DATABASE_URL=postgresql+psycopg://ipo:ipo@localhost:55432/ipo_test DATABASE_URL=postgresql+psycopg://ipo:ipo@localhost:55432/ipo_test UV_CACHE_DIR=/tmp/ipo-uv-cache uv run pytest tests/test_metric_analysis_pipeline.py -rs -q` — 60 passed; one existing Alembic `path_separator` deprecation warning.
 - `git diff --check` — passed.
 
+Corrective review/fix evidence: the independent review HIGH finding for finite
+extreme means is resolved. `compare_reference()` now normalizes both finite
+means by their larger magnitude before evaluating the equivalent symmetric
+relative-level expression, avoiding overflow to `NaN`. The added pipeline
+regression uses positive and negative largest-finite means; it verifies the
+reference remains comparable, produces `relative_level_change=2.0`, and ends
+completed without a false `reference_unavailable` partial result.
+
+- `cd backend && UV_CACHE_DIR=/tmp/ipo-uv-cache uv run ruff check src/app/metrics/references.py tests/test_metric_analysis_pipeline.py` — passed.
+- `cd backend && UV_CACHE_DIR=/tmp/ipo-uv-cache uv run ruff format --check src/app/metrics/references.py tests/test_metric_analysis_pipeline.py` — passed.
+- `cd backend && UV_CACHE_DIR=/tmp/ipo-uv-cache uv run pytest tests/test_metric_analysis_pipeline.py -q -k extreme_finite_reference_means` — 1 passed, 60 deselected.
+- `cd backend && IPO_TEST_DATABASE_URL=postgresql+psycopg://ipo:ipo@localhost:55432/ipo_test DATABASE_URL=postgresql+psycopg://ipo:ipo@localhost:55432/ipo_test UV_CACHE_DIR=/tmp/ipo-uv-cache uv run pytest tests/test_metric_analysis_pipeline.py -q` — 61 passed; one existing Alembic `path_separator` deprecation warning.
+
 Downstream invariants: only successful `good|degraded` references enter paired non-empty
 sections; paired semantic/evidence entries have identical offset/window/order; public
 reference incompleteness always uses the one fixed reason and never serializes diagnostics

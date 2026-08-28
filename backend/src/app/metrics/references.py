@@ -39,9 +39,14 @@ def compare_reference(
 
     current_mean = current.evidence.mean
     reference_mean = reference.evidence.mean
-    denominator = abs(current_mean) + abs(reference_mean)
+    scale = max(abs(current_mean), abs(reference_mean))
+    normalized_current_mean = current_mean / scale if scale else 0.0
+    normalized_reference_mean = reference_mean / scale if scale else 0.0
+    denominator = abs(normalized_current_mean) + abs(normalized_reference_mean)
     relative_level_change = (
-        0.0 if denominator == 0 else 2 * (current_mean - reference_mean) / denominator
+        0.0
+        if denominator == 0
+        else 2 * (normalized_current_mean - normalized_reference_mean) / denominator
     )
     level = (
         "higher"

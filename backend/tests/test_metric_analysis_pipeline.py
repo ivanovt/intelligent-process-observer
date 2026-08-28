@@ -1158,6 +1158,43 @@ def test_reference_windows_and_comparison_relations_are_current_relative() -> No
     assert evidence.relative_level_change == pytest.approx(-0.25)
 
 
+def test_extreme_finite_reference_means_do_not_create_a_false_partial_result() -> None:
+    execution_context = context(reference_periods=("1h",))
+    reference_analysis_window = reference_window(execution_context.analysis_window, "1h")
+    largest_finite = math.nextafter(math.inf, 0.0)
+    provider = SequencedProvider(
+        (
+            available_for_window(
+                execution_context.analysis_window,
+                (largest_finite, largest_finite, largest_finite),
+            ),
+            available_for_window(
+                reference_analysis_window,
+                (-largest_finite, -largest_finite, -largest_finite),
+            ),
+        )
+    )
+    repository = RecordingRepository([])
+    pipeline = MetricAnalysisPipeline(
+        provider=provider,
+        agent=FakeAgent(),
+        history_reader=FakeHistoryReader(),
+        repository=repository,
+        result_builder=MetricResultBuilder(lambda: WINDOW_START + timedelta(minutes=5)),
+    )
+
+    analysis = run(pipeline.analyze(execution_context))
+    lens_run = SimpleNamespace(status="running", reason=None)
+    artifact = run(pipeline.persist_terminal(object(), lens_run, analysis))
+
+    assert analysis.reference_diagnostics == ()
+    assert artifact.status == "completed"
+    assert lens_run.status == "completed"
+    assert lens_run.reason is None
+    reference_evidence = repository.persisted[0].payload["evidence"]["reference_periods"][0]
+    assert reference_evidence["relative_level_change"] == pytest.approx(2.0)
+
+
 @pytest.mark.parametrize(
     ("reference_outcome", "category"),
     [
