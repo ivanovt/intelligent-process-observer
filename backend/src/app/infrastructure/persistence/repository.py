@@ -2,10 +2,11 @@
 
 from __future__ import annotations
 
+import json
 from datetime import UTC, datetime
 from uuid import UUID
 
-from sqlalchemy import select
+from sqlalchemy import String, cast, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
@@ -24,6 +25,7 @@ from app.infrastructure.persistence.runtime_contracts import (
     LensAnalysisResultInput,
     LensRunInput,
     LensRunStatus,
+    LensType,
     ObservationAnalysisResultInput,
     ObservationReportInput,
     ObservationRunInput,
@@ -32,6 +34,13 @@ from app.infrastructure.persistence.runtime_contracts import (
     StructuredReason,
     validate_lens_run_transition,
     validate_observation_run_transition,
+)
+from app.metrics.contracts import (
+    MetricHistoryCandidate,
+    MetricHistoryCandidates,
+    MetricHistoryEmpty,
+    MetricHistoryRead,
+    MetricLensExecutionContext,
 )
 from app.observations.contracts import ObservationCreate
 
@@ -113,6 +122,70 @@ class RuntimePersistenceRepository:
     Operations flush for immediate integrity feedback but never commit; orchestration or
     other callers decide the transaction boundary when composing multiple runtime writes.
     """
+
+    async def load(
+        self,
+        session: AsyncSession,
+        context: MetricLensExecutionContext,
+    ) -> MetricHistoryRead:
+        """Load the bounded, usable Metric History projection for one Lens identity.
+
+        Metric result timestamps are normalized UTC strings by the strict result contract,
+        so PostgreSQL JSON string ordering is the same as event-time ordering.  The query
+        fetches only the newest effective lookback, then restores chronological order for
+        the framework-neutral History analyzer.
+        """
+
+        payload = LensAnalysisResultModel.payload
+        window_end = payload["analysis_window"]["to"].as_string()
+        window_start = payload["analysis_window"]["from"].as_string()
+        data_quality = payload["data_quality"].as_string()
+        result = await session.execute(
+            select(
+                LensAnalysisResultModel.lens_run_id,
+                LensAnalysisResultModel.status,
+                payload,
+            )
+            .join(LensRunModel, LensAnalysisResultModel.lens_run_id == LensRunModel.id)
+            .join(
+                ObservationRunModel,
+                LensRunModel.observation_run_id == ObservationRunModel.id,
+            )
+            .where(
+                ObservationRunModel.observation_id == context.identity.observation_id,
+                LensRunModel.lens_id == context.identity.lens_id,
+                LensRunModel.id != context.identity.lens_run_id,
+                LensAnalysisResultModel.result_type == LensType.METRIC.value,
+                LensAnalysisResultModel.status.in_(
+                    (LensRunStatus.COMPLETED.value, LensRunStatus.PARTIAL.value)
+                ),
+                data_quality.in_(("good", "degraded")),
+                window_end < context.analysis_window.to.isoformat().replace("+00:00", "Z"),
+            )
+            .order_by(
+                window_end.desc(),
+                window_start.desc(),
+                cast(LensRunModel.id, String).desc(),
+            )
+            .limit(context.history_policy.lookback_runs)
+        )
+        candidates = tuple(
+            MetricHistoryCandidate.model_validate_json(
+                json.dumps(
+                    {
+                        "lens_run_id": str(row.lens_run_id),
+                        "analysis_window": row.payload["analysis_window"],
+                        "status": row.status,
+                        "data_quality": row.payload["data_quality"],
+                        "mean": row.payload["evidence"]["current"]["mean"],
+                    }
+                )
+            )
+            for row in result
+        )
+        if not candidates:
+            return MetricHistoryEmpty()
+        return MetricHistoryCandidates(candidates=tuple(reversed(candidates)))
 
     async def create_observation_run(
         self, session: AsyncSession, request: ObservationRunInput

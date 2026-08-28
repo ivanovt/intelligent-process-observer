@@ -20,11 +20,14 @@ from app.core.settings import get_settings
 from app.infrastructure.persistence.models import ObservationModel
 from app.infrastructure.persistence.repository import RuntimePersistenceRepository
 from app.infrastructure.persistence.runtime_contracts import (
+    LensAnalysisResultInput,
+    LensResultIdentity,
     LensRunInput,
     LensRunStatus,
     LensType,
     ObservationRunInput,
     ObservationRunStatus,
+    StructuredReason,
 )
 from app.metrics.contracts import (
     FIXED_ALLOWED_TOOLS,
@@ -1530,4 +1533,271 @@ def test_fake_reader_history_outcomes_round_trip_through_runtime_aggregate(
             "analyze_history",
             lambda *_: (_ for _ in ()).throw(RuntimeError("unexpected History failure")),
         )
+    run(scenario())
+
+
+def test_postgresql_history_reader_filters_orders_and_bounds_event_time_candidates(
+    session_factory: async_sessionmaker[AsyncSession],
+) -> None:
+    """The real reader is bounded by event time, not insertion chronology."""
+
+    async def persist_candidate(
+        session: AsyncSession,
+        repository: RuntimePersistenceRepository,
+        execution_context: MetricLensExecutionContext,
+        *,
+        lens_run_id,
+        window: MetricAnalysisWindow,
+        mean: float | None,
+        status: LensRunStatus,
+        data_quality: str | None,
+    ) -> None:
+        observation_run = await repository.create_observation_run(
+            session,
+            ObservationRunInput(observation_id=execution_context.identity.observation_id),
+        )
+        await repository.advance_observation_run(
+            session, observation_run, ObservationRunStatus.RUNNING
+        )
+        lens_run = await repository.create_lens_run(
+            session,
+            observation_run,
+            LensRunInput(
+                id=lens_run_id,
+                lens_id=execution_context.identity.lens_id,
+                lens_type=LensType.METRIC,
+            ),
+        )
+        await repository.advance_lens_run(session, lens_run, LensRunStatus.RUNNING)
+        result_identity = LensResultIdentity.model_validate(
+            execution_context.identity.model_dump()
+            | {"observation_run_id": observation_run.id, "lens_run_id": lens_run_id}
+        )
+        reason = (
+            StructuredReason(code="history_analysis_failed", component="history")
+            if status is LensRunStatus.PARTIAL
+            else (
+                StructuredReason(code="current_metric_acquisition_failed")
+                if status is LensRunStatus.FAILED
+                else None
+            )
+        )
+        await repository.advance_lens_run(session, lens_run, status, reason=reason)
+        payload: dict[str, object] = {
+            "schema_version": "1.0",
+            "lens_type": "metric",
+            "identity": {
+                **result_identity.model_dump(mode="json", exclude_none=True),
+            },
+            "status": {"state": status.value},
+            "analysis_window": window.model_dump(mode="json", by_alias=True),
+            "provenance": {
+                "source": "prometheus",
+                "generated_at": "2026-08-27T12:05:00Z",
+            },
+        }
+        if status is LensRunStatus.FAILED:
+            payload["status"] = {
+                "state": "failed",
+                "error": {
+                    "code": "current_metric_acquisition_failed",
+                    "message": "Current metric data acquisition failed.",
+                },
+            }
+        elif data_quality == "insufficient":
+            payload["data_quality"] = "insufficient"
+        else:
+            assert mean is not None and data_quality is not None
+            payload |= {
+                "data_quality": data_quality,
+                "current_state": {
+                    "trend": {"direction": "stable", "rate": "not_classified"},
+                    "variability": {"state": "low"},
+                },
+                "evidence": {
+                    "current": {"mean": mean, "std": 0.0, "min": mean, "max": mean, "slope": 0.0}
+                },
+            }
+            if status is LensRunStatus.PARTIAL:
+                payload["reason"] = {"code": "history_analysis_failed", "component": "history"}
+        await repository.persist_lens_analysis_result(
+            session,
+            lens_run,
+            LensAnalysisResultInput(
+                result_type=LensType.METRIC,
+                status=status,
+                schema_version="1.0",
+                identity=result_identity,
+                provenance=payload["provenance"],
+                payload=payload,
+            ),
+        )
+
+    async def scenario() -> None:
+        execution_context = context().model_copy(
+            update={"history_policy": MetricHistoryPolicy(lookback_runs=3)}
+        )
+        repository = RuntimePersistenceRepository()
+        earliest = uuid4()
+        tied_first = uuid4()
+        tied_second = uuid4()
+        newest = uuid4()
+        async with session_factory() as session:
+            async with session.begin():
+                session.add(
+                    ObservationModel(
+                        id=execution_context.identity.observation_id,
+                        name=f"PostgreSQL Metric History {uuid4()}",
+                        objective="Verify History reader selection.",
+                        schema_version=1,
+                    )
+                )
+                await session.flush()
+                # Persisted deliberately newest-first: event time must still control selection.
+                for lens_run_id, start, end, mean, status, quality in (
+                    (newest, -1, 2, 40.0, LensRunStatus.PARTIAL, "degraded"),
+                    (tied_second, -13, -5, 30.0, LensRunStatus.COMPLETED, "good"),
+                    (tied_first, -13, -5, 20.0, LensRunStatus.COMPLETED, "good"),
+                    (earliest, -20, -10, 10.0, LensRunStatus.COMPLETED, "good"),
+                    (uuid4(), -4, 3, 50.0, LensRunStatus.COMPLETED, "good"),
+                    (uuid4(), -4, -2, None, LensRunStatus.COMPLETED, "insufficient"),
+                    (uuid4(), -4, -2, None, LensRunStatus.FAILED, None),
+                ):
+                    await persist_candidate(
+                        session,
+                        repository,
+                        execution_context,
+                        lens_run_id=lens_run_id,
+                        window=MetricAnalysisWindow(
+                            **{
+                                "from": execution_context.analysis_window.from_
+                                + timedelta(minutes=start),
+                                "to": execution_context.analysis_window.from_
+                                + timedelta(minutes=end),
+                            }
+                        ),
+                        mean=mean,
+                        status=status,
+                        data_quality=quality,
+                    )
+
+            async with session.begin():
+                history = await repository.load(session, execution_context)
+
+        assert isinstance(history, MetricHistoryCandidates)
+        expected_tied = sorted((tied_first, tied_second), key=str)
+        assert [candidate.lens_run_id for candidate in history.candidates] == [
+            *expected_tied,
+            newest,
+        ]
+        assert [candidate.mean for candidate in history.candidates] == [
+            20.0 if expected_tied[0] == tied_first else 30.0,
+            30.0 if expected_tied[1] == tied_second else 20.0,
+            40.0,
+        ]
+
+    run(scenario())
+
+
+@pytest.mark.parametrize("failure_stage", ["flush", "commit"])
+def test_postgresql_terminal_persistence_failures_rollback_lens_run_and_artifact(
+    session_factory: async_sessionmaker[AsyncSession],
+    failure_stage: str,
+    monkeypatch,
+) -> None:
+    """Caller-owned transaction failures leave no terminal state or Metric artifact."""
+
+    async def scenario() -> None:
+        execution_context = context()
+        repository = RuntimePersistenceRepository()
+        phase_trace: list[str] = []
+        pipeline = MetricAnalysisPipeline(
+            provider=FakeProvider(),
+            agent=FakeAgent(),
+            history_reader=repository,
+            repository=repository,
+            result_builder=MetricResultBuilder(lambda: WINDOW_START + timedelta(minutes=5)),
+            record_phase=phase_trace.append,
+        )
+        async with session_factory() as session:
+            async with session.begin():
+                session.add(
+                    ObservationModel(
+                        id=execution_context.identity.observation_id,
+                        name=f"Metric persistence rollback {uuid4()}",
+                        objective="Verify terminal persistence rollback.",
+                        schema_version=1,
+                    )
+                )
+                await session.flush()
+                observation_run = await repository.create_observation_run(
+                    session,
+                    ObservationRunInput(
+                        id=execution_context.identity.observation_run_id,
+                        observation_id=execution_context.identity.observation_id,
+                    ),
+                )
+                await repository.advance_observation_run(
+                    session, observation_run, ObservationRunStatus.RUNNING
+                )
+                lens_run = await repository.create_lens_run(
+                    session,
+                    observation_run,
+                    LensRunInput(
+                        id=execution_context.identity.lens_run_id,
+                        lens_id=execution_context.identity.lens_id,
+                        lens_type=LensType.METRIC,
+                    ),
+                )
+                await repository.advance_lens_run(session, lens_run, LensRunStatus.RUNNING)
+
+            analysis = await pipeline.analyze(execution_context)
+            if failure_stage == "flush":
+                original_flush = session.flush
+                flush_count = 0
+
+                async def fail_artifact_flush(*args, **kwargs):
+                    nonlocal flush_count
+                    flush_count += 1
+                    if flush_count == 2:
+                        raise RuntimeError("forced artifact flush failure")
+                    return await original_flush(*args, **kwargs)
+
+                monkeypatch.setattr(session, "flush", fail_artifact_flush)
+            else:
+                from sqlalchemy import event
+
+                def fail_commit(_session) -> None:
+                    raise RuntimeError("forced transaction commit failure")
+
+                event.listen(session.sync_session, "before_commit", fail_commit)
+
+            phase_trace.append("caller_transaction_open")
+            with pytest.raises(RuntimeError, match="forced .* failure"):
+                async with session.begin():
+                    await pipeline.persist_terminal(session, lens_run, analysis)
+            phase_trace.append("caller_rollback")
+            if failure_stage == "commit":
+                event.remove(session.sync_session, "before_commit", fail_commit)
+
+        async with session_factory() as session:
+            restored = await repository.get_observation_run(
+                session, execution_context.identity.observation_run_id
+            )
+            assert restored is not None
+            assert restored.lens_runs[0].status == "running"
+            assert restored.lens_runs[0].analysis_result is None
+
+        assert phase_trace == [
+            "provider_acquisition",
+            "current_preparation",
+            "mandatory_semanticization",
+            "agent_execution",
+            "caller_transaction_open",
+            "history_read",
+            "lens_run_transition",
+            "artifact_insertion_flush",
+            "caller_rollback",
+        ]
+
     run(scenario())
