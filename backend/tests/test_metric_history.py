@@ -110,6 +110,74 @@ def test_history_defaults_and_event_time_selection_exclude_ineligible_candidates
 
 
 @pytest.mark.parametrize(
+    ("status", "data_quality", "mean"),
+    [
+        ("completed", "good", None),
+        ("completed", "degraded", None),
+        ("completed", "insufficient", 10.0),
+        ("completed", None, None),
+        ("completed", None, 10.0),
+        ("partial", "good", None),
+        ("partial", "degraded", None),
+        ("partial", "insufficient", None),
+        ("partial", "insufficient", 10.0),
+        ("partial", None, None),
+        ("partial", None, 10.0),
+        ("failed", None, 10.0),
+        ("failed", "good", None),
+        ("failed", "good", 10.0),
+        ("failed", "degraded", None),
+        ("failed", "degraded", 10.0),
+        ("failed", "insufficient", None),
+        ("failed", "insufficient", 10.0),
+    ],
+)
+def test_history_candidate_rejects_invalid_result_variant_combinations(
+    status: str, data_quality: str | None, mean: float | None
+) -> None:
+    with pytest.raises(ValueError):
+        candidate(status=status, data_quality=data_quality, mean=mean)
+
+
+def test_history_selection_excludes_candidate_ending_at_current_window_end() -> None:
+    execution_context = context()
+    ending_at_current_end = candidate(
+        end=execution_context.analysis_window.to,
+        mean=10.0,
+    )
+
+    selected = select_history_candidates(execution_context, (ending_at_current_end,))
+
+    assert selected == ()
+
+
+def test_history_selection_uses_lexical_lens_run_id_for_full_event_time_ties() -> None:
+    execution_context = context(policy=MetricHistoryPolicy(lookback_runs=2))
+    tied_start = WINDOW_START - timedelta(minutes=5)
+    tied_end = WINDOW_START - timedelta(minutes=1)
+    lexical_first = candidate(
+        lens_run_id=UUID("00000000-0000-0000-0000-000000000001"),
+        start=tied_start,
+        end=tied_end,
+    )
+    lexical_second = candidate(
+        lens_run_id=UUID("00000000-0000-0000-0000-000000000002"),
+        start=tied_start,
+        end=tied_end,
+    )
+
+    selected = select_history_candidates(
+        execution_context,
+        (lexical_second, lexical_first),
+    )
+
+    assert [item.lens_run_id for item in selected] == [
+        lexical_first.lens_run_id,
+        lexical_second.lens_run_id,
+    ]
+
+
+@pytest.mark.parametrize(
     ("previous", "current", "expected"),
     [
         (0.0, 0.0, "stable"),
@@ -165,6 +233,30 @@ def test_history_direction_pattern_and_stable_neutral_rules(
     assert history.pattern == pattern
     assert evidence.direction_changes == changes
     assert evidence.classifiable_transitions + evidence.unknown_transitions == len(history.run_ids)
+
+
+def test_history_unknown_between_directions_is_removed_before_pattern_detection() -> None:
+    execution_context = context(policy=MetricHistoryPolicy(lookback_runs=5))
+    means = (100.0, 200.0, 10000.0, 5000.0)
+    historical = tuple(
+        candidate(
+            start=WINDOW_START - timedelta(minutes=len(means) - index + 1),
+            end=WINDOW_START - timedelta(minutes=len(means) - index),
+            mean=mean,
+        )
+        for index, mean in enumerate(means[:-1])
+    )
+
+    history, evidence = analyze_history(
+        execution_context,
+        historical,
+        MetricCurrentEvidence(mean=means[-1], std=0.0, min=means[-1], max=means[-1], slope=0.0),
+    ) or pytest.fail("History candidates should be selected")
+
+    assert history.pattern == "reversing"
+    assert evidence.classifiable_transitions == 2
+    assert evidence.unknown_transitions == 1
+    assert evidence.direction_changes == 1
 
 
 class FakeProvider:

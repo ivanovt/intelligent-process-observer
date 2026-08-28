@@ -292,15 +292,24 @@ class MetricHistoryCandidate(StrictMetricModel):
 
     @model_validator(mode="after")
     def validate_result_projection(self) -> MetricHistoryCandidate:
-        eligible = self.status in {"completed", "partial"} and self.data_quality in {
+        if self.status in {"completed", "partial"} and self.data_quality in {
             "good",
             "degraded",
-        }
-        if eligible != (self.mean is not None):
-            raise ValueError("only usable completed or partial candidates carry a mean")
-        if self.status == "failed" and self.data_quality is not None:
-            raise ValueError("failed candidates must not carry data_quality")
-        return self
+        }:
+            if self.mean is None:
+                raise ValueError("usable completed or partial candidates require a mean")
+            return self
+        if self.status == "completed" and self.data_quality == "insufficient":
+            if self.mean is not None:
+                raise ValueError("completed insufficient candidates must not carry a mean")
+            return self
+        if self.status == "failed" and self.data_quality is None:
+            if self.mean is not None:
+                raise ValueError("failed candidates must not carry a mean")
+            return self
+        raise ValueError(
+            "History candidates must match a completed, partial, or failed Metric result variant"
+        )
 
 
 class MetricHistoryCandidates(StrictMetricModel):

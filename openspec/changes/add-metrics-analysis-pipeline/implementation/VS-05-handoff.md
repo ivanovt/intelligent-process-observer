@@ -24,6 +24,20 @@ Verification:
 - `cd backend && uv run ruff format --check src/app/metrics tests/test_metric_history.py tests/test_metric_analysis_pipeline.py` — passed.
 - `git diff --check` — passed.
 
+Corrective review evidence:
+
+- `MetricHistoryCandidate` now accepts only strict persisted Metric result variants:
+  usable `completed|partial` with `good|degraded` and a finite mean,
+  `completed + insufficient` without a mean, or `failed` without data quality or
+  a mean. The focused rejection matrix covers every invalid combination.
+- Focused History tests now explicitly prove the strict current-end cutoff, lexical
+  `lens_run_id` ordering when both event-time fields tie, and ADR-160 removal of an
+  unknown transition between opposing directions before reversal detection.
+- `cd backend && UV_CACHE_DIR=/tmp/ipo-vs05-uv-cache uv run pytest tests/test_metric_history.py -q` — 43 passed.
+- `cd backend && UV_CACHE_DIR=/tmp/ipo-vs05-uv-cache uv run ruff check src/app/metrics/contracts.py tests/test_metric_history.py` — passed.
+- `cd backend && UV_CACHE_DIR=/tmp/ipo-vs05-uv-cache uv run ruff format --check src/app/metrics/contracts.py tests/test_metric_history.py` — passed.
+- `git diff --check` — passed.
+
 Downstream invariant: VS-06 must adapt only bounded, same-observation/same-lens
 persisted Metric projections to `MetricHistoryRead` and must let reader/query failures
 propagate unchanged. It must not replace the domain event-time ordering, lookback, or
@@ -33,7 +47,7 @@ Known limitations within approved scope: no PostgreSQL History query, repository
 extension, transaction rollback fault injection, raw History serialization, optional
 tools, or combined-cause precedence verification.
 
-Commit SHA: `HEAD`.
+Commit SHA: `HEAD` (the atomic VS-05 corrective commit containing this handoff).
 
 Plan change requested: none.
 
