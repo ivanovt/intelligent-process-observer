@@ -25,6 +25,9 @@ from app.metrics.contracts import (
     MetricCurrentState,
     MetricEvidenceSection,
     MetricFailedStatus,
+    MetricHistory,
+    MetricHistoryAnalysisFailedReason,
+    MetricHistoryEvidence,
     MetricLensExecutionContext,
     MetricReferenceComparison,
     MetricReferenceEvidence,
@@ -53,9 +56,13 @@ class MetricResultBuilder:
         semantics: MetricSemantics,
         reference_periods: tuple[MetricReferenceComparison, ...] = (),
         reference_evidence: tuple[MetricReferenceEvidence, ...] = (),
+        history: MetricHistory | None = None,
+        history_evidence: MetricHistoryEvidence | None = None,
     ) -> tuple[CompletedSufficientMetricResult, LensAnalysisResultInput]:
         if bool(reference_periods) != bool(reference_evidence):
             raise ValueError("reference semantics and evidence must co-occur")
+        if (history is None) != (history_evidence is None):
+            raise ValueError("history semantics and evidence must co-occur")
         evidence = prepared.evidence
         result = CompletedSufficientMetricResult(
             identity=context.identity,
@@ -65,9 +72,11 @@ class MetricResultBuilder:
                 trend=semantics.trend, variability=semantics.variability
             ),
             reference_periods=reference_periods or None,
+            history=history,
             evidence=MetricEvidenceSection(
                 current=MetricCurrentEvidence(**evidence.model_dump()),
                 reference_periods=reference_evidence or None,
+                history=history_evidence,
             ),
             provenance=MetricResultProvenance(
                 source=context.provider_scope.adapter_type,
@@ -92,15 +101,63 @@ class MetricResultBuilder:
         semantics: MetricSemantics,
         reference_periods: tuple[MetricReferenceComparison, ...],
         reference_evidence: tuple[MetricReferenceEvidence, ...],
+        history: MetricHistory | None = None,
+        history_evidence: MetricHistoryEvidence | None = None,
     ) -> tuple[PartialMetricResult, LensAnalysisResultInput]:
         """Build the first usable partial variant, owned only by reference completeness."""
+
+        if bool(reference_periods) != bool(reference_evidence):
+            raise ValueError("reference semantics and evidence must co-occur")
+        if (history is None) != (history_evidence is None):
+            raise ValueError("history semantics and evidence must co-occur")
+        evidence = prepared.evidence
+        result = PartialMetricResult(
+            identity=context.identity,
+            reason=MetricReferenceUnavailableReason(),
+            analysis_window=context.analysis_window,
+            data_quality=prepared.data_quality,
+            current_state=MetricCurrentState(
+                trend=semantics.trend, variability=semantics.variability
+            ),
+            reference_periods=reference_periods or None,
+            history=history,
+            evidence=MetricEvidenceSection(
+                current=MetricCurrentEvidence(**evidence.model_dump()),
+                reference_periods=reference_evidence or None,
+                history=history_evidence,
+            ),
+            provenance=MetricResultProvenance(
+                source=context.provider_scope.adapter_type,
+                generated_at=self._clock(),
+            ),
+        )
+        payload = result.model_dump(mode="json", by_alias=True, exclude_none=True)
+        envelope = LensAnalysisResultInput(
+            result_type=LensType.METRIC,
+            status=LensRunStatus.PARTIAL,
+            schema_version=result.schema_version,
+            identity=LensResultIdentity(**context.identity.model_dump()),
+            provenance=result.provenance.model_dump(mode="json"),
+            payload=payload,
+        )
+        return result, envelope
+
+    def partial_history_analysis_failed(
+        self,
+        context: MetricLensExecutionContext,
+        prepared: PreparedUsableSeries,
+        semantics: MetricSemantics,
+        reference_periods: tuple[MetricReferenceComparison, ...] = (),
+        reference_evidence: tuple[MetricReferenceEvidence, ...] = (),
+    ) -> tuple[PartialMetricResult, LensAnalysisResultInput]:
+        """Build the usable partial variant for an unexpected pure History failure."""
 
         if bool(reference_periods) != bool(reference_evidence):
             raise ValueError("reference semantics and evidence must co-occur")
         evidence = prepared.evidence
         result = PartialMetricResult(
             identity=context.identity,
-            reason=MetricReferenceUnavailableReason(),
+            reason=MetricHistoryAnalysisFailedReason(),
             analysis_window=context.analysis_window,
             data_quality=prepared.data_quality,
             current_state=MetricCurrentState(

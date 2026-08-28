@@ -1,4 +1,4 @@
-"""Framework-neutral ports for the Metric pipeline's exercised VS-01 path."""
+"""Framework-neutral ports for the exercised Metric pipeline paths."""
 
 from __future__ import annotations
 
@@ -8,7 +8,7 @@ from app.metrics.contracts import (
     MetricAgentOutcome,
     MetricAgentRequest,
     MetricAnalysisWindow,
-    MetricHistoryEmpty,
+    MetricHistoryRead,
     MetricLensExecutionContext,
     MetricProviderScope,
     MetricSeriesAcquisitionOutcome,
@@ -26,6 +26,6 @@ class MetricsAnalysisAgent(Protocol):
 
 
 class MetricHistoryReader(Protocol):
-    async def load_empty(
+    async def load(
         self, session: object, context: MetricLensExecutionContext
-    ) -> MetricHistoryEmpty: ...
+    ) -> MetricHistoryRead: ...

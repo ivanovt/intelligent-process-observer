@@ -23,8 +23,10 @@ from app.metrics.contracts import (
     MetricAgentUsableRequest,
     MetricAnalysisWindow,
     MetricCurrentAcquisitionFailed,
+    MetricCurrentEvidence,
     MetricCurrentFailure,
     MetricCurrentSeriesMalformed,
+    MetricHistoryCandidates,
     MetricLensExecutionContext,
     MetricMandatoryAnalysisFailure,
     MetricReferenceComparison,
@@ -38,6 +40,7 @@ from app.metrics.contracts import (
     PreparedSeries,
     PreparedUsableSeries,
 )
+from app.metrics.history import analyze_history
 from app.metrics.ports import MetricHistoryReader, MetricsAnalysisAgent, MetricSeriesProvider
 from app.metrics.preprocessing import MetricSeriesMalformedError, prepare_series
 from app.metrics.references import compare_reference, reference_window
@@ -57,6 +60,8 @@ class MetricPreTransactionAnalysis:
     terminal_result: LensAnalysisResultInput
     failure: MetricCurrentFailure | None = None
     reference_diagnostics: tuple[MetricReferenceUnavailable, ...] = ()
+    reference_periods: tuple[MetricReferenceComparison, ...] = ()
+    reference_evidence: tuple[MetricReferenceEvidence, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -210,6 +215,8 @@ class MetricAnalysisPipeline:
             insufficient_agent_outcome=None,
             terminal_result=terminal_result,
             reference_diagnostics=reference_diagnostics,
+            reference_periods=comparisons,
+            reference_evidence=reference_evidence,
         )
 
     async def _prepare_references(
@@ -372,17 +379,73 @@ class MetricAnalysisPipeline:
             reason = None
         else:
             self._record_phase("history_read")
-            await self._history_reader.load_empty(session, analysis.context)
             if analysis.semantics is None:
                 raise RuntimeError("usable Metric analysis requires mandatory semantics")
+            if not isinstance(analysis.prepared, PreparedUsableSeries):
+                raise RuntimeError("usable Metric analysis requires prepared evidence")
+            history_read = await self._history_reader.load(session, analysis.context)
+            history = None
+            history_evidence = None
+            history_failed = False
+            if isinstance(history_read, MetricHistoryCandidates):
+                try:
+                    history_sections = analyze_history(
+                        analysis.context,
+                        history_read.candidates,
+                        MetricCurrentEvidence(**analysis.prepared.evidence.model_dump()),
+                    )
+                    if history_sections is not None:
+                        history, history_evidence = history_sections
+                except Exception:
+                    history_failed = True
             if analysis.reference_diagnostics:
                 target = LensRunStatus.PARTIAL
                 reason = StructuredReason(
                     code="reference_unavailable", component="reference_periods"
                 )
+                _, terminal_result = self._result_builder.partial_reference_unavailable(
+                    analysis.context,
+                    analysis.prepared,
+                    analysis.semantics,
+                    analysis.reference_periods,
+                    analysis.reference_evidence,
+                    history,
+                    history_evidence,
+                )
+            elif history_failed:
+                target = LensRunStatus.PARTIAL
+                reason = StructuredReason(code="history_analysis_failed", component="history")
+                _, terminal_result = self._result_builder.partial_history_analysis_failed(
+                    analysis.context,
+                    analysis.prepared,
+                    analysis.semantics,
+                    analysis.reference_periods,
+                    analysis.reference_evidence,
+                )
             else:
                 target = LensRunStatus.COMPLETED
                 reason = None
+                _, terminal_result = self._result_builder.completed_sufficient(
+                    analysis.context,
+                    analysis.prepared,
+                    analysis.semantics,
+                    analysis.reference_periods,
+                    analysis.reference_evidence,
+                    history,
+                    history_evidence,
+                )
+            analysis = MetricPreTransactionAnalysis(
+                context=analysis.context,
+                prepared=analysis.prepared,
+                semantics=analysis.semantics,
+                dataset_ref=analysis.dataset_ref,
+                insufficient_agent_outcome=analysis.insufficient_agent_outcome,
+                terminal_result=terminal_result,
+                failure=analysis.failure,
+                reference_diagnostics=analysis.reference_diagnostics,
+                reference_periods=analysis.reference_periods,
+                reference_evidence=analysis.reference_evidence,
+            )
         self._record_phase("lens_run_transition")
         if reason is None:
             await self._repository.advance_lens_run(session, lens_run, target)

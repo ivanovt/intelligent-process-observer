@@ -38,6 +38,8 @@ from app.metrics.contracts import (
     MetricCurrentAcquisitionFailed,
     MetricCurrentSeriesMalformed,
     MetricEvidence,
+    MetricHistoryCandidate,
+    MetricHistoryCandidates,
     MetricHistoryEmpty,
     MetricHistoryPolicy,
     MetricIdentity,
@@ -183,9 +185,19 @@ class FakeHistoryReader:
     def __init__(self) -> None:
         self.calls = []
 
-    async def load_empty(self, session, execution_context):
+    async def load(self, session, execution_context):
         self.calls.append((session, execution_context))
         return MetricHistoryEmpty()
+
+
+class CandidateHistoryReader:
+    def __init__(self, candidates: tuple[MetricHistoryCandidate, ...]) -> None:
+        self.calls = []
+        self.candidates = candidates
+
+    async def load(self, session, execution_context):
+        self.calls.append((session, execution_context))
+        return MetricHistoryCandidates(candidates=self.candidates)
 
 
 class RecordingRepository:
@@ -1417,3 +1429,105 @@ def test_current_insufficiency_does_not_acquire_or_partial_configured_references
     assert lens_run.status == "completed"
     assert repository.persisted[0].payload["data_quality"] == "insufficient"
     assert "reason" not in repository.persisted[0].payload
+
+
+@pytest.mark.parametrize("history_failure", [False, True])
+def test_fake_reader_history_outcomes_round_trip_through_runtime_aggregate(
+    session_factory: async_sessionmaker[AsyncSession],
+    history_failure: bool,
+    monkeypatch,
+) -> None:
+    async def scenario() -> None:
+        execution_context = context()
+        candidate_id = uuid4()
+        history = CandidateHistoryReader(
+            (
+                MetricHistoryCandidate(
+                    lens_run_id=candidate_id,
+                    analysis_window=MetricAnalysisWindow(
+                        **{
+                            "from": WINDOW_START - timedelta(minutes=1),
+                            "to": WINDOW_START + timedelta(minutes=2),
+                        }
+                    ),
+                    status="completed",
+                    data_quality="good",
+                    mean=10.0,
+                ),
+            )
+        )
+        repository = RuntimePersistenceRepository()
+        pipeline = MetricAnalysisPipeline(
+            provider=FakeProvider(),
+            agent=FakeAgent(),
+            history_reader=history,
+            repository=repository,
+            result_builder=MetricResultBuilder(lambda: WINDOW_START + timedelta(minutes=5)),
+        )
+
+        async with session_factory() as session:
+            async with session.begin():
+                observation = ObservationModel(
+                    id=execution_context.identity.observation_id,
+                    name=f"Metric History result {uuid4()}",
+                    objective="Verify fake-reader Metric History persistence.",
+                    schema_version=1,
+                )
+                session.add(observation)
+                await session.flush()
+                observation_run = await repository.create_observation_run(
+                    session,
+                    ObservationRunInput(
+                        id=execution_context.identity.observation_run_id,
+                        observation_id=observation.id,
+                    ),
+                )
+                await repository.advance_observation_run(
+                    session, observation_run, ObservationRunStatus.RUNNING
+                )
+                lens_run = await repository.create_lens_run(
+                    session,
+                    observation_run,
+                    LensRunInput(
+                        id=execution_context.identity.lens_run_id,
+                        lens_id=execution_context.identity.lens_id,
+                        lens_type=LensType.METRIC,
+                    ),
+                )
+                await repository.advance_lens_run(session, lens_run, LensRunStatus.RUNNING)
+
+            analysis = await pipeline.analyze(execution_context)
+            async with session.begin():
+                await pipeline.persist_terminal(session, lens_run, analysis)
+
+        async with session_factory() as session:
+            restored = await repository.get_observation_run(
+                session, execution_context.identity.observation_run_id
+            )
+            assert restored is not None
+            restored_lens_run = restored.lens_runs[0]
+            assert restored_lens_run.analysis_result is not None
+            payload = restored_lens_run.analysis_result.payload
+            if history_failure:
+                assert restored_lens_run.status == "partial"
+                assert restored_lens_run.reason == {
+                    "code": "history_analysis_failed",
+                    "component": "history",
+                }
+                assert "history" not in payload
+                assert "history" not in payload["evidence"]
+            else:
+                assert restored_lens_run.status == "completed"
+                assert payload["history"]["run_ids"] == [str(candidate_id)]
+                assert payload["evidence"]["history"]["increasing_transitions"] == 1
+        assert len(history.calls) == 1
+
+    if history_failure:
+        import app.metrics.pipeline as pipeline_module
+
+        monkeypatch.setattr(
+            pipeline_module,
+            "analyze_history",
+            lambda *_: (_ for _ in ()).throw(RuntimeError("unexpected History failure")),
+        )
+    run(scenario())

@@ -281,6 +281,38 @@ class MetricHistoryEmpty(StrictMetricModel):
     state: Literal["empty"] = "empty"
 
 
+class MetricHistoryCandidate(StrictMetricModel):
+    """A minimal, framework-neutral projection of one persisted Metric result."""
+
+    lens_run_id: UUID
+    analysis_window: MetricAnalysisWindow
+    status: Literal["completed", "partial", "failed"]
+    data_quality: Literal["good", "degraded", "insufficient"] | None = None
+    mean: FiniteFloat | None = None
+
+    @model_validator(mode="after")
+    def validate_result_projection(self) -> MetricHistoryCandidate:
+        eligible = self.status in {"completed", "partial"} and self.data_quality in {
+            "good",
+            "degraded",
+        }
+        if eligible != (self.mean is not None):
+            raise ValueError("only usable completed or partial candidates carry a mean")
+        if self.status == "failed" and self.data_quality is not None:
+            raise ValueError("failed candidates must not carry data_quality")
+        return self
+
+
+class MetricHistoryCandidates(StrictMetricModel):
+    """Successful History read; individual projections remain domain-validated."""
+
+    state: Literal["candidates"] = "candidates"
+    candidates: tuple[MetricHistoryCandidate, ...] = Field(min_length=1)
+
+
+MetricHistoryRead = MetricHistoryEmpty | MetricHistoryCandidates
+
+
 class MetricCurrentState(StrictMetricModel):
     trend: MetricTrend
     variability: MetricVariability
@@ -337,11 +369,28 @@ class MetricCurrentEvidence(StrictMetricModel):
     slope: FiniteFloat
 
 
+class MetricHistory(StrictMetricModel):
+    direction: Literal["increasing", "decreasing", "stable", "mixed", "unknown"]
+    pattern: Literal["sustained", "reversing", "oscillating", "mixed", "unknown"]
+    run_ids: tuple[UUID, ...] = Field(min_length=1)
+
+
+class MetricHistoryEvidence(StrictMetricModel):
+    level_change_tolerance: FiniteFloat = Field(ge=0)
+    classifiable_transitions: int = Field(ge=0)
+    unknown_transitions: int = Field(ge=0)
+    increasing_transitions: int = Field(ge=0)
+    decreasing_transitions: int = Field(ge=0)
+    stable_transitions: int = Field(ge=0)
+    direction_changes: int = Field(ge=0)
+
+
 class MetricEvidenceSection(StrictMetricModel):
     current: MetricCurrentEvidence
     reference_periods: tuple[MetricReferenceEvidence, ...] | None = Field(
         default=None, min_length=1
     )
+    history: MetricHistoryEvidence | None = None
 
 
 class MetricReferenceLevel(StrictMetricModel):
@@ -413,6 +462,17 @@ class MetricReferenceUnavailableReason(StrictMetricModel):
     component: Literal["reference_periods"] = "reference_periods"
 
 
+class MetricHistoryAnalysisFailedReason(StrictMetricModel):
+    code: Literal["history_analysis_failed"] = "history_analysis_failed"
+    component: Literal["history"] = "history"
+
+
+MetricPartialReason = Annotated[
+    MetricReferenceUnavailableReason | MetricHistoryAnalysisFailedReason,
+    Field(discriminator="code"),
+]
+
+
 def _validate_reference_pair(
     comparisons: tuple[MetricReferenceComparison, ...] | None,
     evidence: MetricEvidenceSection,
@@ -429,6 +489,29 @@ def _validate_reference_pair(
             raise ValueError("reference semantics and evidence must share offset and window")
 
 
+def _validate_history_pair(
+    history: MetricHistory | None,
+    evidence: MetricEvidenceSection,
+) -> None:
+    if (history is None) != (evidence.history is None):
+        raise ValueError("history semantics and evidence must co-occur")
+    if history is None:
+        return
+    history_evidence = evidence.history
+    assert history_evidence is not None
+    if (
+        history_evidence.classifiable_transitions
+        != history_evidence.increasing_transitions
+        + history_evidence.decreasing_transitions
+        + history_evidence.stable_transitions
+    ):
+        raise ValueError("History classifiable transition count is inconsistent")
+    if history_evidence.classifiable_transitions + history_evidence.unknown_transitions != len(
+        history.run_ids
+    ):
+        raise ValueError("History transition count must match run_ids")
+
+
 class CompletedSufficientMetricResult(StrictMetricModel):
     schema_version: Literal["1.0"] = "1.0"
     lens_type: Literal["metric"] = "metric"
@@ -440,12 +523,14 @@ class CompletedSufficientMetricResult(StrictMetricModel):
     reference_periods: tuple[MetricReferenceComparison, ...] | None = Field(
         default=None, min_length=1
     )
+    history: MetricHistory | None = None
     evidence: MetricEvidenceSection
     provenance: MetricResultProvenance
 
     @model_validator(mode="after")
     def validate_reference_pair(self) -> CompletedSufficientMetricResult:
         _validate_reference_pair(self.reference_periods, self.evidence)
+        _validate_history_pair(self.history, self.evidence)
         return self
 
 
@@ -468,19 +553,21 @@ class PartialMetricResult(StrictMetricModel):
     lens_type: Literal["metric"] = "metric"
     identity: MetricIdentity
     status: MetricPartialStatus = Field(default_factory=MetricPartialStatus)
-    reason: MetricReferenceUnavailableReason
+    reason: MetricPartialReason
     analysis_window: MetricAnalysisWindow
     data_quality: Literal["good", "degraded"]
     current_state: MetricCurrentState
     reference_periods: tuple[MetricReferenceComparison, ...] | None = Field(
         default=None, min_length=1
     )
+    history: MetricHistory | None = None
     evidence: MetricEvidenceSection
     provenance: MetricResultProvenance
 
     @model_validator(mode="after")
     def validate_reference_pair(self) -> PartialMetricResult:
         _validate_reference_pair(self.reference_periods, self.evidence)
+        _validate_history_pair(self.history, self.evidence)
         return self
 
 
