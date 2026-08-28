@@ -70,7 +70,7 @@ VS-06 has both VS-03 and VS-05 as direct dependencies. VS-09 has VS-04, VS-06, a
 | VS-01 | Persist one representative completed-sufficient good-series Metric run end to end | none | high-risk | COMPLETE | 54fc2de | `implementation/VS-01-handoff.md` |
 | VS-02 | Persist degraded and completed-insufficient current-quality behavior | VS-01 | high-risk | COMPLETE | dfcf909 | `implementation/VS-02-handoff.md` |
 | VS-03 | Persist every mandatory current-failure outcome | VS-02 | high-risk | COMPLETE | 734ff07 | `implementation/VS-03-handoff.md` |
-| VS-04 | Add independent reference comparison and reference-caused partial persistence | VS-03 | high-risk | IN_PROGRESS | - | - |
+| VS-04 | Add independent reference comparison and reference-caused partial persistence | VS-03 | high-risk | COMPLETE | d65ff287 | `implementation/VS-04-handoff.md` |
 | VS-05 | Add eligible persisted-result History behavior through the reader boundary | VS-01 | high-risk | PLANNED | - | - |
 | VS-06 | Implement PostgreSQL History selection and regress transaction ordering/atomicity for all result variants | VS-03 and VS-05 | high-risk | PLANNED | - | - |
 | VS-07 | Add deterministic optional tools, the application ledger, and tool-caused partial persistence | VS-02 | high-risk | PLANNED | - | - |
