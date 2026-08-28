@@ -339,6 +339,94 @@ class MetricCurrentEvidence(StrictMetricModel):
 
 class MetricEvidenceSection(StrictMetricModel):
     current: MetricCurrentEvidence
+    reference_periods: tuple[MetricReferenceEvidence, ...] | None = Field(
+        default=None, min_length=1
+    )
+
+
+class MetricReferenceLevel(StrictMetricModel):
+    relation: Literal["higher", "lower", "similar"]
+
+
+class MetricReferenceTrend(StrictMetricModel):
+    direction: Literal["increasing", "decreasing", "stable", "unknown"]
+    rate: Literal["slow", "moderate", "fast", "not_classified", "unknown"]
+    direction_relation: Literal["same", "different", "not_comparable"]
+    rate_relation: Literal["faster", "slower", "same", "not_comparable"]
+
+
+class MetricReferenceVariability(StrictMetricModel):
+    state: Literal["low", "moderate", "high", "not_classified", "unknown"]
+    relation: Literal["higher", "lower", "similar", "not_comparable"]
+
+
+class MetricReferenceComparison(StrictMetricModel):
+    offset: str
+    analysis_window: MetricAnalysisWindow
+    level: MetricReferenceLevel
+    trend: MetricReferenceTrend
+    variability: MetricReferenceVariability
+
+    @field_validator("offset")
+    @classmethod
+    def validate_offset(cls, value: str) -> str:
+        if _OFFSET_PATTERN.fullmatch(value) is None:
+            raise ValueError("offset must use positive m, h, d, or w offsets")
+        return value
+
+
+class MetricReferenceEvidence(StrictMetricModel):
+    offset: str
+    analysis_window: MetricAnalysisWindow
+    mean: FiniteFloat
+    std: FiniteFloat = Field(ge=0)
+    min: FiniteFloat
+    max: FiniteFloat
+    slope: FiniteFloat
+    relative_level_change: FiniteFloat
+
+    @field_validator("offset")
+    @classmethod
+    def validate_offset(cls, value: str) -> str:
+        if _OFFSET_PATTERN.fullmatch(value) is None:
+            raise ValueError("offset must use positive m, h, d, or w offsets")
+        return value
+
+
+class MetricReferenceUnavailable(StrictMetricModel):
+    """Operational-only reason one configured comparison could not be formed."""
+
+    offset: str
+    category: Literal["acquisition", "malformed", "insufficient"]
+    diagnostic: str = Field(min_length=1, max_length=512)
+
+    @field_validator("offset")
+    @classmethod
+    def validate_offset(cls, value: str) -> str:
+        if _OFFSET_PATTERN.fullmatch(value) is None:
+            raise ValueError("offset must use positive m, h, d, or w offsets")
+        return value
+
+
+class MetricReferenceUnavailableReason(StrictMetricModel):
+    code: Literal["reference_unavailable"] = "reference_unavailable"
+    component: Literal["reference_periods"] = "reference_periods"
+
+
+def _validate_reference_pair(
+    comparisons: tuple[MetricReferenceComparison, ...] | None,
+    evidence: MetricEvidenceSection,
+) -> None:
+    reference_evidence = evidence.reference_periods
+    if (comparisons is None) != (reference_evidence is None):
+        raise ValueError("reference semantics and evidence must co-occur")
+    if comparisons is None or reference_evidence is None:
+        return
+    if len(comparisons) != len(reference_evidence):
+        raise ValueError("reference semantics and evidence must have equal length")
+    for comparison, item in zip(comparisons, reference_evidence, strict=True):
+        if comparison.offset != item.offset or comparison.analysis_window != item.analysis_window:
+            raise ValueError("reference semantics and evidence must share offset and window")
 
 
 class CompletedSufficientMetricResult(StrictMetricModel):
@@ -349,8 +437,16 @@ class CompletedSufficientMetricResult(StrictMetricModel):
     analysis_window: MetricAnalysisWindow
     data_quality: Literal["good", "degraded"]
     current_state: MetricCurrentState
+    reference_periods: tuple[MetricReferenceComparison, ...] | None = Field(
+        default=None, min_length=1
+    )
     evidence: MetricEvidenceSection
     provenance: MetricResultProvenance
+
+    @model_validator(mode="after")
+    def validate_reference_pair(self) -> CompletedSufficientMetricResult:
+        _validate_reference_pair(self.reference_periods, self.evidence)
+        return self
 
 
 class CompletedInsufficientMetricResult(StrictMetricModel):
@@ -361,6 +457,31 @@ class CompletedInsufficientMetricResult(StrictMetricModel):
     analysis_window: MetricAnalysisWindow
     data_quality: Literal["insufficient"]
     provenance: MetricResultProvenance
+
+
+class MetricPartialStatus(StrictMetricModel):
+    state: Literal["partial"] = "partial"
+
+
+class PartialMetricResult(StrictMetricModel):
+    schema_version: Literal["1.0"] = "1.0"
+    lens_type: Literal["metric"] = "metric"
+    identity: MetricIdentity
+    status: MetricPartialStatus = Field(default_factory=MetricPartialStatus)
+    reason: MetricReferenceUnavailableReason
+    analysis_window: MetricAnalysisWindow
+    data_quality: Literal["good", "degraded"]
+    current_state: MetricCurrentState
+    reference_periods: tuple[MetricReferenceComparison, ...] | None = Field(
+        default=None, min_length=1
+    )
+    evidence: MetricEvidenceSection
+    provenance: MetricResultProvenance
+
+    @model_validator(mode="after")
+    def validate_reference_pair(self) -> PartialMetricResult:
+        _validate_reference_pair(self.reference_periods, self.evidence)
+        return self
 
 
 class FailedMetricResult(StrictMetricModel):

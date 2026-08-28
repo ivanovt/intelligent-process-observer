@@ -21,11 +21,15 @@ from app.metrics.contracts import (
     MetricAgentInsufficientRequest,
     MetricAgentOperationalFailure,
     MetricAgentUsableRequest,
+    MetricAnalysisWindow,
     MetricCurrentAcquisitionFailed,
     MetricCurrentFailure,
     MetricCurrentSeriesMalformed,
     MetricLensExecutionContext,
     MetricMandatoryAnalysisFailure,
+    MetricReferenceComparison,
+    MetricReferenceEvidence,
+    MetricReferenceUnavailable,
     MetricSemantics,
     MetricSeriesAcquisitionFailure,
     MetricSeriesAcquisitionTimeout,
@@ -36,6 +40,7 @@ from app.metrics.contracts import (
 )
 from app.metrics.ports import MetricHistoryReader, MetricsAnalysisAgent, MetricSeriesProvider
 from app.metrics.preprocessing import MetricSeriesMalformedError, prepare_series
+from app.metrics.references import compare_reference, reference_window
 from app.metrics.result_builder import MetricResultBuilder
 from app.metrics.semantics import semanticize_mandatory
 
@@ -51,6 +56,15 @@ class MetricPreTransactionAnalysis:
     insufficient_agent_outcome: MetricAgentCompletion | MetricAgentOperationalFailure | None
     terminal_result: LensAnalysisResultInput
     failure: MetricCurrentFailure | None = None
+    reference_diagnostics: tuple[MetricReferenceUnavailable, ...] = ()
+
+
+@dataclass(frozen=True)
+class PreparedReferenceAnalysis:
+    offset: str
+    window: MetricAnalysisWindow
+    prepared: PreparedUsableSeries
+    semantics: MetricSemantics
 
 
 class MetricAnalysisPipeline:
@@ -146,6 +160,7 @@ class MetricAnalysisPipeline:
             return self._failed_analysis(
                 context, MetricMandatoryAnalysisFailure(diagnostic=_diagnostic(error))
             )
+        prepared_references, reference_diagnostics = await self._prepare_references(context)
         dataset_ref = uuid4().hex
         request = MetricAgentUsableRequest(
             identity=context.identity,
@@ -160,10 +175,29 @@ class MetricAnalysisPipeline:
         self._record_phase("agent_execution")
         completion = await self._agent.complete(request)
         MetricAgentCompletion.model_validate(completion)
+        comparisons, reference_evidence, comparison_diagnostics = self._compare_references(
+            current=usable_prepared,
+            current_semantics=semantics,
+            references=prepared_references,
+        )
+        reference_diagnostics = (*reference_diagnostics, *comparison_diagnostics)
         try:
-            _, terminal_result = self._result_builder.completed_sufficient(
-                context, usable_prepared, semantics
-            )
+            if reference_diagnostics:
+                _, terminal_result = self._result_builder.partial_reference_unavailable(
+                    context,
+                    usable_prepared,
+                    semantics,
+                    comparisons,
+                    reference_evidence,
+                )
+            else:
+                _, terminal_result = self._result_builder.completed_sufficient(
+                    context,
+                    usable_prepared,
+                    semantics,
+                    comparisons,
+                    reference_evidence,
+                )
         except Exception as error:
             return self._failed_analysis(
                 context, MetricMandatoryAnalysisFailure(diagnostic=_diagnostic(error))
@@ -175,7 +209,134 @@ class MetricAnalysisPipeline:
             dataset_ref=dataset_ref,
             insufficient_agent_outcome=None,
             terminal_result=terminal_result,
+            reference_diagnostics=reference_diagnostics,
         )
+
+    async def _prepare_references(
+        self,
+        context: MetricLensExecutionContext,
+    ) -> tuple[
+        tuple[PreparedReferenceAnalysis, ...],
+        tuple[MetricReferenceUnavailable, ...],
+    ]:
+        prepared_references: list[PreparedReferenceAnalysis] = []
+        diagnostics: list[MetricReferenceUnavailable] = []
+        for offset in context.reference_periods:
+            window = reference_window(context.analysis_window, offset)
+            self._record_phase("reference_acquisition")
+            try:
+                acquired = await self._provider.acquire(context.provider_scope, window)
+            except TimeoutError as error:
+                diagnostics.append(
+                    MetricReferenceUnavailable(
+                        offset=offset, category="acquisition", diagnostic=_diagnostic(error)
+                    )
+                )
+                continue
+            except Exception as error:
+                diagnostics.append(
+                    MetricReferenceUnavailable(
+                        offset=offset, category="acquisition", diagnostic=_diagnostic(error)
+                    )
+                )
+                continue
+            if isinstance(
+                acquired,
+                (
+                    MetricSeriesUnavailable,
+                    MetricSeriesAcquisitionFailure,
+                    MetricSeriesAcquisitionTimeout,
+                ),
+            ):
+                diagnostics.append(
+                    MetricReferenceUnavailable(
+                        offset=offset, category="acquisition", diagnostic=acquired.diagnostic
+                    )
+                )
+                continue
+            self._record_phase("reference_preparation")
+            try:
+                prepared = prepare_series(acquired.samples, window)
+            except MetricSeriesMalformedError as error:
+                diagnostics.append(
+                    MetricReferenceUnavailable(
+                        offset=offset, category="malformed", diagnostic=_diagnostic(error)
+                    )
+                )
+                continue
+            except Exception as error:
+                diagnostics.append(
+                    MetricReferenceUnavailable(
+                        offset=offset, category="malformed", diagnostic=_diagnostic(error)
+                    )
+                )
+                continue
+            if isinstance(prepared, PreparedInsufficientSeries):
+                diagnostics.append(
+                    MetricReferenceUnavailable(
+                        offset=offset,
+                        category="insufficient",
+                        diagnostic="fewer than three finite reference samples",
+                    )
+                )
+                continue
+            self._record_phase("reference_semanticization")
+            try:
+                reference_semantics = semanticize_mandatory(prepared, window)
+            except Exception as error:
+                diagnostics.append(
+                    MetricReferenceUnavailable(
+                        offset=offset, category="malformed", diagnostic=_diagnostic(error)
+                    )
+                )
+                continue
+            prepared_references.append(
+                PreparedReferenceAnalysis(
+                    offset=offset,
+                    window=window,
+                    prepared=prepared,
+                    semantics=reference_semantics,
+                )
+            )
+        return tuple(prepared_references), tuple(diagnostics)
+
+    def _compare_references(
+        self,
+        *,
+        current: PreparedUsableSeries,
+        current_semantics: MetricSemantics,
+        references: tuple[PreparedReferenceAnalysis, ...],
+    ) -> tuple[
+        tuple[MetricReferenceComparison, ...],
+        tuple[MetricReferenceEvidence, ...],
+        tuple[MetricReferenceUnavailable, ...],
+    ]:
+        comparisons: list[MetricReferenceComparison] = []
+        evidence: list[MetricReferenceEvidence] = []
+        diagnostics: list[MetricReferenceUnavailable] = []
+        for reference in references:
+            self._record_phase("reference_comparison")
+            try:
+                comparison, reference_evidence = compare_reference(
+                    offset=reference.offset,
+                    window=reference.window,
+                    current=current,
+                    current_semantics=current_semantics,
+                    reference=reference.prepared,
+                    reference_semantics=reference.semantics,
+                )
+            except Exception as error:
+                diagnostics.append(
+                    MetricReferenceUnavailable(
+                        offset=reference.offset,
+                        category="malformed",
+                        diagnostic=_diagnostic(error),
+                    )
+                )
+                continue
+            comparisons.append(comparison)
+            evidence.append(reference_evidence)
+        return tuple(comparisons), tuple(evidence), tuple(diagnostics)
 
     def _failed_analysis(
         self, context: MetricLensExecutionContext, failure: MetricCurrentFailure
@@ -214,8 +375,14 @@ class MetricAnalysisPipeline:
             await self._history_reader.load_empty(session, analysis.context)
             if analysis.semantics is None:
                 raise RuntimeError("usable Metric analysis requires mandatory semantics")
-            target = LensRunStatus.COMPLETED
-            reason = None
+            if analysis.reference_diagnostics:
+                target = LensRunStatus.PARTIAL
+                reason = StructuredReason(
+                    code="reference_unavailable", component="reference_periods"
+                )
+            else:
+                target = LensRunStatus.COMPLETED
+                reason = None
         self._record_phase("lens_run_transition")
         if reason is None:
             await self._repository.advance_lens_run(session, lens_run, target)

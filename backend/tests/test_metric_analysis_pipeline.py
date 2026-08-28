@@ -44,6 +44,7 @@ from app.metrics.contracts import (
     MetricLensExecutionContext,
     MetricMandatoryAnalysisFailure,
     MetricProviderScope,
+    MetricReferenceUnavailable,
     MetricSample,
     MetricSemantics,
     MetricSeriesAcquisitionFailure,
@@ -57,6 +58,7 @@ from app.metrics.contracts import (
 )
 from app.metrics.pipeline import MetricAnalysisPipeline
 from app.metrics.preprocessing import prepare_series
+from app.metrics.references import compare_reference, reference_window
 from app.metrics.result_builder import MetricResultBuilder
 from app.metrics.semantics import semanticize_mandatory
 
@@ -68,7 +70,7 @@ def run(coroutine):
     return asyncio.run(coroutine)
 
 
-def context() -> MetricLensExecutionContext:
+def context(*, reference_periods: tuple[str, ...] = ()) -> MetricLensExecutionContext:
     return MetricLensExecutionContext(
         identity=MetricIdentity(
             observation_id=uuid4(),
@@ -87,7 +89,7 @@ def context() -> MetricLensExecutionContext:
             **{"from": WINDOW_START, "to": WINDOW_START + timedelta(seconds=180)}
         ),
         analysis_objectives=("spike", "drift"),
-        reference_periods=(),
+        reference_periods=reference_periods,
         history_policy=MetricHistoryPolicy(),
     )
 
@@ -137,6 +139,32 @@ class FakeProvider:
     ) -> MetricSeriesAvailable:
         self.requests.append((scope, window))
         return self.available
+
+
+class SequencedProvider:
+    def __init__(self, outcomes) -> None:
+        self.requests: list[tuple[MetricProviderScope, MetricAnalysisWindow]] = []
+        self.outcomes = list(outcomes)
+
+    async def acquire(self, scope, window):
+        self.requests.append((scope, window))
+        outcome = self.outcomes.pop(0)
+        if isinstance(outcome, BaseException):
+            raise outcome
+        return outcome
+
+
+def available_for_window(
+    window: MetricAnalysisWindow, values: tuple[float, ...]
+) -> MetricSeriesAvailable:
+    timestamps = (window.from_, window.from_ + timedelta(seconds=60), window.to)
+    return MetricSeriesAvailable(
+        source="prometheus",
+        samples=tuple(
+            MetricSample(timestamp=timestamp, value=value)
+            for timestamp, value in zip(timestamps, values, strict=True)
+        ),
+    )
 
 
 class FakeAgent:
@@ -1087,3 +1115,268 @@ def test_failed_metric_outcomes_round_trip_through_runtime_aggregate(
         assert history.calls == []
 
     run(scenario())
+
+
+def test_reference_windows_and_comparison_relations_are_current_relative() -> None:
+    execution_context = context(reference_periods=("1h",))
+    reference_analysis_window = reference_window(execution_context.analysis_window, "1h")
+    assert reference_analysis_window.model_dump(by_alias=True) == {
+        "from": WINDOW_START - timedelta(hours=1),
+        "to": WINDOW_START + timedelta(seconds=180) - timedelta(hours=1),
+    }
+
+    current = prepare_series(good_available().samples, execution_context.analysis_window)
+    current_semantics = semanticize_mandatory(current, execution_context.analysis_window)
+    reference = prepare_series(
+        available_for_window(reference_analysis_window, (40.0, 30.0, 20.0)).samples,
+        reference_analysis_window,
+    )
+    reference_semantics = semanticize_mandatory(reference, reference_analysis_window)
+    comparison, evidence = compare_reference(
+        offset="1h",
+        window=reference_analysis_window,
+        current=current,
+        current_semantics=current_semantics,
+        reference=reference,
+        reference_semantics=reference_semantics,
+    )
+
+    assert comparison.model_dump(by_alias=True) == {
+        "offset": "1h",
+        "analysis_window": reference_analysis_window.model_dump(by_alias=True),
+        "level": {"relation": "lower"},
+        "trend": {
+            "direction": "decreasing",
+            "rate": "fast",
+            "direction_relation": "different",
+            "rate_relation": "same",
+        },
+        "variability": {"state": "moderate", "relation": "lower"},
+    }
+    assert evidence.offset == comparison.offset
+    assert evidence.analysis_window == comparison.analysis_window
+    assert evidence.relative_level_change == pytest.approx(-0.25)
+
+
+@pytest.mark.parametrize(
+    ("reference_outcome", "category"),
+    [
+        (MetricSeriesUnavailable(diagnostic="upstream unavailable"), "acquisition"),
+        (
+            MetricSeriesAvailable(
+                source="prometheus",
+                samples=(
+                    MetricSample(timestamp=WINDOW_START - timedelta(hours=1), value=10.0),
+                    MetricSample(timestamp=WINDOW_START - timedelta(hours=1), value=20.0),
+                ),
+            ),
+            "malformed",
+        ),
+        (
+            MetricSeriesAvailable(
+                source="prometheus",
+                samples=(
+                    MetricSample(
+                        timestamp=WINDOW_START - timedelta(hours=1, seconds=1), value=10.0
+                    ),
+                    MetricSample(timestamp=WINDOW_START - timedelta(hours=1), value=20.0),
+                    MetricSample(
+                        timestamp=WINDOW_START - timedelta(hours=1) + timedelta(seconds=60),
+                        value=30.0,
+                    ),
+                ),
+            ),
+            "malformed",
+        ),
+        (None, "insufficient"),
+    ],
+)
+def test_each_unavailable_reference_yields_only_reference_partial(
+    reference_outcome, category: str
+) -> None:
+    execution_context = context(reference_periods=("1h",))
+    reference_analysis_window = reference_window(execution_context.analysis_window, "1h")
+    if reference_outcome is None:
+        reference_outcome = available_for_window(
+            reference_analysis_window, (float("nan"), 10.0, 20.0)
+        )
+    provider = SequencedProvider((good_available(), reference_outcome))
+    repository = RecordingRepository([])
+    pipeline = MetricAnalysisPipeline(
+        provider=provider,
+        agent=FakeAgent(),
+        history_reader=FakeHistoryReader(),
+        repository=repository,
+        result_builder=MetricResultBuilder(lambda: WINDOW_START + timedelta(minutes=5)),
+    )
+
+    analysis = run(pipeline.analyze(execution_context))
+    lens_run = SimpleNamespace(status="running", reason=None)
+    artifact = run(pipeline.persist_terminal(object(), lens_run, analysis))
+
+    assert [request[1] for request in provider.requests] == [
+        execution_context.analysis_window,
+        reference_analysis_window,
+    ]
+    assert analysis.reference_diagnostics == (
+        MetricReferenceUnavailable(
+            offset="1h", category=category, diagnostic=analysis.reference_diagnostics[0].diagnostic
+        ),
+    )
+    assert artifact.status == "partial"
+    assert lens_run.status == "partial"
+    assert lens_run.reason == {
+        "code": "reference_unavailable",
+        "component": "reference_periods",
+    }
+    payload = repository.persisted[0].payload
+    assert payload["reason"] == lens_run.reason
+    assert "reference_periods" not in payload
+    assert "reference_periods" not in payload["evidence"]
+
+
+def test_reference_successes_preserve_configured_order_around_a_failed_offset() -> None:
+    execution_context = context(reference_periods=("1h", "1d", "1w"))
+    first_window = reference_window(execution_context.analysis_window, "1h")
+    third_window = reference_window(execution_context.analysis_window, "1w")
+    provider = SequencedProvider(
+        (
+            good_available(),
+            available_for_window(first_window, (10.0, 20.0, 40.0)),
+            MetricSeriesAcquisitionTimeout(diagnostic="timeout"),
+            available_for_window(third_window, (40.0, 30.0, 20.0)),
+        )
+    )
+    phase_trace: list[str] = []
+    repository = RecordingRepository(phase_trace)
+    pipeline = MetricAnalysisPipeline(
+        provider=provider,
+        agent=FakeAgent(),
+        history_reader=FakeHistoryReader(),
+        repository=repository,
+        result_builder=MetricResultBuilder(lambda: WINDOW_START + timedelta(minutes=5)),
+        record_phase=phase_trace.append,
+    )
+
+    analysis = run(pipeline.analyze(execution_context))
+    lens_run = SimpleNamespace(status="running", reason=None)
+    run(pipeline.persist_terminal(object(), lens_run, analysis))
+
+    assert [window for _, window in provider.requests] == [
+        execution_context.analysis_window,
+        first_window,
+        reference_window(execution_context.analysis_window, "1d"),
+        third_window,
+    ]
+    assert [(item.offset, item.category) for item in analysis.reference_diagnostics] == [
+        ("1d", "acquisition")
+    ]
+    payload = repository.persisted[0].payload
+    assert [item["offset"] for item in payload["reference_periods"]] == ["1h", "1w"]
+    assert [item["offset"] for item in payload["evidence"]["reference_periods"]] == ["1h", "1w"]
+    assert payload["status"] == {"state": "partial"}
+    assert payload["reason"] == {"code": "reference_unavailable", "component": "reference_periods"}
+    assert (
+        phase_trace.index("mandatory_semanticization")
+        < phase_trace.index("reference_acquisition")
+        < phase_trace.index("agent_execution")
+        < phase_trace.index("reference_comparison")
+    )
+
+
+def test_reference_partial_round_trips_through_runtime_aggregate(
+    session_factory: async_sessionmaker[AsyncSession],
+) -> None:
+    async def scenario() -> None:
+        execution_context = context(reference_periods=("1h", "1d"))
+        first_window = reference_window(execution_context.analysis_window, "1h")
+        provider = SequencedProvider(
+            (
+                good_available(),
+                available_for_window(first_window, (10.0, 20.0, 40.0)),
+                MetricSeriesUnavailable(diagnostic="reference unavailable"),
+            )
+        )
+        repository = RuntimePersistenceRepository()
+        pipeline = MetricAnalysisPipeline(
+            provider=provider,
+            agent=FakeAgent(),
+            history_reader=FakeHistoryReader(),
+            repository=repository,
+            result_builder=MetricResultBuilder(lambda: WINDOW_START + timedelta(minutes=5)),
+        )
+
+        async with session_factory() as session:
+            async with session.begin():
+                observation = ObservationModel(
+                    id=execution_context.identity.observation_id,
+                    name=f"Metric reference partial {uuid4()}",
+                    objective="Verify reference partial persistence.",
+                    schema_version=1,
+                )
+                session.add(observation)
+                await session.flush()
+                observation_run = await repository.create_observation_run(
+                    session,
+                    ObservationRunInput(
+                        id=execution_context.identity.observation_run_id,
+                        observation_id=observation.id,
+                    ),
+                )
+                await repository.advance_observation_run(
+                    session, observation_run, ObservationRunStatus.RUNNING
+                )
+                lens_run = await repository.create_lens_run(
+                    session,
+                    observation_run,
+                    LensRunInput(
+                        id=execution_context.identity.lens_run_id,
+                        lens_id=execution_context.identity.lens_id,
+                        lens_type=LensType.METRIC,
+                    ),
+                )
+                await repository.advance_lens_run(session, lens_run, LensRunStatus.RUNNING)
+
+            analysis = await pipeline.analyze(execution_context)
+            async with session.begin():
+                await pipeline.persist_terminal(session, lens_run, analysis)
+
+        async with session_factory() as session:
+            restored = await repository.get_observation_run(
+                session, execution_context.identity.observation_run_id
+            )
+            assert restored is not None
+            restored_lens_run = restored.lens_runs[0]
+            assert restored_lens_run.status == "partial"
+            assert restored_lens_run.reason == {
+                "code": "reference_unavailable",
+                "component": "reference_periods",
+            }
+            assert restored_lens_run.analysis_result is not None
+            assert restored_lens_run.analysis_result.status == "partial"
+            assert restored_lens_run.analysis_result.payload == analysis.terminal_result.payload
+
+    run(scenario())
+
+
+def test_current_insufficiency_does_not_acquire_or_partial_configured_references() -> None:
+    execution_context = context(reference_periods=("1h", "1d"))
+    provider = SequencedProvider((available_from_values((float("nan"), 10.0, 20.0)),))
+    repository = RecordingRepository([])
+    pipeline = MetricAnalysisPipeline(
+        provider=provider,
+        agent=FakeAgent(),
+        history_reader=FakeHistoryReader(),
+        repository=repository,
+        result_builder=MetricResultBuilder(lambda: WINDOW_START + timedelta(minutes=5)),
+    )
+
+    analysis = run(pipeline.analyze(execution_context))
+    lens_run = SimpleNamespace(status="running", reason=None)
+    run(pipeline.persist_terminal(object(), lens_run, analysis))
+
+    assert [window for _, window in provider.requests] == [execution_context.analysis_window]
+    assert analysis.reference_diagnostics == ()
+    assert lens_run.status == "completed"
+    assert repository.persisted[0].payload["data_quality"] == "insufficient"
+    assert "reason" not in repository.persisted[0].payload

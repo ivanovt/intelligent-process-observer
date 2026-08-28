@@ -26,8 +26,12 @@ from app.metrics.contracts import (
     MetricEvidenceSection,
     MetricFailedStatus,
     MetricLensExecutionContext,
+    MetricReferenceComparison,
+    MetricReferenceEvidence,
+    MetricReferenceUnavailableReason,
     MetricResultProvenance,
     MetricSemantics,
+    PartialMetricResult,
     PreparedUsableSeries,
 )
 
@@ -47,7 +51,11 @@ class MetricResultBuilder:
         context: MetricLensExecutionContext,
         prepared: PreparedUsableSeries,
         semantics: MetricSemantics,
+        reference_periods: tuple[MetricReferenceComparison, ...] = (),
+        reference_evidence: tuple[MetricReferenceEvidence, ...] = (),
     ) -> tuple[CompletedSufficientMetricResult, LensAnalysisResultInput]:
+        if bool(reference_periods) != bool(reference_evidence):
+            raise ValueError("reference semantics and evidence must co-occur")
         evidence = prepared.evidence
         result = CompletedSufficientMetricResult(
             identity=context.identity,
@@ -56,16 +64,62 @@ class MetricResultBuilder:
             current_state=MetricCurrentState(
                 trend=semantics.trend, variability=semantics.variability
             ),
-            evidence=MetricEvidenceSection(current=MetricCurrentEvidence(**evidence.model_dump())),
+            reference_periods=reference_periods or None,
+            evidence=MetricEvidenceSection(
+                current=MetricCurrentEvidence(**evidence.model_dump()),
+                reference_periods=reference_evidence or None,
+            ),
             provenance=MetricResultProvenance(
                 source=context.provider_scope.adapter_type,
                 generated_at=self._clock(),
             ),
         )
-        payload = result.model_dump(mode="json", by_alias=True)
+        payload = result.model_dump(mode="json", by_alias=True, exclude_none=True)
         envelope = LensAnalysisResultInput(
             result_type=LensType.METRIC,
             status=LensRunStatus.COMPLETED,
+            schema_version=result.schema_version,
+            identity=LensResultIdentity(**context.identity.model_dump()),
+            provenance=result.provenance.model_dump(mode="json"),
+            payload=payload,
+        )
+        return result, envelope
+
+    def partial_reference_unavailable(
+        self,
+        context: MetricLensExecutionContext,
+        prepared: PreparedUsableSeries,
+        semantics: MetricSemantics,
+        reference_periods: tuple[MetricReferenceComparison, ...],
+        reference_evidence: tuple[MetricReferenceEvidence, ...],
+    ) -> tuple[PartialMetricResult, LensAnalysisResultInput]:
+        """Build the first usable partial variant, owned only by reference completeness."""
+
+        if bool(reference_periods) != bool(reference_evidence):
+            raise ValueError("reference semantics and evidence must co-occur")
+        evidence = prepared.evidence
+        result = PartialMetricResult(
+            identity=context.identity,
+            reason=MetricReferenceUnavailableReason(),
+            analysis_window=context.analysis_window,
+            data_quality=prepared.data_quality,
+            current_state=MetricCurrentState(
+                trend=semantics.trend, variability=semantics.variability
+            ),
+            reference_periods=reference_periods or None,
+            evidence=MetricEvidenceSection(
+                current=MetricCurrentEvidence(**evidence.model_dump()),
+                reference_periods=reference_evidence or None,
+            ),
+            provenance=MetricResultProvenance(
+                source=context.provider_scope.adapter_type,
+                generated_at=self._clock(),
+            ),
+        )
+        payload = result.model_dump(mode="json", by_alias=True, exclude_none=True)
+        envelope = LensAnalysisResultInput(
+            result_type=LensType.METRIC,
+            status=LensRunStatus.PARTIAL,
             schema_version=result.schema_version,
             identity=LensResultIdentity(**context.identity.model_dump()),
             provenance=result.provenance.model_dump(mode="json"),
