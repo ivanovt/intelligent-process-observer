@@ -62,6 +62,28 @@ Stop autonomous execution when there is a source-of-truth conflict, required una
 
 Structural plan changes require: Planner revision -> Slice Plan Reviewer -> human re-approval -> resume from the first affected slice.
 
+When stopping short of completion, record the exact stop/escalation reason in the
+mutable execution metadata of `implementation-plan.md` before reporting it to the
+user. A plan with an `IN_PROGRESS` slice and no recorded active worker or stop reason
+is invalid execution state and must be reconciled before the run ends.
+
+## Final-response gate
+
+Before returning a final response for an autonomous execution run, verify all of the
+following from the repository and live delegation state:
+
+- no slice is `IN_PROGRESS`;
+- no completed slice awaits independent verification, high-risk review, knowledge
+  processing, execution-metadata acceptance, or corrective work;
+- no delegated implementer, reviewer, verifier, or correction worker remains active;
+- every ready slice has been dispatched, or every slice and required final
+  verification/review step has been accepted; and
+- if the plan is incomplete, a defined stop/escalation condition is recorded in the
+  plan's mutable execution metadata.
+
+If any condition is false, continue coordination and use commentary for progress
+updates. Do not return a final response merely to report intermediate state.
+
 ## End state
 
 After all slices are complete, run full change verification required by repository governance and hand off to the existing independent final implementation-review workflow. Do not archive, merge, push, or create a PR unless the repository workflow explicitly authorizes that stage.
