@@ -1,18 +1,22 @@
 # Implementation Plan — add-metrics-analysis-pipeline
 
-**Status:** APPROVED
+**Status:** DRAFT
 **Artifact type:** Non-normative execution plan
 **Approved OpenSpec change:** `add-metrics-analysis-pipeline`
 **Planning branch:** `feature/add-metrics-analysis-pipeline`
 **Implementation candidate branch:** `experiment/codex-add-metrics-analysis-pipeline`
 
-## Human approval record
+## Approval history and renewed gate
 
-- Implementation plan approved for execution.
+- The original implementation plan was approved for execution, and accepted execution
+  history through VS-07 remains valid.
 - Approved dependency scope for VS-08:
   `pydantic-ai-slim>=2,<3`
 - Provider extras: not approved / must not be added.
 - This records an already-made dependency approval; it does not create a new decision.
+- This structural revision inserts VS-07R and revises downstream ownership. It is not
+  approved for execution until an independent slice-plan review completes and the human
+  explicitly reapproves the revised plan.
 
 ## Authority and constraints
 
@@ -49,19 +53,24 @@ Repository constraints:
 - Open prompt wording, provider/model choice, model-dependent budgets, request timeout, and Prometheus transport policy remain implementation-private or out of scope as stated in the approved design. They must not alter the typed contracts or deterministic budgets.
 - OpenSpec tasks 1.2, 1.4, 2.1–2.3, 3.1–3.2, 7.3–7.5, 8.1–8.2, 9.1–9.3, 10.2, and 11.2 are intentionally fulfilled by explicitly named behavioral sub-parts across slices. A task checkbox is complete only when every listed owner has completed its sub-part; no later slice may silently absorb an earlier owner's behavior.
 
-After human approval, slice structure is frozen. Only the Coordinator may update execution metadata. Structural changes require re-planning, independent plan review, and human re-approval.
+After renewed human approval, the revised slice structure is frozen. Only the Coordinator may update execution metadata. Further structural changes require re-planning, independent plan review, and human re-approval.
 
 ## Slice graph
 
 ```text
-VS-01 -> VS-02 -> VS-03 -> VS-04 -> VS-09
+VS-01 -> VS-02 -> VS-03 -> VS-04 -------------------> VS-09
   |        |         |
-  |        |         +-------> VS-06 -> VS-09
-  |        +-> VS-07 -> VS-08 ----------> VS-09
+  |        |         +-------> VS-06 ---------------> VS-09
+  |        +-> VS-07 -> VS-07R -> VS-08 ------------> VS-09
   +-> VS-05 ----------> VS-06
 ```
 
-VS-06 has both VS-03 and VS-05 as direct dependencies. VS-09 has VS-04, VS-06, and VS-08 as direct dependencies. Default execution remains sequential in numeric order. Graph edges express true prerequisites, not authorization to execute independent slices concurrently. A slice starts only after its dependencies pass their completion gates and any required independent high-risk review.
+VS-06 has both VS-03 and VS-05 as direct dependencies. VS-07R depends on VS-07,
+and VS-08 depends on VS-07R. VS-09 has VS-04, VS-06, and VS-08 as direct
+dependencies. Default execution remains sequential in the displayed order, with VS-07R
+between VS-07 and VS-08. Graph edges express true prerequisites, not authorization to
+execute independent slices concurrently. A slice starts only after its dependencies pass
+their completion gates and any required independent high-risk review.
 
 ## Execution overview
 
@@ -73,8 +82,9 @@ VS-06 has both VS-03 and VS-05 as direct dependencies. VS-09 has VS-04, VS-06, a
 | VS-04 | Add independent reference comparison and reference-caused partial persistence | VS-03 | high-risk | COMPLETE | d65ff287 | `implementation/VS-04-handoff.md` |
 | VS-05 | Add eligible persisted-result History behavior through the reader boundary | VS-01 | high-risk | COMPLETE | 442557e | `implementation/VS-05-handoff.md` |
 | VS-06 | Implement PostgreSQL History selection and regress transaction ordering/atomicity for all result variants | VS-03 and VS-05 | high-risk | COMPLETE | ad59b9d + f6648d0 + 51b5236 | `implementation/VS-06-handoff.md` |
-| VS-07 | Add deterministic optional tools, the application ledger, and tool-caused partial persistence | VS-02 | high-risk | COMPLETE | 9f598785 + 56a03b2 | `implementation/VS-07-handoff.md` |
-| VS-08 | Enforce PydanticAI translation, ceilings, and adapter-owned protocol behavior | VS-07; existing dependency approval verified by Coordinator | high-risk | BLOCKED | d4d8e48 (unaccepted) | `implementation/VS-08-handoff.md` |
+| VS-07 | Add deterministic optional tools, registered-execution ledger behavior, and tool-caused partial persistence | VS-02 | high-risk | COMPLETE | 9f598785 + 56a03b2 | `implementation/VS-07-handoff.md` |
+| VS-07R | Add the framework-neutral rejection-capable request policy and persist protocol-caused partial outcomes | VS-07 | high-risk | PLANNED | - | - |
+| VS-08 | Translate the accepted framework-neutral policy through PydanticAI and enforce framework request ceilings | VS-07R; existing dependency approval verified by Coordinator | high-risk | BLOCKED | d4d8e48 (unaccepted; revert before re-execution) | `implementation/VS-08-handoff.md` (unaccepted) |
 | VS-09 | Verify cross-cause composition, document boundaries, and run full conformance | VS-04, VS-06, and VS-08 | high-risk | PLANNED | - | - |
 
 ## Slice definitions
@@ -235,57 +245,83 @@ VS-06 has both VS-03 and VS-05 as direct dependencies. VS-09 has VS-04, VS-06, a
 
 **Completion gate:** focused unit and PostgreSQL tests pass; query/filter/order/lookback is bounded and event-time correct; all four result variants from their owning slices round-trip; the pre-transaction versus transaction-owned order is regressed with real PostgreSQL; repository/transaction failures propagate; flush and commit failures roll back both writes; no schema/migration change exists; existing persistence tests remain green; Ruff passes; independent high-risk review has no unresolved blocker/high finding; one atomic commit and handoff exist.
 
-### VS-07 — Deterministic optional-tool registry, ledger, and persisted partial outcomes
+### VS-07 — Deterministic optional-tool registry, registered executions, and persisted tool partials
 
-**Behavioral goal:** Let the framework-neutral fake agent discover the exact deterministic registry and exercise exactly `spike`, `oscillation`, and `stuck_signal` once each over one opaque bound current dataset; own the application attempt ledger and deterministic tool outcomes; project only successful optional semantics/evidence; and persist the exact tool-owned partial reason when deterministic optional execution fails or times out.
+**Behavioral goal:** Let the framework-neutral fake agent discover the exact deterministic registry and exercise exactly `spike`, `oscillation`, and `stuck_signal` once each over one opaque bound current dataset; record executed registered attempts and deterministic tool outcomes; project only successful optional semantics/evidence; and persist the exact tool-owned partial reason when deterministic optional execution fails or times out.
 
-**OpenSpec coverage:** all exactly-three-tools scenarios; primary ownership of the deterministic allowed-tool registry projection and all-three-tools fake execution; application-ledger attempt order and tool-only component selection; tool outcome/public projection matrix; tasks 1.2/1.4 optional-tool/ledger/result contracts, 4.1–4.5, domain-ledger/all-tools sub-parts of 7.3 and 7.5, tool-owned portions of 8.1–8.2 and 9.2, optional-tool partial portion of 10.2, and focused verification in 11.2.
+**OpenSpec coverage:** all exactly-three-tools algorithm scenarios; primary ownership of the deterministic allowed-tool registry projection and all-three-tools fake execution; executed registered-attempt order and tool-only component selection; successful/not-applicable/failed/timeout public projection matrix; tasks 1.2/1.4 registered-tool/ledger/result portions, registered-registry/outcome portions of 4.1 and 4.5, tasks 4.2–4.4, registered all-tools sub-parts of 7.3 and 7.5, tool-owned portions of 8.1–8.2 and 9.2, optional-tool partial portion of 10.2, and focused verification in 11.2. Rejected-request outcomes and their ledger/policy behavior are owned by VS-07R.
 
 **Dependencies:** VS-02.
 
-**Vertical boundary:** opaque run-scoped prepared-current binding + exact deterministic registry projected into the already-defined usable request + fake-agent registered request sequence -> application-owned ledger -> deterministic tool execution -> optional property/evidence projection or typed tool incompleteness -> strict completed/partial result -> established transaction phase -> real terminal transition/artifact persistence.
+**Vertical boundary:** opaque run-scoped prepared-current binding + exact deterministic registry projected into the already-defined usable request + fake-agent registered request sequence -> executed-attempt ledger entries -> deterministic tool execution -> optional property/evidence projection or typed tool failure/timeout -> strict completed/partial result -> established transaction phase -> real terminal transition/artifact persistence.
 
 **Expected code impact:** `tools.py`, registry/optional/ledger contracts introduced by this behavior, pipeline/builder integration, exhaustive tool tests, fake-agent registry/all-three pipeline tests, and persisted completed/partial cases.
 
-**Contracts consumed/changed:** consumes the usable request/descriptors and opaque dataset reference introduced by VS-01; makes the registry the authoritative source of exactly those projected descriptors; adds typed success/not-applicable/failure/timeout outcomes, authoritative attempt ordering for registered tool executions, public optional evidence models, and earliest failed/timed-out registered-tool component selection when no agent/protocol violation exists. Adapter-owned duplicate/unregistered/parallel/fourth handling is deferred to VS-08.
+**Contracts consumed/changed:** consumes the usable request/descriptors and opaque dataset reference introduced by VS-01; makes the registry the authoritative source of exactly those projected descriptors; adds typed success/not-applicable/failure/timeout outcomes, authoritative attempt ordering for executed registered tools, public optional evidence models, and earliest failed/timed-out registered-tool component selection when no agent/protocol violation exists. This completed slice's `MetricToolAttempt` represents executed registered-tool attempts only; VS-07R extends the framework-neutral ledger and request policy for rejected requests without changing these algorithms or successful outcome projections.
 
-**Non-goals:** PydanticAI translation/request mechanics, model limits/retries, duplicate/unregistered/parallel/fourth agent-protocol ownership, natural-language prompt text, agent/protocol failure priority, references, History, or combined-cause precedence.
+**Non-goals:** rejection-capable request policy; duplicate/unregistered/parallel/fourth request recording; PydanticAI translation/request mechanics; model limits/retries; natural-language prompt text; agent/protocol failure priority; references; History; or combined-cause precedence.
 
 **Focused verification:** every Spike, Oscillation, and Stuck Signal rule/boundary and minimum-sample outcome; authoritative registry is exactly the fixed descriptors/order and the usable request projection cannot drift; immutable dataset binding; fake-agent all-three execution with one application-owned ordinal per attempt; successful present/absent/unknown co-occurrence; not evaluated/not-applicable omission; failure/timeout omission and partial contribution; earliest failed/timed-out tool by ordinal; not-applicable and successful unknown remain non-partial; transient series/reference/ledger/diagnostics absent from result; actual partial status/reason/artifact correlation; zero-tool behavior remains owned/regressed from VS-01 without being re-owned here.
 
 **Context pack:** VS-01/VS-02 handoffs; approved optional-tool and framework-neutral registry/ledger/result requirements; design decisions 5, 6, 10, and 12; ADR-027, ADR-029, ADR-049, ADR-154–156; existing pipeline/builder and persistence tests.
 
-**Handoff expectations:** list authoritative registry/tool interfaces, run-scoped catalog lifetime, outcome/public projection matrix, application-ledger/component rules, all-three fake execution, persisted partial evidence, adapter bindings required by VS-08, tests run, and candidate shared knowledge.
+**Handoff expectations:** list authoritative registry/tool interfaces, run-scoped catalog lifetime, registered outcome/public projection matrix, executed-attempt/component rules, all-three fake execution, persisted partial evidence, the framework-neutral gaps assigned to VS-07R, tests run, and candidate shared knowledge.
 
 **Risk:** high-risk
 
-**Completion gate:** exhaustive tool and fake-agent registry/all-three pipeline tests pass; registry is exactly the three accepted tools and is the source of the usable descriptor projection; application-owned ledger/tool-only failure status/reason persistence is complete; no duplicate/fourth/model-protocol behavior is claimed; no transient data is serialized; no PydanticAI import/dependency exists yet; established transaction ordering remains green; Ruff passes; independent high-risk review has no unresolved blocker/high finding; one atomic commit and handoff exist.
+**Completion gate:** exhaustive tool and fake-agent registry/all-three pipeline tests pass; registry is exactly the three accepted tools and is the source of the usable descriptor projection; executed registered-attempt ordering and tool-only failure status/reason persistence are complete; no rejected-request or model-protocol behavior is claimed; no transient data is serialized; no PydanticAI import/dependency exists yet; established transaction ordering remains green; Ruff passes; independent high-risk review has no unresolved blocker/high finding; the accepted commits and handoff remain the execution record.
 
-### VS-08 — Bounded PydanticAI translation and adapter protocol enforcement
+### VS-07R — Framework-neutral rejection ledger, request policy, and protocol partials
 
-**Behavioral goal:** Implement the injected PydanticAI adapter over the already-owned framework-neutral good/degraded/insufficient projections and deterministic registry/ledger, enforce the model-request ceiling and no-retry policy, handle duplicate/unregistered/parallel/fourth requests without forbidden execution, and persist the correct usable partial result for adapter/model/protocol failure while preserving completed-insufficient resilience.
+**Behavioral goal:** Extend the accepted VS-07 registry boundary with one application-owned, framework-neutral request policy that records every requested action needed by the approved three-slot/each-tool-once contract, rejects duplicate, unregistered, parallel, and over-budget requests before forbidden execution, retains earlier valid deterministic tool results, and persists `optional_analysis_failed/metrics_agent` for a usable run when a fake agent triggers a protocol rejection.
 
-**OpenSpec coverage:** primary ownership of agentic scope rejection, PydanticAI translation, model-request ceilings, retry/protocol failures, duplicate/unregistered/parallel/fourth handling, usable agent-failure mapping, and framework isolation; adapter-specific regression (not primary ownership) for good/degraded/insufficient projections, zero/all-three calls, and insufficient resilience; agent/protocol reason contribution and priority over tool failure; tasks 7.1–7.2, adapter/protocol sub-parts of 7.3–7.5, adapter-owned portions of 1.2, 8.1–8.2, 9.2, optional-agent portion of 10.2, and focused verification in 11.2.
+**OpenSpec coverage:** primary ownership of the framework-neutral rejection-capable ledger and request policy; the duplicate and fourth-request acceptance scenarios; unregistered and parallel rejection semantics from the bounded-agent requirement; agent/protocol priority over an earlier tool failure; scope enforcement at the deterministic request boundary; rejected-outcome portions of tasks 1.2, 1.4, 4.1, and 4.5; application-owned policy/rejection portions of 7.3–7.5; protocol-contribution portions of 8.1–8.2, 9.2, and 10.2; and focused verification in 11.2.
 
-**Dependencies:** VS-07. Before dispatch, the Coordinator verifies and records the already-given `pydantic-ai-slim>=2,<3` without-provider-extras approval; no new approval decision is requested.
+**Dependencies:** VS-07.
 
-**Vertical boundary:** exact already-owned framework-neutral request + bound registry closures + injected PydanticAI model -> adapter translation with zero validation retries and hard request ceiling -> adapter-owned invalid/duplicate/unregistered/parallel/fourth handling + application ledger/tool calls -> strict completion or typed adapter/model/protocol failure -> existing deterministic result selection -> established transaction phase -> real correlated terminal transition/artifact persistence.
+**Vertical boundary:** already-owned opaque dataset binding and deterministic registry + framework-neutral fake-agent request sequence -> application-owned request admission/rejection policy -> accepted registered execution or typed rejected attempt -> authoritative transient ledger and protocol outcome -> preservation of earlier successful projections -> deterministic optional reason selection -> strict partial result -> established transaction phase -> real terminal transition/artifact persistence.
+
+**Expected code impact:** narrow extensions to framework-neutral contracts, ports, and `tools.py` for typed rejected attempts and request admission; pipeline/result-selection integration for a typed agent/protocol failure signal; focused fake-agent, contract, tool-policy, builder, pipeline, and PostgreSQL persistence tests. No dependency, PydanticAI import, adapter, prompt, provider, or deterministic tool-algorithm change belongs here.
+
+**Contracts consumed/changed:** consumes the accepted VS-07 descriptors, deterministic evaluators, registered outcomes, successful projections, and executed-attempt ordering. Adds the approved framework-neutral rejected outcome with bounded rejection reason, a ledger entry capable of representing non-executed rejected requests (including an unregistered requested name), explicit slot-consumption/execution semantics, and an application-owned request policy that is the sole owner of each-tool-once, active-call/parallel, three-slot, and post-budget rejection decisions. Adds only the typed protocol-failure metadata needed for the deterministic pipeline to prefer `metrics_agent`; neither the model nor PydanticAI authors the ledger or terminal reason.
+
+**Non-goals:** changing Spike, Oscillation, or Stuck Signal behavior; changing accepted VS-07 successful/not-applicable/failed/timeout projections; PydanticAI tool registration or message translation; framework validation retries; model-request counting/ceiling; production model/provider selection; prompt prose; references; History; cross-cause precedence; or reusing the rejected VS-08 candidate.
+
+**Focused verification:** the first three requested actions each consume exactly one slot for success, not-applicable, failure, timeout, duplicate, unregistered, or parallel rejection; an already-used tool is not executed twice; an unregistered name never reaches a deterministic evaluator; a request made while another execution is active is rejected without parallel execution; a request after three consumed slots is recorded as over-budget without consuming or executing a fourth slot; ordinals and requested names remain deterministic; valid earlier tool results survive a later rejection; any rejection selects `optional_analysis_failed/metrics_agent` even after an earlier tool failure; tool failures without a protocol violation still select the earliest failed/timed-out tool; not-applicable and successful unknown remain non-partial; scope selectors cannot enter the policy call; ledger, rejection diagnostics, dataset references, and prepared samples remain absent from the public result; fake-agent pipeline and PostgreSQL tests prove real partial LensRun/result reason correlation.
+
+**Context pack:** root `AGENTS.md`; VS-01/VS-02/VS-07 handoffs; complete approved bounded-agent and strict-result requirements; tasks 1.2, 1.4, 4.1, 4.5, 7.3–7.5, 8.1–8.2, 9.2, and 10.2; design decisions 5–6, 10, and 12; ADR-045–049 and ADR-152, ADR-154–156; current framework-neutral contracts/ports/tools/pipeline/result builder and focused tests. Do not read or reuse rejected experimental implementations.
+
+**Handoff expectations:** record the request-policy interface, accepted/rejected outcome union, slot and ordinal accounting, active-call rule, agent/protocol metadata consumed by the pipeline, preservation of accepted VS-07 behavior and earlier successful projections, persisted rejection evidence, focused commands/results, exact adapter obligations left for VS-08, and candidate shared knowledge.
+
+**Risk:** high-risk
+
+**Completion gate:** framework-neutral contract/policy, fake-agent pipeline, and PostgreSQL rejection-partial tests pass for duplicate, unregistered, parallel, and fourth requests; every request is recorded with exact consumption/execution behavior; forbidden execution is impossible through the policy; agent/protocol priority and earlier valid-result retention are proven; accepted VS-07 algorithms and tool-only component selection regress green; no PydanticAI/dependency/adapter change or public diagnostic leakage appears; established transaction ordering remains green; Ruff passes; independent high-risk review has no unresolved blocker/high finding; one atomic commit and handoff exist.
+
+### VS-08 — Bounded PydanticAI translation and framework budget enforcement
+
+**Behavioral goal:** Implement the injected PydanticAI adapter over the already-owned framework-neutral good/degraded/insufficient projections and VS-07R request policy, route framework-observable tool requests and violations through that policy, enforce zero validation retries and the hard model-request ceiling, and persist the correct usable partial result for adapter/model failure while preserving completed-insufficient resilience.
+
+**OpenSpec coverage:** primary ownership of PydanticAI translation, zero framework validation retries, no model-retry hook, the four-model-request/no-fifth ceiling, usable adapter/model-failure translation, insufficient adapter resilience, and framework isolation; adapter-specific regression (not primary ownership) for exact good/degraded/insufficient projections, agentic scope rejection, zero/all-three calls, and every VS-07R request-policy rejection; tasks 7.1–7.2, framework-adapter/model-budget portions of 7.3–7.5, adapter/model portions of 1.2, 8.1–8.2, 9.2, and 10.2, and focused verification in 11.2.
+
+**Dependencies:** VS-07R. Before dispatch, the Coordinator verifies that the already-given `pydantic-ai-slim>=2,<3` without-provider-extras approval remains recorded; no new dependency decision is requested.
+
+**Vertical boundary:** exact already-owned framework-neutral request + VS-07R policy-bound tool closures + injected PydanticAI model -> adapter translation with zero validation retries and hard request ceiling -> framework events routed into accepted request-policy or typed adapter/model failure outcomes -> strict completion or failure translation -> existing deterministic result selection -> established transaction phase -> real correlated terminal transition/artifact persistence.
 
 **Expected code impact:** approved `pydantic-ai-slim>=2,<3` dependency/lock update after the Coordinator records existing approval; one infrastructure adapter; deterministic model-double tests; narrow pipeline/persistence integration tests; import-boundary assertions.
 
-**Contracts consumed/changed:** implements `MetricsAnalysisAgent` without widening the framework-neutral request/completion/ledger types owned by VS-01/VS-02/VS-07; uses no provider extra or model default. Agent/model/protocol failure contributes `optional_analysis_failed/metrics_agent` and outranks earlier tool failure within the optional reason. Insufficient outcomes stay completed-insufficient.
+**Contracts consumed/changed:** implements `MetricsAnalysisAgent` without widening the framework-neutral request, completion, rejection-policy, ledger, or protocol-outcome types owned by VS-01/VS-02/VS-07/VS-07R; uses no provider extra or model default. Framework-observable requests must pass through the VS-07R policy rather than an adapter-private duplicate/budget ledger. Adapter/model failure maps into the already-owned `optional_analysis_failed/metrics_agent` path and insufficient outcomes stay completed-insufficient.
 
-**Non-goals:** re-owning framework-neutral projection, zero-tool, insufficient-resilience, registry, ledger, or tool algorithms; production provider/model/credentials; live calls; provider extras; token/cost/request-timeout policy; Prometheus transport; domain orchestration in PydanticAI; or reference/History data in agent context.
+**Non-goals:** re-owning framework-neutral projection, zero-tool behavior, request-slot semantics, rejection outcomes, protocol-component priority, insufficient-result semantics, registry, ledger, or tool algorithms; production provider/model/credentials; live calls; provider extras; token/cost/request-timeout policy; Prometheus transport; domain orchestration in PydanticAI; or reference/History data in agent context.
 
-**Focused verification:** adapter translation exactly preserves the already-owned good/degraded and identity/window/quality-only insufficient requests with no scope selector/raw series/reference/History leak; exact descriptor literals/order regression; adapter zero and all-three call regression; every actual model request counts; duplicate/unregistered/parallel/fourth rejection and no duplicate/fourth execution; zero tool/output validation retries and no retry hook; four-model-request/no-fifth ceiling; invalid tool/completion, request exhaustion, timeout, and model failure translation; prior successful tool result preservation; later agent violation selects `metrics_agent` over earlier tool failure; adapter-specific insufficient failure regression; actual partial reason persistence; PydanticAI imports only in infrastructure.
+**Focused verification:** adapter translation exactly preserves the already-owned good/degraded and identity/window/quality-only insufficient requests with no scope selector/raw series/reference/History leak; exact descriptor literals/order regression; adapter zero and all-three call regression; every actual model request counts; duplicate/unregistered/parallel/fourth cases exercise the VS-07R policy and cannot bypass its ledger or execute forbidden work; zero tool/output validation retries and no retry hook; four-model-request/no-fifth ceiling; invalid tool/completion, request exhaustion, timeout, and model failure translation without corrective requests; prior successful tool result preservation; later adapter/model or policy rejection selects `metrics_agent` over earlier tool failure; adapter-specific insufficient failure regression; actual partial reason persistence; PydanticAI imports only in infrastructure.
 
-**Context pack:** VS-01/VS-02/VS-07 handoffs; complete approved agent requirement; design decisions 5–7, 10, and 12; ADR-045–049, ADR-152, ADR-155–156; dependency policy and recorded existing approval; current backend dependency files; installed official PydanticAI 2.x APIs needed for implementation.
+**Context pack:** VS-01/VS-02/VS-07/VS-07R accepted handoffs; complete approved agent requirement; design decisions 5–7, 10, and 12; ADR-045–049, ADR-152, ADR-155–156; dependency policy and recorded existing approval; accepted framework-neutral policy/contracts and backend dependency files; installed official PydanticAI 2.x APIs needed for implementation. Do not read or reuse commit `d4d8e48` or its handoff as implementation reference.
 
-**Handoff expectations:** record the verified pre-existing approval and resolved dependency version, adapter injection API, budget/retry configuration, tested model doubles, exact failure/component translations, persisted integration evidence, adapter regressions versus primary behavior owners, remaining implementation-private prompt choice, and candidate shared knowledge.
+**Handoff expectations:** record the verified pre-existing approval and resolved dependency version, adapter injection API, proof that all applicable calls use the VS-07R policy, budget/retry configuration, tested model doubles, exact adapter/model failure translations, persisted integration evidence, adapter regressions versus primary behavior owners, independence from `d4d8e48`, remaining implementation-private prompt choice, and candidate shared knowledge.
 
 **Risk:** high-risk
 
-**Completion gate:** the Coordinator's record confirms existing dependency approval before dependency edits; deterministic adapter and focused pipeline/persistence tests pass without network; no provider extra/default exists; every adapter/model/protocol terminal contribution is complete here while framework-neutral behaviors retain their earlier owners; import-boundary and established transaction-order scans pass; Ruff passes; independent high-risk review has no unresolved blocker/high finding; one atomic commit and handoff exist.
+**Completion gate:** the Coordinator's record confirms existing dependency approval before dependency edits; the unaccepted `d4d8e48` changes were first reverted and not reused; deterministic adapter and focused pipeline/persistence tests pass without network; no provider extra/default exists; every framework-specific request-budget/retry and adapter/model contribution is complete while VS-07R retains framework-neutral policy/rejection ownership; import-boundary and established transaction-order scans pass; Ruff passes; independent high-risk review has no unresolved blocker/high finding; one fresh atomic commit and handoff exist.
 
 ### VS-09 — Cross-cause conformance, documentation, and full verification
 
@@ -315,7 +351,7 @@ VS-06 has both VS-03 and VS-05 as direct dependencies. VS-09 has VS-04, VS-06, a
 
 ## Coverage matrix
 
-Coverage audit target and result for this plan: **11/11 requirements, 72/72 acceptance scenarios, and 37/37 implementation tasks/sub-parts have an explicit primary owner and verification path.** Adapter and final-conformance regressions are identified as secondary verification and do not transfer primary ownership.
+Coverage audit target for this revised draft: **11/11 requirements, 72/72 acceptance scenarios, and 37/37 implementation tasks/sub-parts have an explicit primary owner and verification path.** Adapter and final-conformance regressions are identified as secondary verification and do not transfer primary ownership. Independent plan review must confirm this mapping before renewed human approval.
 
 ### Requirement-level ownership
 
@@ -325,12 +361,12 @@ Coverage audit target and result for this plan: **11/11 requirements, 72/72 acce
 | Acquire metric series only through the internal provider boundary | VS-01 owns current/zero-reference acquisition; VS-04 owns configured reference acquisition |
 | Prepare samples and calculate mandatory evidence deterministically | VS-01 owns the representative good path; VS-02 owns degraded/insufficient and exhaustive quality/statistics behavior; VS-03 owns malformed current terminal behavior; VS-04 owns reference-role mapping |
 | Form mandatory trend and variability using the fixed normalized policy | VS-01 owns representative use; VS-02 owns exhaustive ADR-153 behavior |
-| Provide exactly three deterministic optional analytical tools | VS-07 |
-| Invoke the Metrics Analysis Agent through a bounded framework-neutral contract | VS-01 owns good usable projection and zero-tool fake completion; VS-02 owns degraded/insufficient projection and insufficient resilience; VS-07 owns deterministic registry/ledger/all-three fake execution; VS-08 owns PydanticAI translation, ceilings, protocol handling, and adapter regressions |
+| Provide exactly three deterministic optional analytical tools | VS-07 owns the registry, algorithms, registered outcomes, and tool-only partials; VS-07R owns the framework-neutral rejected outcome and request-admission policy |
+| Invoke the Metrics Analysis Agent through a bounded framework-neutral contract | VS-01 owns good usable projection and zero-tool fake completion; VS-02 owns degraded/insufficient projection and insufficient resilience; VS-07 owns deterministic registry/registered all-three fake execution; VS-07R owns the application rejection-capable ledger/policy and protocol partials; VS-08 owns PydanticAI translation, framework request ceilings/retries, adapter/model failures, and adapter regressions |
 | Compare valid reference periods independently with ordered relations | VS-04 |
 | Make missing configured reference analysis partial without placeholders | VS-04 |
 | Analyze eligible persisted Metric History in event-time order | VS-05 owns domain behavior; VS-06 owns PostgreSQL selection/infrastructure behavior |
-| Build the exact strict MetricAnalysisResult 1.0 contract | VS-01/VS-02/VS-03/VS-04/VS-05/VS-07/VS-08 own only the variants/sections/reasons first used by their behavior; VS-09 verifies cross-cause combinations only |
+| Build the exact strict MetricAnalysisResult 1.0 contract | VS-01/VS-02/VS-03/VS-04/VS-05/VS-07/VS-07R own only the variants/sections/reasons first used by their behavior; VS-08 verifies adapter/model translation into those contracts; VS-09 verifies cross-cause combinations only |
 | Persist terminal Metric outcome atomically through the existing repository | Every behavioral slice persists its own outcome; VS-01 owns initial phase ordering; VS-06 owns real PostgreSQL ordering regression, all-variant round trip, and rollback hardening |
 
 ### Requirements and acceptance scenarios
@@ -338,7 +374,7 @@ Coverage audit target and result for this plan: **11/11 requirements, 72/72 acce
 | OpenSpec requirement / acceptance scenarios | Primary owning slice | Verification |
 |---|---|---|
 | Execute immutable scope: “Execute a successful current-window analysis” | VS-01 | Already-running LensRun traverses fake provider/agent before transaction, then empty History/read-write transaction, caller commit, and retrieval |
-| Execute immutable scope: “Reject agentic scope expansion” | VS-08 | Adapter tool schemas/bound closures prevent identity/query/source/window/dataset/lifecycle mutation |
+| Execute immutable scope: “Reject agentic scope expansion” | VS-07R | Framework-neutral policy accepts only one bound tool name over the existing opaque dataset and rejects scope expansion; VS-08 regresses that the adapter cannot bypass it |
 | Acquire through provider boundary: “Acquire zero configured references”; “Test without provider transport” | VS-01 | Fake provider sees only current; no transport/default reference exists |
 | Acquire through provider boundary: “Acquire one configured reference”; “Acquire multiple references independently” | VS-04 | Exact per-offset requests/windows/order and isolated outcomes |
 | Prepare/calculate mandatory evidence: “Calculate exact statistics” | VS-01 | Representative exact statistics own the scenario; VS-02 expands regression tables without changing ownership |
@@ -348,8 +384,9 @@ Coverage audit target and result for this plan: **11/11 requirements, 72/72 acce
 | Exactly three tools: “Detect spike with non-zero MAD”; “Apply all zero-MAD spike outcomes”; “Skip inapplicable spike”; “Classify oscillation outcomes”; “Skip inapplicable oscillation”; “Classify exact stuck-signal outcomes”; “Skip inapplicable stuck signal” | VS-07 | Exhaustive deterministic registry/tool tables plus public projection and persistence tests |
 | Bounded agent: “Project good current data into the usable request”; “Complete with zero tool calls” | VS-01 | Captured exact good framework-neutral request and zero-tool fake completion |
 | Bounded agent: “Project degraded current data into the same usable request”; “Project insufficient current data into the narrow request”; “Preserve insufficient determination on agent failure” | VS-02 | Exact captured projections and fake-agent insufficient resilience |
-| Bounded agent: “Project the deterministic allowed-tool registry”; “Use all three tools once” | VS-07 | Authoritative registry-to-request correlation and all-three fake execution with application ledger |
-| Bounded agent: “Reject a duplicate request”; “Reject a fourth request”; “Enforce the hard model-request ceiling without validation retries” | VS-08 | Injected-model counters, adapter rejection/no-execution, and no-retry/no-fifth assertions |
+| Bounded agent: “Project the deterministic allowed-tool registry”; “Use all three tools once” | VS-07 | Authoritative registry-to-request correlation and all-three fake execution with executed-attempt ledger entries |
+| Bounded agent: “Reject a duplicate request”; “Reject a fourth request” | VS-07R | Framework-neutral fake-agent request-policy tests prove exact slot accounting, recorded rejection, forbidden-execution prevention, protocol partial persistence, and earlier-result retention |
+| Bounded agent: “Enforce the hard model-request ceiling without validation retries” | VS-08 | Injected-model counters, zero-retry configuration, four-request ceiling, and no-corrective/no-fifth assertions |
 | Bounded agent: “Preserve usable core on agent failure”; “Keep PydanticAI outside domain contracts” | VS-08 | Adapter-to-persisted-pipeline failure cases and import-boundary scan |
 | Compare references: “Compare ordered reference descriptors”; “Preserve multiple independent comparisons” | VS-04 | Relation tables and paired configured-order output |
 | Missing references: “Omit an acquisition-unavailable reference”; “Omit an analytically insufficient reference”; “Omit a reference with duplicate timestamps”; “Omit a reference with an out-of-window sample”; “Preserve successful references when another reference is malformed” | VS-04 | Per-cause end-to-end partial persistence with successful-offset preservation and no placeholders |
@@ -362,40 +399,42 @@ Coverage audit target and result for this plan: **11/11 requirements, 72/72 acce
 | Strict result: “Build completed insufficient result” | VS-02 | Strict forbidden-field test plus persisted round trip |
 | Strict result: “Build minimal failed Metric result”; “Map a failed Metric error without leaking diagnostics”; “Preserve provenance when current acquisition never succeeds”; “Preserve identity primitive compatibility”; “Preserve exact Metric window names” | VS-03 | Exact failure mapping/provenance/identity/window contract and persistence tests |
 | Strict result: “Select the earliest failed tool attempt”; “Do not make non-failure tool outcomes partial” | VS-07 | Tool-owned ordinal and projection/result tests |
-| Strict result: “Prefer the agent component after an earlier tool failure”; “Use the agent component for rejected duplicate and fourth requests” | VS-08 | Adapter-owned protocol priority and persisted component tests |
+| Strict result: “Prefer the agent component after an earlier tool failure”; “Use the agent component for rejected duplicate and fourth requests” | VS-07R | Framework-neutral protocol-outcome priority and persisted component tests; VS-08 regresses adapter/model translation into the same accepted path |
 | Strict result cross-cause: “Apply primary partial-reason precedence”; “Prefer reference component over optional failure”; “Prefer History component over optional failure” | VS-09 | Cross-cause verification over already implemented contributions; no new terminal logic |
 | Persist terminal outcome: “Round-trip all Metric result variants”; “Roll back persistence failure” | VS-06 | PostgreSQL all-variant retrieval, phase-order regression, and forced flush/commit rollback |
-| Persist terminal outcome: “Avoid transport, model, and framework coupling” | VS-09 | Whole-change import/dependency/scope audit; ownership enforced in VS-01 and VS-08 |
+| Persist terminal outcome: “Avoid transport, model, and framework coupling” | VS-09 | Whole-change import/dependency/scope audit; ownership enforced in VS-01, VS-07R, and VS-08 |
 
 ### Implementation task ownership
 
 | OpenSpec task | Explicit owning slice/sub-part | Verification |
 |---|---|---|
 | 1.1 | VS-01 | Frozen execution context, primitive compatibility, order/uniqueness, strict UTC/window tests |
-| 1.2 | VS-01 available/current-good/usable-agent/empty-History outcomes; VS-02 degraded/insufficient outcomes; VS-03 current-failure outcomes; VS-04 reference outcomes; VS-05 History candidate/stage outcomes; VS-07 tool/ledger outcomes; VS-08 adapter/model/protocol outcomes | Each contract is introduced with its first real behavioral path; task closes after VS-08 boundary audit |
+| 1.2 | VS-01 available/current-good/usable-agent/empty-History outcomes; VS-02 degraded/insufficient outcomes; VS-03 current-failure outcomes; VS-04 reference outcomes; VS-05 History candidate/stage outcomes; VS-07 registered-tool/executed-attempt outcomes; VS-07R rejected-attempt/policy/protocol outcomes; VS-08 adapter/model outcomes | Each contract is introduced with its first real behavioral path; task closes after VS-08 boundary audit |
 | 1.3 | VS-01 provider/agent/minimal empty-History protocols; VS-05 History candidate expansion | Fake boundary/scope tests; no unused non-empty History structure in VS-01 |
-| 1.4 | VS-01 completed-sufficient/common models actually used; VS-02 completed-insufficient; VS-03 failed/error; VS-04 first partial/reference sections; VS-05 History sections; VS-07 optional sections; VS-08 agent/protocol reason variant | Per-variant/section strict tests; no future result shells in VS-01; task closes after VS-08 |
+| 1.4 | VS-01 completed-sufficient/common models actually used; VS-02 completed-insufficient; VS-03 failed/error; VS-04 first partial/reference sections; VS-05 History sections; VS-07 optional sections; VS-07R agent/protocol reason contribution | Per-variant/section strict tests; VS-08 only verifies framework translation and boundary isolation; task closes after VS-08 |
 | 2.1 | VS-01 representative good preparation; VS-02 degraded/insufficient/non-finite behavior; VS-03 duplicate/out-of-window malformed behavior; VS-04 reference-role mapping | Pure role-neutral tables plus owning persisted paths |
 | 2.2 | VS-01 representative exact evidence; VS-02 exhaustive irregular/constant/finite statistics | Exact formula tables and persisted current paths |
 | 2.3 | VS-01 representative good classification; VS-02 exhaustive good/degraded/insufficient boundaries | Quality tables and degraded/insufficient persisted paths |
 | 3.1, 3.2 | VS-01 representative semantic use; VS-02 exhaustive ADR-153 algorithm/boundary ownership | Exact threshold/constant/signed/near-zero tables |
-| 4.1, 4.2, 4.3, 4.4, 4.5 | VS-07 | Registry, three algorithms, outcome matrix, fake-agent all-tools execution, and persisted optional paths |
+| 4.1 | VS-07 registry and registered success/not-applicable/failure/timeout outcomes; VS-07R rejected outcome and request-admission policy | Exact registry/binding tests plus framework-neutral rejected-attempt and forbidden-execution tests |
+| 4.2, 4.3, 4.4 | VS-07 | Complete Spike, Oscillation, and Stuck Signal algorithm/boundary tables |
+| 4.5 | VS-07 successful/not-applicable/failed/timeout property/evidence matrix; VS-07R rejected-request omission and incompleteness path | Focused projection/result tests for every outcome, including persisted rejection partials |
 | 5.1, 5.2, 5.3, 5.4 | VS-04 | Window/comparator/correlation/per-cause partial tests |
 | 6.1 | VS-05 | Complete pure History algorithm tables |
 | 6.2 | VS-05 typed candidate validation/order/lookback; VS-06 PostgreSQL query proof | Pure/fake selection then real database selection |
 | 6.3 | VS-05 analytical/port outcomes; VS-06 repository/session implementation failure | Persisted deterministic failure and real infrastructure propagation |
 | 7.1 | VS-08 after Coordinator records the already-given approval | Dependency/lock audit with no provider extra/default |
-| 7.2 | VS-08 translation over projections owned by VS-01/VS-02 and registry owned by VS-07 | Adapter translation tests; no domain type widening |
-| 7.3 | VS-07 owns application ledger and registered all-tools execution; VS-08 owns adapter enforcement for duplicate/unregistered/parallel/fourth, zero retries, and request ceiling | Fake-ledger/tool tests plus injected-model protocol/request counters |
-| 7.4 | VS-02 owns framework-neutral insufficient resilience; VS-08 owns usable adapter failures and adapter-specific insufficient translation regression | Persisted fake-agent and adapter/model/protocol failure cases |
-| 7.5 | VS-01 owns zero-tool fake behavior; VS-02 owns projection/insufficient fake behavior; VS-07 owns registry/all-three fake behavior; VS-08 owns only deterministic PydanticAI adapter regressions and adapter-specific cases | Primary behavior tests precede adapter regression; task closes after VS-08 |
-| 8.1 | VS-01 completed-sufficient; VS-02 completed-insufficient/degraded; VS-03 failed; VS-04 reference partial; VS-05 History; VS-07 optional tool; VS-08 agent/protocol contribution | Builder grows only with first real use by each named owner |
+| 7.2 | VS-08 translation over projections owned by VS-01/VS-02, registry owned by VS-07, and policy owned by VS-07R | Adapter translation tests; no domain type widening |
+| 7.3 | VS-07 owns registered all-tools execution; VS-07R owns the application rejection-capable ledger/policy for all outcome classes and slot/each-tool/parallel enforcement; VS-08 owns zero framework retries, no retry hook, hard model-request ceiling, and adapter routing through the policy | Fake policy/ledger/persistence tests precede injected-model request counters and adapter regressions |
+| 7.4 | VS-02 owns framework-neutral insufficient resilience; VS-07R owns usable protocol-rejection mapping and earlier valid-result retention; VS-08 owns adapter/model failures and adapter-specific insufficient translation regression | Persisted fake-agent protocol cases plus adapter/model failure cases |
+| 7.5 | VS-01 owns zero-tool fake behavior; VS-02 owns projection/insufficient fake behavior; VS-07 owns registry/all-three fake behavior; VS-07R owns fake duplicate/unregistered/parallel/fourth behavior; VS-08 owns deterministic PydanticAI regressions and framework-specific budget/retry cases | Primary framework-neutral behavior tests precede adapter regression; task closes after VS-08 |
+| 8.1 | VS-01 completed-sufficient; VS-02 completed-insufficient/degraded; VS-03 failed; VS-04 reference partial; VS-05 History; VS-07 optional tool; VS-07R agent/protocol contribution | Builder grows only with first real use by each named owner; VS-08 consumes it unchanged |
 | 8.2 | Same per-behavior owners as 8.1; VS-09 cross-cause-only regression | Exhaustive local builder tests plus final interaction verification |
 | 9.1 | VS-01 completed-sufficient walking skeleton; VS-02 degraded/insufficient paths; VS-03 current-failed paths | Every current path executes through an already-running LensRun and real persistence |
-| 9.2 | VS-04 reference contribution; VS-05 History contribution; VS-07 tool contribution/component; VS-08 agent/protocol contribution/component; VS-09 cross-cause-only verification | Every terminal contribution is implemented with its behavior; final slice only combines causes |
+| 9.2 | VS-04 reference contribution; VS-05 History contribution; VS-07 tool contribution/component; VS-07R agent/protocol contribution/component; VS-08 adapter/model translation regression; VS-09 cross-cause-only verification | Every terminal contribution is implemented with its primary behavior; adapter and final slices only regress/compose causes |
 | 9.3 | VS-03 current failure roles; VS-04 reference role; VS-05 History port distinction; VS-06 real History repository/transaction infrastructure failure | Focused role-specific and real-infrastructure tests |
 | 10.1 | VS-06 | Bounded PostgreSQL History query/filter/order/lookback integration tests |
-| 10.2 | VS-01 completed-sufficient/order; VS-02 degraded/insufficient; VS-03 failed; VS-04 reference partial; VS-05 History partial; VS-07 tool partial; VS-08 agent partial; VS-06 all-variant/transaction-order/atomic hardening | Each behavior persists in its owning slice; VS-06 proves repository-wide ordering/invariants |
+| 10.2 | VS-01 completed-sufficient/order; VS-02 degraded/insufficient; VS-03 failed; VS-04 reference partial; VS-05 History partial; VS-07 tool partial; VS-07R protocol partial; VS-08 adapter/model partial regression; VS-06 all-variant/transaction-order/atomic hardening | Each primary behavior persists in its owning slice; VS-06 proves repository-wide ordering/invariants |
 | 10.3 | VS-06 | Forced flush/commit failure and rollback tests |
 | 11.1 | VS-09 | Concise provider/model/result/future-transport boundary documentation audit |
 | 11.2 | Every slice for its focused tests; VS-09 for complete backend/change suite | Commands/results recorded per handoff and final conformance run |
@@ -405,13 +444,17 @@ Coverage audit target and result for this plan: **11/11 requirements, 72/72 acce
 
 Mutable Coordinator-owned execution metadata only. Do not place new requirements or redesign decisions here.
 
-- Slice order defaults to VS-01 through VS-09 even where the graph permits independent work.
+- Slice order defaults to VS-01 through VS-07, then VS-07R, VS-08, and VS-09 even where the graph permits independent work.
 - VS-01 is the genuine persisted walking skeleton. Its test must enter through an already-running Metric LensRun, finish current acquisition/preparation/statistics/semantics and zero-tool fake-agent execution before opening the database transaction, then perform the successful empty History read, strict build, real terminal transition, artifact insertion/flush, and caller commit in that transaction.
 - VS-06 must regress the same phase ordering with real PostgreSQL and own caller rollback verification: applicable provider/current/agent work is pre-transaction; applicable History loading, terminal transition, artifact insertion/flush, and caller commit/rollback are transaction-owned.
-- Before dispatching VS-08, the Coordinator verifies and records the existing `pydantic-ai-slim>=2,<3` without-provider-extras approval. This is metadata verification, not a new approval request or decision.
+- No implementation resumes from this draft. First run an independent slice-plan review, resolve any accepted findings in the plan, and obtain explicit renewed human approval.
+- After renewed approval and before dispatching VS-07R, the Coordinator must create a non-destructive revert of only commit `d4d8e48`, verify that its dependency, adapter, pipeline, tests, lockfile, and handoff changes are absent, and preserve all accepted slice commits plus the stop/replanning history. Do not rewrite branch history.
+- Commit `d4d8e48` and `implementation/VS-08-handoff.md` are rejected execution evidence: they do not satisfy any task, coverage row, slice gate, or prerequisite, and no implementer may read, copy, cherry-pick, or otherwise reuse them as an implementation reference.
+- After the revert, dispatch VS-07R to a fresh implementer and require its independent high-risk review and Coordinator acceptance before unblocking VS-08.
+- Re-execute VS-08 from a fresh context and the accepted VS-07R handoff. Before dispatch, the Coordinator verifies and records the existing `pydantic-ai-slim>=2,<3` without-provider-extras approval. This is metadata verification, not a new approval request or decision.
 - All slices are high-risk because each either introduces strict lifecycle/failure/persistence behavior or verifies the major integrated contract. Each requires independent slice review after implementer self-review and before acceptance/unblocking dependents.
 - Each Slice Implementer works from a fresh context, reads its context pack plus predecessor handoffs, runs focused verification, self-reviews, creates one atomic commit, and writes a compact handoff using `openspec/templates/slice-handoff-template.md`.
-- The Coordinator alone updates `Status`, `Commit`, and `Handoff` execution fields after accepting a slice. Planned goals, dependencies, boundaries, ownership, coverage, risks, and completion gates are frozen after human approval.
+- The Coordinator alone updates `Status`, `Commit`, and `Handoff` execution fields after accepting a slice. Planned goals, dependencies, boundaries, ownership, coverage, risks, and completion gates are frozen after renewed human approval.
 - OpenSpec task checkboxes with split ownership remain unchecked until every listed sub-part has passed its owning slice gate. A later slice may integrate or regress an earlier behavior but may not become its implementation owner silently.
 - If implementation exposes a source conflict, new behavior, missing architecture decision, unverifiable dependency-approval source, required migration/index, or other structural change, stop the affected slice and request re-planning/source reconciliation. Do not reinterpret an Open/Deferred item as permission.
 - Shared-knowledge observations remain candidates in handoffs/`.agents/knowledge/candidates.md` until the Coordinator validates them against authoritative evidence. They are not requirements.
@@ -420,4 +463,5 @@ Mutable Coordinator-owned execution metadata only. Do not place new requirements
 - Coordinator pause record (2026-08-29): user directed execution to pause after VS-07 acceptance pending further confirmation. VS-08 and VS-09 remain unstarted.
 - Coordinator execution record (2026-08-29): the approved plan's Human approval record for `pydantic-ai-slim>=2,<3` without provider extras was verified before VS-08 dependency work. By explicit user direction, the Coordinator is the VS-08 implementer; retain a fresh independent high-risk reviewer and pause after acceptance. This supersedes the prior pause record for VS-08 only.
 - Coordinator stop record (2026-08-29): VS-08 is blocked by a source/plan conflict identified by independent review. The frozen VS-07 `MetricToolAttempt` contract permits only executed registered-tool attempts, but the approved VS-08 protocol requires recorded rejected duplicate, unregistered, parallel, and fourth requests. Reconciliation requires implementation-plan revision, independent slice-plan review, and human re-approval before implementation resumes. Commit `d4d8e48` is unaccepted and must not be treated as completion.
+- Plan-revision disposition (2026-08-29): VS-01 through VS-07 acceptance records remain unchanged. VS-07R now owns the missing framework-neutral rejection ledger/policy and protocol-persistence prerequisite. VS-08 remains blocked until independent plan review, renewed human approval, a recorded revert of `d4d8e48`, and accepted VS-07R completion; it must then be re-executed by a fresh implementer without using the rejected commit or handoff. After those prerequisites are recorded, the Coordinator may reset the VS-08 execution row to `PLANNED` with empty commit/handoff fields before dispatch.
 - Completion of VS-09 means ready for official change verification and independent implementation review. It does not authorize archive, push, PR creation, merge, or direct work on `main`.
