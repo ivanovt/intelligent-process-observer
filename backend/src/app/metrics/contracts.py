@@ -275,6 +275,131 @@ MetricAgentRequest = MetricAgentUsableRequest | MetricAgentInsufficientRequest
 MetricAgentOutcome = MetricAgentCompletion | MetricAgentOperationalFailure
 
 
+MetricToolName = Literal["spike", "oscillation", "stuck_signal"]
+
+
+class MetricOptionalProperty(StrictMetricModel):
+    state: Literal["present", "absent", "unknown"]
+
+
+class SpikeModifiedZEvidence(StrictMetricModel):
+    method: Literal["modified_z"] = "modified_z"
+    detected_sample_count: int = Field(ge=0)
+    detected_timestamps: tuple[datetime, ...]
+    max_abs_modified_z: FiniteFloat = Field(ge=0)
+
+    @field_validator("detected_timestamps")
+    @classmethod
+    def normalize_timestamps(cls, values: tuple[datetime, ...]) -> tuple[datetime, ...]:
+        return tuple(_utc_datetime(value) for value in values)
+
+    @model_validator(mode="after")
+    def require_matching_count(self) -> SpikeModifiedZEvidence:
+        if self.detected_sample_count != len(self.detected_timestamps):
+            raise ValueError("spike detected count must match timestamps")
+        return self
+
+
+class SpikeZeroMadEvidence(StrictMetricModel):
+    method: Literal["mad_zero_exact_deviation"] = "mad_zero_exact_deviation"
+    deviation_count: int = Field(ge=0)
+    detected_sample_count: int = Field(ge=0)
+    detected_timestamps: tuple[datetime, ...]
+
+    @field_validator("detected_timestamps")
+    @classmethod
+    def normalize_timestamps(cls, values: tuple[datetime, ...]) -> tuple[datetime, ...]:
+        return tuple(_utc_datetime(value) for value in values)
+
+    @model_validator(mode="after")
+    def require_matching_count(self) -> SpikeZeroMadEvidence:
+        if self.detected_sample_count != len(self.detected_timestamps):
+            raise ValueError("spike detected count must match timestamps")
+        return self
+
+
+class OscillationEvidence(StrictMetricModel):
+    deadband: FiniteFloat = Field(ge=0)
+    significant_residual_count: int = Field(ge=0)
+    sign_change_count: int = Field(ge=0)
+    sign_change_ratio: FiniteFloat = Field(ge=0, le=1)
+
+
+class StuckSignalEvidence(StrictMetricModel):
+    repeated_value: FiniteFloat
+    longest_run_sample_count: int = Field(gt=0)
+    longest_run_share: FiniteFloat = Field(gt=0, le=1)
+
+
+MetricToolEvidence = (
+    SpikeModifiedZEvidence | SpikeZeroMadEvidence | OscillationEvidence | StuckSignalEvidence
+)
+
+
+class SpikeToolSuccess(StrictMetricModel):
+    name: Literal["spike"] = "spike"
+    state: Literal["present", "absent", "unknown"]
+    evidence: SpikeModifiedZEvidence | SpikeZeroMadEvidence
+
+
+class OscillationToolSuccess(StrictMetricModel):
+    name: Literal["oscillation"] = "oscillation"
+    state: Literal["present", "absent", "unknown"]
+    evidence: OscillationEvidence
+
+
+class StuckSignalToolSuccess(StrictMetricModel):
+    name: Literal["stuck_signal"] = "stuck_signal"
+    state: Literal["present", "absent"]
+    evidence: StuckSignalEvidence
+
+
+MetricToolSuccess = SpikeToolSuccess | OscillationToolSuccess | StuckSignalToolSuccess
+
+
+class MetricToolNotApplicable(StrictMetricModel):
+    name: MetricToolName
+    outcome: Literal["not_applicable"] = "not_applicable"
+
+
+class MetricToolFailed(StrictMetricModel):
+    name: MetricToolName
+    outcome: Literal["failed"] = "failed"
+    diagnostic: str = Field(min_length=1, max_length=512)
+
+
+class MetricToolTimedOut(StrictMetricModel):
+    name: MetricToolName
+    outcome: Literal["timeout"] = "timeout"
+    diagnostic: str = Field(min_length=1, max_length=512)
+
+
+MetricToolOutcome = (
+    MetricToolSuccess | MetricToolNotApplicable | MetricToolFailed | MetricToolTimedOut
+)
+
+
+class MetricToolAttempt(StrictMetricModel):
+    ordinal: int = Field(gt=0)
+    requested_name: MetricToolName
+    outcome: MetricToolOutcome
+    executed: bool
+
+    @model_validator(mode="after")
+    def require_correlated_outcome(self) -> MetricToolAttempt:
+        if self.requested_name != self.outcome.name:
+            raise ValueError("tool attempt name must match outcome name")
+        if not self.executed:
+            raise ValueError("registered deterministic tool attempts must execute")
+        return self
+
+
+class MetricOptionalProjections(StrictMetricModel):
+    spike: SpikeToolSuccess | None = None
+    oscillation: OscillationToolSuccess | None = None
+    stuck_signal: StuckSignalToolSuccess | None = None
+
+
 class MetricHistoryEmpty(StrictMetricModel):
     """Successful History read with no eligible prior Metric results."""
 
@@ -325,6 +450,9 @@ MetricHistoryRead = MetricHistoryEmpty | MetricHistoryCandidates
 class MetricCurrentState(StrictMetricModel):
     trend: MetricTrend
     variability: MetricVariability
+    spike: MetricOptionalProperty | None = None
+    oscillation: MetricOptionalProperty | None = None
+    stuck_signal: MetricOptionalProperty | None = None
 
 
 class MetricResultProvenance(StrictMetricModel):
@@ -376,6 +504,9 @@ class MetricCurrentEvidence(StrictMetricModel):
     min: FiniteFloat
     max: FiniteFloat
     slope: FiniteFloat
+    spike: SpikeModifiedZEvidence | SpikeZeroMadEvidence | None = None
+    oscillation: OscillationEvidence | None = None
+    stuck_signal: StuckSignalEvidence | None = None
 
 
 class MetricHistory(StrictMetricModel):
@@ -476,10 +607,29 @@ class MetricHistoryAnalysisFailedReason(StrictMetricModel):
     component: Literal["history"] = "history"
 
 
+class MetricOptionalAnalysisFailedReason(StrictMetricModel):
+    code: Literal["optional_analysis_failed"] = "optional_analysis_failed"
+    component: Literal["metrics_agent", "spike", "oscillation", "stuck_signal"]
+
+
 MetricPartialReason = Annotated[
-    MetricReferenceUnavailableReason | MetricHistoryAnalysisFailedReason,
+    (
+        MetricReferenceUnavailableReason
+        | MetricHistoryAnalysisFailedReason
+        | MetricOptionalAnalysisFailedReason
+    ),
     Field(discriminator="code"),
 ]
+
+
+def _validate_optional_pair(
+    current_state: MetricCurrentState, current: MetricCurrentEvidence
+) -> None:
+    for name in ("spike", "oscillation", "stuck_signal"):
+        property_ = getattr(current_state, name)
+        evidence = getattr(current, name)
+        if (property_ is None) != (evidence is None):
+            raise ValueError(f"optional {name} property and evidence must co-occur")
 
 
 def _validate_reference_pair(
@@ -540,6 +690,7 @@ class CompletedSufficientMetricResult(StrictMetricModel):
     def validate_reference_pair(self) -> CompletedSufficientMetricResult:
         _validate_reference_pair(self.reference_periods, self.evidence)
         _validate_history_pair(self.history, self.evidence)
+        _validate_optional_pair(self.current_state, self.evidence.current)
         return self
 
 
@@ -577,6 +728,7 @@ class PartialMetricResult(StrictMetricModel):
     def validate_reference_pair(self) -> PartialMetricResult:
         _validate_reference_pair(self.reference_periods, self.evidence)
         _validate_history_pair(self.history, self.evidence)
+        _validate_optional_pair(self.current_state, self.evidence.current)
         return self
 
 

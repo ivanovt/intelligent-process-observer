@@ -272,7 +272,7 @@ class FakeProvider:
 
 
 class FakeAgent:
-    async def complete(self, request):
+    async def complete(self, request, tools=None):
         return MetricAgentCompletion()
 
 

@@ -114,7 +114,7 @@ def available_from_values(values: tuple[float, ...]) -> MetricSeriesAvailable:
     return MetricSeriesAvailable(
         source="prometheus",
         samples=tuple(
-            MetricSample(timestamp=WINDOW_START + timedelta(seconds=index * 60), value=value)
+            MetricSample(timestamp=WINDOW_START + timedelta(seconds=index * 20), value=value)
             for index, value in enumerate(values)
         ),
     )
@@ -177,10 +177,25 @@ class FakeAgent:
         self.requests = []
         self.failure = failure
 
-    async def complete(self, request):
+    async def complete(self, request, tools=None):
         self.requests.append(request)
         if self.failure is not None:
             raise self.failure
+        return MetricAgentCompletion()
+
+
+class ToolCallingAgent(FakeAgent):
+    def __init__(self, tool_names: tuple[str, ...]) -> None:
+        super().__init__()
+        self.tool_names = tool_names
+        self.registries = []
+
+    async def complete(self, request, tools=None):
+        self.requests.append(request)
+        self.registries.append(tools)
+        assert tools is not None
+        for name in self.tool_names:
+            await tools.execute(name)
         return MetricAgentCompletion()
 
 
@@ -365,14 +380,100 @@ def test_domain_modules_remain_transport_and_framework_free() -> None:
     import app.metrics.ports as ports
     import app.metrics.preprocessing as preprocessing
     import app.metrics.semantics as semantics
+    import app.metrics.tools as tools
 
     source = "\n".join(
         inspect.getsource(module)
-        for module in (contracts, ports, preprocessing, semantics, pipeline)
+        for module in (contracts, ports, preprocessing, semantics, tools, pipeline)
     )
     assert "pydantic_ai" not in source
     assert "app.infrastructure.prometheus" not in source
     assert "sqlalchemy" not in inspect.getsource(ports)
+
+
+def test_fake_agent_executes_the_exact_three_tool_registry_and_projects_all_outputs() -> None:
+    agent = ToolCallingAgent(("spike", "oscillation", "stuck_signal"))
+    repository = RecordingRepository([])
+    pipeline = MetricAnalysisPipeline(
+        provider=FakeProvider(available_from_values((1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0))),
+        agent=agent,
+        history_reader=FakeHistoryReader(),
+        repository=repository,
+        result_builder=MetricResultBuilder(lambda: WINDOW_START + timedelta(minutes=5)),
+    )
+
+    analysis = run(pipeline.analyze(context()))
+    lens_run = SimpleNamespace(status="running", reason=None)
+    artifact = run(pipeline.persist_terminal(object(), lens_run, analysis))
+
+    assert tuple(item.model_dump() for item in agent.requests[0].allowed_tools) == tuple(
+        item.model_dump() for item in FIXED_ALLOWED_TOOLS
+    )
+    assert agent.registries[0].dataset_ref == analysis.dataset_ref
+    attempts = [(item.ordinal, item.requested_name, item.executed) for item in analysis.tool_ledger]
+    assert attempts == [
+        (1, "spike", True),
+        (2, "oscillation", True),
+        (3, "stuck_signal", True),
+    ]
+    assert artifact.status == "completed"
+    payload = repository.persisted[0].payload
+    assert payload["current_state"]["spike"]["state"] == "absent"
+    assert payload["current_state"]["oscillation"]["state"] in {"absent", "unknown"}
+    assert payload["current_state"]["stuck_signal"]["state"] == "absent"
+    assert set(payload["evidence"]["current"]) == {
+        "mean",
+        "std",
+        "min",
+        "max",
+        "slope",
+        "spike",
+        "oscillation",
+        "stuck_signal",
+    }
+    assert "dataset_ref" not in payload
+    assert "tool_ledger" not in payload
+
+
+def test_earliest_failed_tool_creates_correlated_partial_without_transient_ledger(
+    monkeypatch,
+) -> None:
+    from app.metrics import tools as metric_tools
+
+    def fail_spike(prepared):
+        raise RuntimeError("tool backend unavailable")
+
+    def timeout_oscillation(prepared):
+        raise TimeoutError("tool deadline")
+
+    monkeypatch.setattr(metric_tools, "analyze_spike", fail_spike)
+    monkeypatch.setattr(metric_tools, "analyze_oscillation", timeout_oscillation)
+    agent = ToolCallingAgent(("spike", "oscillation", "stuck_signal"))
+    repository = RecordingRepository([])
+    pipeline = MetricAnalysisPipeline(
+        provider=FakeProvider(available_from_values((1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0))),
+        agent=agent,
+        history_reader=FakeHistoryReader(),
+        repository=repository,
+        result_builder=MetricResultBuilder(lambda: WINDOW_START + timedelta(minutes=5)),
+    )
+
+    analysis = run(pipeline.analyze(context()))
+    lens_run = SimpleNamespace(status="running", reason=None)
+    artifact = run(pipeline.persist_terminal(object(), lens_run, analysis))
+
+    assert analysis.optional_failure_component == "spike"
+    assert [item.outcome.outcome for item in analysis.tool_ledger[:2]] == ["failed", "timeout"]
+    assert artifact.status == "partial"
+    assert lens_run.status == "partial"
+    assert lens_run.reason == {"code": "optional_analysis_failed", "component": "spike"}
+    payload = repository.persisted[0].payload
+    assert payload["reason"] == lens_run.reason
+    assert "spike" not in payload["current_state"]
+    assert "oscillation" not in payload["current_state"]
+    assert payload["current_state"]["stuck_signal"]["state"] == "absent"
+    assert "tool_ledger" not in payload
+    assert "diagnostic" not in str(payload)
 
 
 def test_completed_sufficient_metric_round_trips_through_runtime_aggregate(
@@ -1468,6 +1569,81 @@ def test_reference_partial_round_trips_through_runtime_aggregate(
             "artifact_insertion_flush",
             "caller_commit",
         ]
+
+    run(scenario())
+
+
+def test_optional_tool_partial_round_trips_through_runtime_aggregate(
+    session_factory: async_sessionmaker[AsyncSession], monkeypatch
+) -> None:
+    from app.metrics import tools as metric_tools
+
+    def fail_spike(prepared):
+        raise RuntimeError("tool backend unavailable")
+
+    monkeypatch.setattr(metric_tools, "analyze_spike", fail_spike)
+
+    async def scenario() -> None:
+        execution_context = context()
+        repository = RuntimePersistenceRepository()
+        available = available_from_values((1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0))
+        pipeline = MetricAnalysisPipeline(
+            provider=FakeProvider(available),
+            agent=ToolCallingAgent(("spike", "stuck_signal")),
+            history_reader=repository,
+            repository=repository,
+            result_builder=MetricResultBuilder(lambda: WINDOW_START + timedelta(minutes=5)),
+        )
+
+        async with session_factory() as session:
+            async with session.begin():
+                observation = ObservationModel(
+                    id=execution_context.identity.observation_id,
+                    name=f"Metric tool partial {uuid4()}",
+                    objective="Verify optional tool partial persistence.",
+                    schema_version=1,
+                )
+                session.add(observation)
+                await session.flush()
+                observation_run = await repository.create_observation_run(
+                    session,
+                    ObservationRunInput(
+                        id=execution_context.identity.observation_run_id,
+                        observation_id=observation.id,
+                    ),
+                )
+                await repository.advance_observation_run(
+                    session, observation_run, ObservationRunStatus.RUNNING
+                )
+                lens_run = await repository.create_lens_run(
+                    session,
+                    observation_run,
+                    LensRunInput(
+                        id=execution_context.identity.lens_run_id,
+                        lens_id=execution_context.identity.lens_id,
+                        lens_type=LensType.METRIC,
+                    ),
+                )
+                await repository.advance_lens_run(session, lens_run, LensRunStatus.RUNNING)
+
+            analysis = await pipeline.analyze(execution_context)
+            async with session.begin():
+                await pipeline.persist_terminal(session, lens_run, analysis)
+
+        async with session_factory() as session:
+            restored = await repository.get_observation_run(
+                session, execution_context.identity.observation_run_id
+            )
+            assert restored is not None
+            restored_lens_run = restored.lens_runs[0]
+            assert restored_lens_run.status == "partial"
+            assert restored_lens_run.reason == {
+                "code": "optional_analysis_failed",
+                "component": "spike",
+            }
+            assert restored_lens_run.analysis_result is not None
+            assert restored_lens_run.analysis_result.payload == analysis.terminal_result.payload
+            assert "tool_ledger" not in restored_lens_run.analysis_result.payload
 
     run(scenario())
 

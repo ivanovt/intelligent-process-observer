@@ -29,6 +29,7 @@ from app.metrics.contracts import (
     MetricHistoryCandidates,
     MetricLensExecutionContext,
     MetricMandatoryAnalysisFailure,
+    MetricOptionalProjections,
     MetricReferenceComparison,
     MetricReferenceEvidence,
     MetricReferenceUnavailable,
@@ -36,6 +37,7 @@ from app.metrics.contracts import (
     MetricSeriesAcquisitionFailure,
     MetricSeriesAcquisitionTimeout,
     MetricSeriesUnavailable,
+    MetricToolAttempt,
     PreparedInsufficientSeries,
     PreparedSeries,
     PreparedUsableSeries,
@@ -46,6 +48,11 @@ from app.metrics.preprocessing import MetricSeriesMalformedError, prepare_series
 from app.metrics.references import compare_reference, reference_window
 from app.metrics.result_builder import MetricResultBuilder
 from app.metrics.semantics import semanticize_mandatory
+from app.metrics.tools import (
+    MetricToolRegistry,
+    earliest_optional_tool_failure,
+    project_successful_optional_tools,
+)
 
 PhaseRecorder = Callable[[str], None]
 
@@ -62,6 +69,9 @@ class MetricPreTransactionAnalysis:
     reference_diagnostics: tuple[MetricReferenceUnavailable, ...] = ()
     reference_periods: tuple[MetricReferenceComparison, ...] = ()
     reference_evidence: tuple[MetricReferenceEvidence, ...] = ()
+    optional_projections: MetricOptionalProjections = MetricOptionalProjections()
+    optional_failure_component: str | None = None
+    tool_ledger: tuple[MetricToolAttempt, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -177,9 +187,13 @@ class MetricAnalysisPipeline:
             allowed_tools=FIXED_ALLOWED_TOOLS,
             dataset_ref=dataset_ref,
         )
+        registry = MetricToolRegistry(dataset_ref, usable_prepared)
         self._record_phase("agent_execution")
-        completion = await self._agent.complete(request)
+        completion = await self._agent.complete(request, registry)
         MetricAgentCompletion.model_validate(completion)
+        tool_ledger = registry.ledger
+        optional_projections = project_successful_optional_tools(tool_ledger)
+        optional_failure_component = earliest_optional_tool_failure(tool_ledger)
         comparisons, reference_evidence, comparison_diagnostics = self._compare_references(
             current=usable_prepared,
             current_semantics=semantics,
@@ -194,6 +208,15 @@ class MetricAnalysisPipeline:
                     semantics,
                     comparisons,
                     reference_evidence,
+                    optional=optional_projections,
+                )
+            elif optional_failure_component is not None:
+                _, terminal_result = self._result_builder.partial_optional_analysis_failed(
+                    context,
+                    usable_prepared,
+                    semantics,
+                    optional_failure_component,
+                    optional_projections,
                 )
             else:
                 _, terminal_result = self._result_builder.completed_sufficient(
@@ -202,6 +225,7 @@ class MetricAnalysisPipeline:
                     semantics,
                     comparisons,
                     reference_evidence,
+                    optional=optional_projections,
                 )
         except Exception as error:
             return self._failed_analysis(
@@ -217,6 +241,9 @@ class MetricAnalysisPipeline:
             reference_diagnostics=reference_diagnostics,
             reference_periods=comparisons,
             reference_evidence=reference_evidence,
+            optional_projections=optional_projections,
+            optional_failure_component=optional_failure_component,
+            tool_ledger=tool_ledger,
         )
 
     async def _prepare_references(
@@ -411,6 +438,7 @@ class MetricAnalysisPipeline:
                     analysis.reference_evidence,
                     history,
                     history_evidence,
+                    analysis.optional_projections,
                 )
             elif history_failed:
                 target = LensRunStatus.PARTIAL
@@ -421,6 +449,20 @@ class MetricAnalysisPipeline:
                     analysis.semantics,
                     analysis.reference_periods,
                     analysis.reference_evidence,
+                    analysis.optional_projections,
+                )
+            elif analysis.optional_failure_component is not None:
+                target = LensRunStatus.PARTIAL
+                reason = StructuredReason(
+                    code="optional_analysis_failed",
+                    component=analysis.optional_failure_component,
+                )
+                _, terminal_result = self._result_builder.partial_optional_analysis_failed(
+                    analysis.context,
+                    analysis.prepared,
+                    analysis.semantics,
+                    analysis.optional_failure_component,
+                    analysis.optional_projections,
                 )
             else:
                 target = LensRunStatus.COMPLETED
@@ -433,6 +475,7 @@ class MetricAnalysisPipeline:
                     analysis.reference_evidence,
                     history,
                     history_evidence,
+                    analysis.optional_projections,
                 )
             analysis = MetricPreTransactionAnalysis(
                 context=analysis.context,
@@ -445,6 +488,9 @@ class MetricAnalysisPipeline:
                 reference_diagnostics=analysis.reference_diagnostics,
                 reference_periods=analysis.reference_periods,
                 reference_evidence=analysis.reference_evidence,
+                optional_projections=analysis.optional_projections,
+                optional_failure_component=analysis.optional_failure_component,
+                tool_ledger=analysis.tool_ledger,
             )
         self._record_phase("lens_run_transition")
         if reason is None:

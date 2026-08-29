@@ -12,6 +12,8 @@ from app.metrics.contracts import (
     MetricLensExecutionContext,
     MetricProviderScope,
     MetricSeriesAcquisitionOutcome,
+    MetricToolName,
+    MetricToolOutcome,
 )
 
 
@@ -22,7 +24,13 @@ class MetricSeriesProvider(Protocol):
 
 
 class MetricsAnalysisAgent(Protocol):
-    async def complete(self, request: MetricAgentRequest) -> MetricAgentOutcome: ...
+    async def complete(
+        self, request: MetricAgentRequest, tools: MetricToolExecutor | None = None
+    ) -> MetricAgentOutcome: ...
+
+
+class MetricToolExecutor(Protocol):
+    async def execute(self, name: MetricToolName) -> MetricToolOutcome: ...
 
 
 class MetricHistoryReader(Protocol):
