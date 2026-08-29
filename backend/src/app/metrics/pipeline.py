@@ -188,11 +188,18 @@ class MetricAnalysisPipeline:
             dataset_ref=dataset_ref,
         )
         self._record_phase("agent_execution")
-        completion = await self._agent.complete(request, registry)
-        MetricAgentCompletion.model_validate(completion)
+        try:
+            completion = await self._agent.complete(request, registry)
+            MetricAgentCompletion.model_validate(completion)
+        except Exception:
+            completion = MetricAgentOperationalFailure()
         tool_ledger = registry.ledger
         optional_projections = project_successful_optional_tools(tool_ledger)
-        optional_failure_component = earliest_optional_tool_failure(tool_ledger)
+        optional_failure_component = (
+            "metrics_agent"
+            if isinstance(completion, MetricAgentOperationalFailure)
+            else earliest_optional_tool_failure(tool_ledger)
+        )
         comparisons, reference_evidence, comparison_diagnostics = self._compare_references(
             current=usable_prepared,
             current_semantics=semantics,
