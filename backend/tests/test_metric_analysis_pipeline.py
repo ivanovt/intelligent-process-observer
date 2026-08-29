@@ -1612,6 +1612,149 @@ def test_fake_reader_history_outcomes_round_trip_through_runtime_aggregate(
     run(scenario())
 
 
+def test_postgresql_real_history_reader_precedes_history_partial_terminal_phase(
+    session_factory: async_sessionmaker[AsyncSession], monkeypatch
+) -> None:
+    """A real History load precedes the deterministic partial terminal outcome."""
+
+    async def create_running_lens_run(
+        session: AsyncSession,
+        execution_context: MetricLensExecutionContext,
+        repository: RuntimePersistenceRepository,
+    ):
+        observation_run = await repository.create_observation_run(
+            session,
+            ObservationRunInput(
+                id=execution_context.identity.observation_run_id,
+                observation_id=execution_context.identity.observation_id,
+            ),
+        )
+        await repository.advance_observation_run(
+            session, observation_run, ObservationRunStatus.RUNNING
+        )
+        lens_run = await repository.create_lens_run(
+            session,
+            observation_run,
+            LensRunInput(
+                id=execution_context.identity.lens_run_id,
+                lens_id=execution_context.identity.lens_id,
+                lens_type=LensType.METRIC,
+            ),
+        )
+        return await repository.advance_lens_run(session, lens_run, LensRunStatus.RUNNING)
+
+    async def scenario() -> None:
+        import app.metrics.pipeline as pipeline_module
+
+        phase_trace: list[str] = []
+        execution_context = context()
+        history_context = execution_context.model_copy(
+            update={
+                "identity": execution_context.identity.model_copy(
+                    update={"observation_run_id": uuid4(), "lens_run_id": uuid4()}
+                ),
+                "analysis_window": MetricAnalysisWindow(
+                    **{
+                        "from": WINDOW_START - timedelta(minutes=5),
+                        "to": WINDOW_START - timedelta(minutes=2),
+                    }
+                ),
+            }
+        )
+        repository = RuntimePersistenceRepository()
+        pipeline = MetricAnalysisPipeline(
+            provider=SequencedProvider(
+                (
+                    available_for_window(history_context.analysis_window, (10.0, 20.0, 40.0)),
+                    good_available(),
+                )
+            ),
+            agent=FakeAgent(),
+            history_reader=repository,
+            repository=repository,
+            result_builder=MetricResultBuilder(lambda: WINDOW_START + timedelta(minutes=5)),
+            record_phase=phase_trace.append,
+        )
+        loaded_history: list[MetricHistoryCandidates] = []
+
+        async with session_factory() as session:
+            async with session.begin():
+                session.add(
+                    ObservationModel(
+                        id=execution_context.identity.observation_id,
+                        name=f"Metric History partial trace {uuid4()}",
+                        objective="Verify real History loading before partial persistence.",
+                        schema_version=1,
+                    )
+                )
+                await session.flush()
+                historical_lens_run = await create_running_lens_run(
+                    session, history_context, repository
+                )
+
+            historical_analysis = await pipeline.analyze(history_context)
+            async with session.begin():
+                await pipeline.persist_terminal(session, historical_lens_run, historical_analysis)
+
+            async with session.begin():
+                lens_run = await create_running_lens_run(session, execution_context, repository)
+
+            original_load = repository.load
+
+            async def record_real_history_load(session, loaded_context):
+                history_read = await original_load(session, loaded_context)
+                assert isinstance(history_read, MetricHistoryCandidates)
+                loaded_history.append(history_read)
+                return history_read
+
+            monkeypatch.setattr(repository, "load", record_real_history_load)
+            monkeypatch.setattr(
+                pipeline_module,
+                "analyze_history",
+                lambda *_: (_ for _ in ()).throw(
+                    RuntimeError("forced History computation failure")
+                ),
+            )
+            phase_trace.clear()
+            analysis = await pipeline.analyze(execution_context)
+            phase_trace.append("caller_transaction_open")
+            async with session.begin():
+                await pipeline.persist_terminal(session, lens_run, analysis)
+            phase_trace.append("caller_commit")
+
+        async with session_factory() as session:
+            restored = await repository.get_observation_run(
+                session, execution_context.identity.observation_run_id
+            )
+            assert restored is not None
+            restored_lens_run = restored.lens_runs[0]
+            assert restored_lens_run.status == "partial"
+            assert restored_lens_run.reason == {
+                "code": "history_analysis_failed",
+                "component": "history",
+            }
+            assert restored_lens_run.analysis_result is not None
+            assert "history" not in restored_lens_run.analysis_result.payload
+
+        assert len(loaded_history) == 1
+        assert [candidate.lens_run_id for candidate in loaded_history[0].candidates] == [
+            history_context.identity.lens_run_id
+        ]
+        assert phase_trace == [
+            "provider_acquisition",
+            "current_preparation",
+            "mandatory_semanticization",
+            "agent_execution",
+            "caller_transaction_open",
+            "history_read",
+            "lens_run_transition",
+            "artifact_insertion_flush",
+            "caller_commit",
+        ]
+
+    run(scenario())
+
+
 def test_postgresql_history_reader_filters_orders_and_bounds_event_time_candidates(
     session_factory: async_sessionmaker[AsyncSession],
 ) -> None:

@@ -20,8 +20,12 @@ scope changes: eligible-looking rows from another Observation or Lens are exclud
 the aggregate-scoped History query; a forced real `AsyncSession.execute` failure during
 History loading propagates, leaves the LensRun running, and leaves no artifact after the
 caller rollback; and phase traces now cover completed, degraded, insufficient, failed,
-reference-partial, and History-partial terminal paths. The real repository is used for
-each applicable History-loading path.
+and reference-partial terminal paths. The new
+`test_postgresql_real_history_reader_precedes_history_partial_terminal_phase` persists
+one eligible real row, records the actual repository reader returning it, forces only the
+subsequent deterministic History computation to fail, and proves the History-caused
+partial path performs all provider/current/agent work before transaction opening and the
+reader, transition, artifact flush, and commit inside it.
 
 Verification:
 
@@ -29,6 +33,9 @@ Verification:
 - `cd backend && UV_CACHE_DIR=/tmp/ipo-vs06-uv-cache uv run ruff check src/app/metrics src/app/infrastructure/persistence tests/test_metric_history.py tests/test_metric_analysis_pipeline.py tests/test_runtime_persistence.py tests/test_runtime_persistence_integration.py` — passed.
 - `cd backend && UV_CACHE_DIR=/tmp/ipo-vs06-uv-cache uv run ruff format --check src/app/metrics src/app/infrastructure/persistence tests/test_metric_history.py tests/test_metric_analysis_pipeline.py tests/test_runtime_persistence.py tests/test_runtime_persistence_integration.py` — passed.
 - `git diff --check` — passed.
+- `cd backend && IPO_TEST_DATABASE_URL=postgresql+psycopg://ipo:ipo@localhost:55432/ipo_test DATABASE_URL=postgresql+psycopg://ipo:ipo@localhost:55432/ipo_test UV_CACHE_DIR=/tmp/ipo-vs06-uv-cache uv run pytest tests/test_metric_analysis_pipeline.py::test_postgresql_real_history_reader_precedes_history_partial_terminal_phase -q` — 1 passed (one existing Alembic configuration warning).
+- `cd backend && UV_CACHE_DIR=/tmp/ipo-vs06-uv-cache uv run ruff check tests/test_metric_analysis_pipeline.py` — passed.
+- `cd backend && UV_CACHE_DIR=/tmp/ipo-vs06-uv-cache uv run ruff format --check tests/test_metric_analysis_pipeline.py` — passed.
 
 Downstream invariants: the SQL ordering is safe because Metric result timestamps are
 strictly normalized UTC strings; the query selects only the bounded lookback and then
