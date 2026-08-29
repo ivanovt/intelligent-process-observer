@@ -73,7 +73,7 @@ VS-06 has both VS-03 and VS-05 as direct dependencies. VS-09 has VS-04, VS-06, a
 | VS-04 | Add independent reference comparison and reference-caused partial persistence | VS-03 | high-risk | COMPLETE | d65ff287 | `implementation/VS-04-handoff.md` |
 | VS-05 | Add eligible persisted-result History behavior through the reader boundary | VS-01 | high-risk | COMPLETE | 442557e | `implementation/VS-05-handoff.md` |
 | VS-06 | Implement PostgreSQL History selection and regress transaction ordering/atomicity for all result variants | VS-03 and VS-05 | high-risk | COMPLETE | ad59b9d + f6648d0 + 51b5236 | `implementation/VS-06-handoff.md` |
-| VS-07 | Add deterministic optional tools, the application ledger, and tool-caused partial persistence | VS-02 | high-risk | IN_PROGRESS | - | - |
+| VS-07 | Add deterministic optional tools, the application ledger, and tool-caused partial persistence | VS-02 | high-risk | COMPLETE | 9f598785 + 56a03b2 | `implementation/VS-07-handoff.md` |
 | VS-08 | Enforce PydanticAI translation, ceilings, and adapter-owned protocol behavior | VS-07; existing dependency approval verified by Coordinator | high-risk | PLANNED | - | - |
 | VS-09 | Verify cross-cause composition, document boundaries, and run full conformance | VS-04, VS-06, and VS-08 | high-risk | PLANNED | - | - |
 
@@ -416,5 +416,6 @@ Mutable Coordinator-owned execution metadata only. Do not place new requirements
 - If implementation exposes a source conflict, new behavior, missing architecture decision, unverifiable dependency-approval source, required migration/index, or other structural change, stop the affected slice and request re-planning/source reconciliation. Do not reinterpret an Open/Deferred item as permission.
 - Shared-knowledge observations remain candidates in handoffs/`.agents/knowledge/candidates.md` until the Coordinator validates them against authoritative evidence. They are not requirements.
 - VS-09 is conformance-only. Any production defect returns to the primary owning slice; missing behavior or contract change triggers re-planning.
-- Coordinator stop record (2026-08-29): user directed execution to stop after VS-06. Superseded by the user's subsequent direction to execute VS-07 only; VS-08 and VS-09 remain unstarted.
+- Coordinator stop record (2026-08-29): user directed execution to stop after VS-06. Superseded by the subsequent direction to execute VS-07 only.
+- Coordinator pause record (2026-08-29): user directed execution to pause after VS-07 acceptance pending further confirmation. VS-08 and VS-09 remain unstarted.
 - Completion of VS-09 means ready for official change verification and independent implementation review. It does not authorize archive, push, PR creation, merge, or direct work on `main`.
