@@ -74,7 +74,7 @@ VS-06 has both VS-03 and VS-05 as direct dependencies. VS-09 has VS-04, VS-06, a
 | VS-05 | Add eligible persisted-result History behavior through the reader boundary | VS-01 | high-risk | COMPLETE | 442557e | `implementation/VS-05-handoff.md` |
 | VS-06 | Implement PostgreSQL History selection and regress transaction ordering/atomicity for all result variants | VS-03 and VS-05 | high-risk | COMPLETE | ad59b9d + f6648d0 + 51b5236 | `implementation/VS-06-handoff.md` |
 | VS-07 | Add deterministic optional tools, the application ledger, and tool-caused partial persistence | VS-02 | high-risk | COMPLETE | 9f598785 + 56a03b2 | `implementation/VS-07-handoff.md` |
-| VS-08 | Enforce PydanticAI translation, ceilings, and adapter-owned protocol behavior | VS-07; existing dependency approval verified by Coordinator | high-risk | IN_PROGRESS | - | - |
+| VS-08 | Enforce PydanticAI translation, ceilings, and adapter-owned protocol behavior | VS-07; existing dependency approval verified by Coordinator | high-risk | BLOCKED | d4d8e48 (unaccepted) | `implementation/VS-08-handoff.md` |
 | VS-09 | Verify cross-cause composition, document boundaries, and run full conformance | VS-04, VS-06, and VS-08 | high-risk | PLANNED | - | - |
 
 ## Slice definitions
@@ -419,4 +419,5 @@ Mutable Coordinator-owned execution metadata only. Do not place new requirements
 - Coordinator stop record (2026-08-29): user directed execution to stop after VS-06. Superseded by the subsequent direction to execute VS-07 only.
 - Coordinator pause record (2026-08-29): user directed execution to pause after VS-07 acceptance pending further confirmation. VS-08 and VS-09 remain unstarted.
 - Coordinator execution record (2026-08-29): the approved plan's Human approval record for `pydantic-ai-slim>=2,<3` without provider extras was verified before VS-08 dependency work. By explicit user direction, the Coordinator is the VS-08 implementer; retain a fresh independent high-risk reviewer and pause after acceptance. This supersedes the prior pause record for VS-08 only.
+- Coordinator stop record (2026-08-29): VS-08 is blocked by a source/plan conflict identified by independent review. The frozen VS-07 `MetricToolAttempt` contract permits only executed registered-tool attempts, but the approved VS-08 protocol requires recorded rejected duplicate, unregistered, parallel, and fourth requests. Reconciliation requires implementation-plan revision, independent slice-plan review, and human re-approval before implementation resumes. Commit `d4d8e48` is unaccepted and must not be treated as completion.
 - Completion of VS-09 means ready for official change verification and independent implementation review. It does not authorize archive, push, PR creation, merge, or direct work on `main`.
