@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import math
 from datetime import UTC, datetime, timedelta
 
 import pytest
@@ -75,6 +76,23 @@ def test_spike_covers_modified_z_and_every_zero_mad_branch() -> None:
     assert analyze_spike(prepared((1.0, 2.0, 3.0, 4.0))).outcome == "not_applicable"
 
 
+@pytest.mark.parametrize(
+    ("score", "state", "detected_sample_count"),
+    (
+        (math.nextafter(3.5, -math.inf), "absent", 0),
+        (3.5, "absent", 0),
+        (math.nextafter(3.5, math.inf), "present", 1),
+    ),
+)
+def test_spike_modified_z_uses_a_strict_3_5_threshold(
+    score: float, state: str, detected_sample_count: int
+) -> None:
+    outcome = analyze_spike(prepared((-1.0, -1.0, 0.0, 1.0, score / 0.6745)))
+
+    assert outcome.state == state
+    assert outcome.evidence.detected_sample_count == detected_sample_count
+
+
 def test_oscillation_covers_present_absent_unknown_and_minimum_samples() -> None:
     present = analyze_oscillation(
         prepared(
@@ -97,6 +115,41 @@ def test_oscillation_covers_present_absent_unknown_and_minimum_samples() -> None
     assert analyze_oscillation(prepared((1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0))).outcome == (
         "not_applicable"
     )
+
+
+def _residuals_with_sign_changes(
+    count: int, sign_change_count: int, magnitude: float
+) -> tuple[float, ...]:
+    alternating = tuple(
+        magnitude if index % 2 == 0 else -magnitude for index in range(sign_change_count + 1)
+    )
+    return alternating + (alternating[-1],) * (count - len(alternating))
+
+
+@pytest.mark.parametrize(
+    ("residuals", "state", "significant_count", "sign_change_count"),
+    (
+        ((5.0, -5.0) * 4, "unknown", 0, 0),
+        ((math.nextafter(5.0, math.inf), -math.nextafter(5.0, math.inf)) * 4, "present", 8, 7),
+        (_residuals_with_sign_changes(101, 59, 10.0), "absent", 101, 59),
+        (_residuals_with_sign_changes(101, 60, 10.0), "present", 101, 60),
+    ),
+    ids=("deadband-equality", "deadband-immediately-above", "ratio-below", "ratio-equality"),
+)
+def test_oscillation_uses_strict_deadband_and_inclusive_ratio_boundary(
+    residuals: tuple[float, ...],
+    state: str,
+    significant_count: int,
+    sign_change_count: int,
+) -> None:
+    values = tuple(0.0 if index % 2 == 0 else 100.0 for index in range(len(residuals)))
+    outcome = analyze_oscillation(prepared(values, residuals=residuals))
+
+    assert outcome.state == state
+    assert outcome.evidence.deadband == 5.0
+    assert outcome.evidence.significant_residual_count == significant_count
+    assert outcome.evidence.sign_change_count == sign_change_count
+    assert outcome.evidence.sign_change_ratio == sign_change_count / max(significant_count - 1, 1)
 
 
 def test_stuck_signal_uses_exact_values_threshold_and_earliest_longest_run() -> None:

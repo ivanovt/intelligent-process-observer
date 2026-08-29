@@ -16,7 +16,6 @@ from app.infrastructure.persistence.runtime_contracts import (
     StructuredReason,
 )
 from app.metrics.contracts import (
-    FIXED_ALLOWED_TOOLS,
     MetricAgentCompletion,
     MetricAgentInsufficientRequest,
     MetricAgentOperationalFailure,
@@ -177,6 +176,7 @@ class MetricAnalysisPipeline:
             )
         prepared_references, reference_diagnostics = await self._prepare_references(context)
         dataset_ref = uuid4().hex
+        registry = MetricToolRegistry(dataset_ref, usable_prepared)
         request = MetricAgentUsableRequest(
             identity=context.identity,
             analysis_window=context.analysis_window,
@@ -184,10 +184,9 @@ class MetricAnalysisPipeline:
             data_quality=usable_prepared.data_quality,
             evidence=usable_prepared.evidence,
             semantics=semantics,
-            allowed_tools=FIXED_ALLOWED_TOOLS,
+            allowed_tools=registry.descriptors,
             dataset_ref=dataset_ref,
         )
-        registry = MetricToolRegistry(dataset_ref, usable_prepared)
         self._record_phase("agent_execution")
         completion = await self._agent.complete(request, registry)
         MetricAgentCompletion.model_validate(completion)
@@ -217,6 +216,8 @@ class MetricAnalysisPipeline:
                     semantics,
                     optional_failure_component,
                     optional_projections,
+                    comparisons,
+                    reference_evidence,
                 )
             else:
                 _, terminal_result = self._result_builder.completed_sufficient(
@@ -463,6 +464,10 @@ class MetricAnalysisPipeline:
                     analysis.semantics,
                     analysis.optional_failure_component,
                     analysis.optional_projections,
+                    analysis.reference_periods,
+                    analysis.reference_evidence,
+                    history,
+                    history_evidence,
                 )
             else:
                 target = LensRunStatus.COMPLETED

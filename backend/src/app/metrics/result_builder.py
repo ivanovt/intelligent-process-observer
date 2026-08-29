@@ -190,9 +190,17 @@ class MetricResultBuilder:
         semantics: MetricSemantics,
         component: str,
         optional: MetricOptionalProjections,
+        reference_periods: tuple[MetricReferenceComparison, ...] = (),
+        reference_evidence: tuple[MetricReferenceEvidence, ...] = (),
+        history: MetricHistory | None = None,
+        history_evidence: MetricHistoryEvidence | None = None,
     ) -> tuple[PartialMetricResult, LensAnalysisResultInput]:
         """Build the tool-owned usable partial variant without transient diagnostics."""
 
+        if bool(reference_periods) != bool(reference_evidence):
+            raise ValueError("reference semantics and evidence must co-occur")
+        if (history is None) != (history_evidence is None):
+            raise ValueError("history semantics and evidence must co-occur")
         current_state, current_evidence = _current_sections(prepared, semantics, optional)
         result = PartialMetricResult(
             identity=context.identity,
@@ -200,7 +208,13 @@ class MetricResultBuilder:
             analysis_window=context.analysis_window,
             data_quality=prepared.data_quality,
             current_state=current_state,
-            evidence=MetricEvidenceSection(current=current_evidence),
+            reference_periods=reference_periods or None,
+            history=history,
+            evidence=MetricEvidenceSection(
+                current=current_evidence,
+                reference_periods=reference_evidence or None,
+                history=history_evidence,
+            ),
             provenance=MetricResultProvenance(
                 source=context.provider_scope.adapter_type,
                 generated_at=self._clock(),

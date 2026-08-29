@@ -435,6 +435,15 @@ def test_fake_agent_executes_the_exact_three_tool_registry_and_projects_all_outp
     assert "tool_ledger" not in payload
 
 
+def test_usable_request_derives_descriptors_from_the_precreated_registry() -> None:
+    source = inspect.getsource(MetricAnalysisPipeline.analyze)
+
+    assert source.index("registry = MetricToolRegistry") < source.index(
+        "request = MetricAgentUsableRequest"
+    )
+    assert "allowed_tools=registry.descriptors" in source
+
+
 def test_earliest_failed_tool_creates_correlated_partial_without_transient_ledger(
     monkeypatch,
 ) -> None:
@@ -1584,13 +1593,34 @@ def test_optional_tool_partial_round_trips_through_runtime_aggregate(
     monkeypatch.setattr(metric_tools, "analyze_spike", fail_spike)
 
     async def scenario() -> None:
-        execution_context = context()
+        execution_context = context(reference_periods=("1h",))
         repository = RuntimePersistenceRepository()
-        available = available_from_values((1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0))
+        current_available = available_from_values((1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0))
+        reference_available = available_for_window(
+            reference_window(execution_context.analysis_window, "1h"),
+            (1.0, 2.0, 3.0),
+        )
+        history_candidate_id = uuid4()
+        history = CandidateHistoryReader(
+            (
+                MetricHistoryCandidate(
+                    lens_run_id=history_candidate_id,
+                    analysis_window=MetricAnalysisWindow(
+                        **{
+                            "from": WINDOW_START - timedelta(minutes=1),
+                            "to": WINDOW_START + timedelta(minutes=2),
+                        }
+                    ),
+                    status="completed",
+                    data_quality="good",
+                    mean=10.0,
+                ),
+            )
+        )
         pipeline = MetricAnalysisPipeline(
-            provider=FakeProvider(available),
+            provider=SequencedProvider((current_available, reference_available)),
             agent=ToolCallingAgent(("spike", "stuck_signal")),
-            history_reader=repository,
+            history_reader=history,
             repository=repository,
             result_builder=MetricResultBuilder(lambda: WINDOW_START + timedelta(minutes=5)),
         )
@@ -1642,8 +1672,14 @@ def test_optional_tool_partial_round_trips_through_runtime_aggregate(
                 "component": "spike",
             }
             assert restored_lens_run.analysis_result is not None
-            assert restored_lens_run.analysis_result.payload == analysis.terminal_result.payload
             assert "tool_ledger" not in restored_lens_run.analysis_result.payload
+            assert analysis.terminal_result.payload["reference_periods"][0]["offset"] == "1h"
+            assert "history" not in analysis.terminal_result.payload
+            payload = restored_lens_run.analysis_result.payload
+            assert payload["reference_periods"][0]["offset"] == "1h"
+            assert payload["evidence"]["reference_periods"][0]["offset"] == "1h"
+            assert payload["history"]["run_ids"] == [str(history_candidate_id)]
+            assert payload["evidence"]["history"]["decreasing_transitions"] == 1
 
     run(scenario())
 
