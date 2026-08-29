@@ -8,7 +8,7 @@ from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import ANY
-from uuid import uuid4
+from uuid import UUID, uuid4
 
 import pytest
 from alembic import command
@@ -382,12 +382,11 @@ def test_completed_sufficient_metric_round_trips_through_runtime_aggregate(
         phase_trace: list[str] = []
         provider = FakeProvider()
         agent = FakeAgent()
-        history = FakeHistoryReader()
         repository = RuntimePersistenceRepository()
         pipeline = MetricAnalysisPipeline(
             provider=provider,
             agent=agent,
-            history_reader=history,
+            history_reader=repository,
             repository=repository,
             result_builder=MetricResultBuilder(lambda: WINDOW_START + timedelta(minutes=5)),
             record_phase=phase_trace.append,
@@ -459,7 +458,6 @@ def test_completed_sufficient_metric_round_trips_through_runtime_aggregate(
 
         assert len(provider.requests) == 1
         assert len(agent.requests) == 1
-        assert len(history.calls) == 1
         assert phase_trace == [
             "provider_acquisition",
             "current_preparation",
@@ -702,17 +700,18 @@ def test_degraded_and_insufficient_metric_outcomes_round_trip_through_runtime_ag
     quality: str,
 ) -> None:
     async def scenario() -> None:
+        phase_trace: list[str] = []
         execution_context = context()
         provider = FakeProvider(available)
         agent = FakeAgent(agent_failure)
-        history = FakeHistoryReader()
         repository = RuntimePersistenceRepository()
         pipeline = MetricAnalysisPipeline(
             provider=provider,
             agent=agent,
-            history_reader=history,
+            history_reader=repository,
             repository=repository,
             result_builder=MetricResultBuilder(lambda: WINDOW_START + timedelta(minutes=5)),
+            record_phase=phase_trace.append,
         )
 
         async with session_factory() as session:
@@ -747,8 +746,10 @@ def test_degraded_and_insufficient_metric_outcomes_round_trip_through_runtime_ag
                 await repository.advance_lens_run(session, lens_run, LensRunStatus.RUNNING)
 
             analysis = await pipeline.analyze(execution_context)
+            phase_trace.append("caller_transaction_open")
             async with session.begin():
                 await pipeline.persist_terminal(session, lens_run, analysis)
+            phase_trace.append("caller_commit")
 
         async with session_factory() as session:
             restored = await repository.get_observation_run(
@@ -794,7 +795,28 @@ def test_degraded_and_insufficient_metric_outcomes_round_trip_through_runtime_ag
 
         assert len(provider.requests) == 1
         assert len(agent.requests) == 1
-        assert len(history.calls) == (1 if quality == "degraded" else 0)
+        if quality == "degraded":
+            assert phase_trace == [
+                "provider_acquisition",
+                "current_preparation",
+                "mandatory_semanticization",
+                "agent_execution",
+                "caller_transaction_open",
+                "history_read",
+                "lens_run_transition",
+                "artifact_insertion_flush",
+                "caller_commit",
+            ]
+        else:
+            assert phase_trace == [
+                "provider_acquisition",
+                "current_preparation",
+                "agent_execution",
+                "caller_transaction_open",
+                "lens_run_transition",
+                "artifact_insertion_flush",
+                "caller_commit",
+            ]
         if quality == "insufficient":
             assert analysis.insufficient_agent_outcome is not None
             assert analysis.insufficient_agent_outcome.state == "operational_failure"
@@ -1049,6 +1071,7 @@ def test_failed_metric_outcomes_round_trip_through_runtime_aggregate(
     expected_agent_calls: int,
 ) -> None:
     async def scenario() -> None:
+        phase_trace: list[str] = []
         execution_context = context()
         if case == "acquisition":
             provider = FakeProvider(MetricSeriesUnavailable(diagnostic="provider unavailable"))
@@ -1068,14 +1091,14 @@ def test_failed_metric_outcomes_round_trip_through_runtime_aggregate(
             provider = FakeProvider()
             result_builder = FailingSufficientBuilder(lambda: WINDOW_START + timedelta(minutes=5))
         agent = FakeAgent()
-        history = FakeHistoryReader()
         repository = RuntimePersistenceRepository()
         pipeline = MetricAnalysisPipeline(
             provider=provider,
             agent=agent,
-            history_reader=history,
+            history_reader=repository,
             repository=repository,
             result_builder=result_builder,
+            record_phase=phase_trace.append,
         )
 
         async with session_factory() as session:
@@ -1111,8 +1134,10 @@ def test_failed_metric_outcomes_round_trip_through_runtime_aggregate(
 
             analysis = await pipeline.analyze(execution_context)
             assert analysis.failure is not None
+            phase_trace.append("caller_transaction_open")
             async with session.begin():
                 await pipeline.persist_terminal(session, lens_run, analysis)
+            phase_trace.append("caller_commit")
 
         async with session_factory() as session:
             restored = await repository.get_observation_run(
@@ -1127,7 +1152,22 @@ def test_failed_metric_outcomes_round_trip_through_runtime_aggregate(
             assert restored_lens_run.analysis_result.payload == analysis.terminal_result.payload
 
         assert len(agent.requests) == expected_agent_calls
-        assert history.calls == []
+        expected_pre_transaction_phases = {
+            "acquisition": ["provider_acquisition"],
+            "malformed": ["provider_acquisition", "current_preparation"],
+            "mandatory": [
+                "provider_acquisition",
+                "current_preparation",
+                "mandatory_semanticization",
+                "agent_execution",
+            ],
+        }[case]
+        assert phase_trace == expected_pre_transaction_phases + [
+            "caller_transaction_open",
+            "lens_run_transition",
+            "artifact_insertion_flush",
+            "caller_commit",
+        ]
 
     run(scenario())
 
@@ -1340,6 +1380,7 @@ def test_reference_partial_round_trips_through_runtime_aggregate(
     session_factory: async_sessionmaker[AsyncSession],
 ) -> None:
     async def scenario() -> None:
+        phase_trace: list[str] = []
         execution_context = context(reference_periods=("1h", "1d"))
         first_window = reference_window(execution_context.analysis_window, "1h")
         provider = SequencedProvider(
@@ -1353,9 +1394,10 @@ def test_reference_partial_round_trips_through_runtime_aggregate(
         pipeline = MetricAnalysisPipeline(
             provider=provider,
             agent=FakeAgent(),
-            history_reader=FakeHistoryReader(),
+            history_reader=repository,
             repository=repository,
             result_builder=MetricResultBuilder(lambda: WINDOW_START + timedelta(minutes=5)),
+            record_phase=phase_trace.append,
         )
 
         async with session_factory() as session:
@@ -1390,8 +1432,10 @@ def test_reference_partial_round_trips_through_runtime_aggregate(
                 await repository.advance_lens_run(session, lens_run, LensRunStatus.RUNNING)
 
             analysis = await pipeline.analyze(execution_context)
+            phase_trace.append("caller_transaction_open")
             async with session.begin():
                 await pipeline.persist_terminal(session, lens_run, analysis)
+            phase_trace.append("caller_commit")
 
         async with session_factory() as session:
             restored = await repository.get_observation_run(
@@ -1407,6 +1451,23 @@ def test_reference_partial_round_trips_through_runtime_aggregate(
             assert restored_lens_run.analysis_result is not None
             assert restored_lens_run.analysis_result.status == "partial"
             assert restored_lens_run.analysis_result.payload == analysis.terminal_result.payload
+
+        assert phase_trace == [
+            "provider_acquisition",
+            "current_preparation",
+            "mandatory_semanticization",
+            "reference_acquisition",
+            "reference_preparation",
+            "reference_semanticization",
+            "reference_acquisition",
+            "agent_execution",
+            "reference_comparison",
+            "caller_transaction_open",
+            "history_read",
+            "lens_run_transition",
+            "artifact_insertion_flush",
+            "caller_commit",
+        ]
 
     run(scenario())
 
@@ -1441,6 +1502,7 @@ def test_fake_reader_history_outcomes_round_trip_through_runtime_aggregate(
     monkeypatch,
 ) -> None:
     async def scenario() -> None:
+        phase_trace: list[str] = []
         execution_context = context()
         candidate_id = uuid4()
         history = CandidateHistoryReader(
@@ -1466,6 +1528,7 @@ def test_fake_reader_history_outcomes_round_trip_through_runtime_aggregate(
             history_reader=history,
             repository=repository,
             result_builder=MetricResultBuilder(lambda: WINDOW_START + timedelta(minutes=5)),
+            record_phase=phase_trace.append,
         )
 
         async with session_factory() as session:
@@ -1500,8 +1563,10 @@ def test_fake_reader_history_outcomes_round_trip_through_runtime_aggregate(
                 await repository.advance_lens_run(session, lens_run, LensRunStatus.RUNNING)
 
             analysis = await pipeline.analyze(execution_context)
+            phase_trace.append("caller_transaction_open")
             async with session.begin():
                 await pipeline.persist_terminal(session, lens_run, analysis)
+            phase_trace.append("caller_commit")
 
         async with session_factory() as session:
             restored = await repository.get_observation_run(
@@ -1524,6 +1589,17 @@ def test_fake_reader_history_outcomes_round_trip_through_runtime_aggregate(
                 assert payload["history"]["run_ids"] == [str(candidate_id)]
                 assert payload["evidence"]["history"]["increasing_transitions"] == 1
         assert len(history.calls) == 1
+        assert phase_trace == [
+            "provider_acquisition",
+            "current_preparation",
+            "mandatory_semanticization",
+            "agent_execution",
+            "caller_transaction_open",
+            "history_read",
+            "lens_run_transition",
+            "artifact_insertion_flush",
+            "caller_commit",
+        ]
 
     if history_failure:
         import app.metrics.pipeline as pipeline_module
@@ -1551,10 +1627,13 @@ def test_postgresql_history_reader_filters_orders_and_bounds_event_time_candidat
         mean: float | None,
         status: LensRunStatus,
         data_quality: str | None,
+        observation_id: UUID | None = None,
+        lens_id: str | None = None,
     ) -> None:
+        candidate_observation_id = observation_id or execution_context.identity.observation_id
+        candidate_lens_id = lens_id or execution_context.identity.lens_id
         observation_run = await repository.create_observation_run(
-            session,
-            ObservationRunInput(observation_id=execution_context.identity.observation_id),
+            session, ObservationRunInput(observation_id=candidate_observation_id)
         )
         await repository.advance_observation_run(
             session, observation_run, ObservationRunStatus.RUNNING
@@ -1564,14 +1643,19 @@ def test_postgresql_history_reader_filters_orders_and_bounds_event_time_candidat
             observation_run,
             LensRunInput(
                 id=lens_run_id,
-                lens_id=execution_context.identity.lens_id,
+                lens_id=candidate_lens_id,
                 lens_type=LensType.METRIC,
             ),
         )
         await repository.advance_lens_run(session, lens_run, LensRunStatus.RUNNING)
         result_identity = LensResultIdentity.model_validate(
             execution_context.identity.model_dump()
-            | {"observation_run_id": observation_run.id, "lens_run_id": lens_run_id}
+            | {
+                "observation_id": candidate_observation_id,
+                "observation_run_id": observation_run.id,
+                "lens_id": candidate_lens_id,
+                "lens_run_id": lens_run_id,
+            }
         )
         reason = (
             StructuredReason(code="history_analysis_failed", component="history")
@@ -1642,6 +1726,7 @@ def test_postgresql_history_reader_filters_orders_and_bounds_event_time_candidat
         tied_first = uuid4()
         tied_second = uuid4()
         newest = uuid4()
+        other_observation_id = uuid4()
         async with session_factory() as session:
             async with session.begin():
                 session.add(
@@ -1649,6 +1734,14 @@ def test_postgresql_history_reader_filters_orders_and_bounds_event_time_candidat
                         id=execution_context.identity.observation_id,
                         name=f"PostgreSQL Metric History {uuid4()}",
                         objective="Verify History reader selection.",
+                        schema_version=1,
+                    )
+                )
+                session.add(
+                    ObservationModel(
+                        id=other_observation_id,
+                        name=f"Other PostgreSQL Metric History {uuid4()}",
+                        objective="Prove History aggregate scope filtering.",
                         schema_version=1,
                     )
                 )
@@ -1680,6 +1773,40 @@ def test_postgresql_history_reader_filters_orders_and_bounds_event_time_candidat
                         status=status,
                         data_quality=quality,
                     )
+                # These are newer, eligible-looking artifacts, but they belong to
+                # different aggregates and must not enter this History projection.
+                await persist_candidate(
+                    session,
+                    repository,
+                    execution_context,
+                    lens_run_id=uuid4(),
+                    window=MetricAnalysisWindow(
+                        **{
+                            "from": execution_context.analysis_window.from_ - timedelta(minutes=3),
+                            "to": execution_context.analysis_window.from_ - timedelta(minutes=1),
+                        }
+                    ),
+                    mean=60.0,
+                    status=LensRunStatus.COMPLETED,
+                    data_quality="good",
+                    observation_id=other_observation_id,
+                )
+                await persist_candidate(
+                    session,
+                    repository,
+                    execution_context,
+                    lens_run_id=uuid4(),
+                    window=MetricAnalysisWindow(
+                        **{
+                            "from": execution_context.analysis_window.from_ - timedelta(minutes=3),
+                            "to": execution_context.analysis_window.from_ - timedelta(minutes=1),
+                        }
+                    ),
+                    mean=70.0,
+                    status=LensRunStatus.COMPLETED,
+                    data_quality="good",
+                    lens_id="different-metric-lens",
+                )
 
             async with session.begin():
                 history = await repository.load(session, execution_context)
@@ -1694,6 +1821,89 @@ def test_postgresql_history_reader_filters_orders_and_bounds_event_time_candidat
             20.0 if expected_tied[0] == tied_first else 30.0,
             30.0 if expected_tied[1] == tied_second else 20.0,
             40.0,
+        ]
+
+    run(scenario())
+
+
+def test_postgresql_history_reader_failure_propagates_without_terminal_artifact(
+    session_factory: async_sessionmaker[AsyncSession], monkeypatch
+) -> None:
+    """A real session History-query error aborts before any terminal write."""
+
+    async def scenario() -> None:
+        phase_trace: list[str] = []
+        execution_context = context()
+        repository = RuntimePersistenceRepository()
+        pipeline = MetricAnalysisPipeline(
+            provider=FakeProvider(),
+            agent=FakeAgent(),
+            history_reader=repository,
+            repository=repository,
+            result_builder=MetricResultBuilder(lambda: WINDOW_START + timedelta(minutes=5)),
+            record_phase=phase_trace.append,
+        )
+
+        async with session_factory() as session:
+            async with session.begin():
+                observation = ObservationModel(
+                    id=execution_context.identity.observation_id,
+                    name=f"Metric History query failure {uuid4()}",
+                    objective="Verify History infrastructure failure propagation.",
+                    schema_version=1,
+                )
+                session.add(observation)
+                await session.flush()
+                observation_run = await repository.create_observation_run(
+                    session,
+                    ObservationRunInput(
+                        id=execution_context.identity.observation_run_id,
+                        observation_id=observation.id,
+                    ),
+                )
+                await repository.advance_observation_run(
+                    session, observation_run, ObservationRunStatus.RUNNING
+                )
+                lens_run = await repository.create_lens_run(
+                    session,
+                    observation_run,
+                    LensRunInput(
+                        id=execution_context.identity.lens_run_id,
+                        lens_id=execution_context.identity.lens_id,
+                        lens_type=LensType.METRIC,
+                    ),
+                )
+                await repository.advance_lens_run(session, lens_run, LensRunStatus.RUNNING)
+
+            analysis = await pipeline.analyze(execution_context)
+
+            async def fail_history_query(*_args, **_kwargs) -> None:
+                raise RuntimeError("forced History query failure")
+
+            monkeypatch.setattr(session, "execute", fail_history_query)
+            phase_trace.append("caller_transaction_open")
+            with pytest.raises(RuntimeError, match="forced History query failure"):
+                async with session.begin():
+                    await pipeline.persist_terminal(session, lens_run, analysis)
+            phase_trace.append("caller_rollback")
+
+        async with session_factory() as session:
+            restored = await repository.get_observation_run(
+                session, execution_context.identity.observation_run_id
+            )
+            assert restored is not None
+            restored_lens_run = restored.lens_runs[0]
+            assert restored_lens_run.status == "running"
+            assert restored_lens_run.analysis_result is None
+
+        assert phase_trace == [
+            "provider_acquisition",
+            "current_preparation",
+            "mandatory_semanticization",
+            "agent_execution",
+            "caller_transaction_open",
+            "history_read",
+            "caller_rollback",
         ]
 
     run(scenario())
