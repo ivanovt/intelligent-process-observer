@@ -2538,7 +2538,7 @@ def test_postgresql_real_history_reader_precedes_history_partial_terminal_phase(
 def test_postgresql_history_reader_filters_orders_and_bounds_event_time_candidates(
     session_factory: async_sessionmaker[AsyncSession],
 ) -> None:
-    """The real reader is bounded by event time, not insertion chronology."""
+    """The real reader applies fractional-second event time before bounded selection."""
 
     async def persist_candidate(
         session: AsyncSession,
@@ -2642,13 +2642,25 @@ def test_postgresql_history_reader_filters_orders_and_bounds_event_time_candidat
 
     async def scenario() -> None:
         execution_context = context().model_copy(
-            update={"history_policy": MetricHistoryPolicy(lookback_runs=3)}
+            update={
+                "analysis_window": MetricAnalysisWindow(
+                    **{
+                        "from": WINDOW_START,
+                        "to": WINDOW_START + timedelta(minutes=3, microseconds=500_000),
+                    }
+                ),
+                "history_policy": MetricHistoryPolicy(lookback_runs=5),
+            }
         )
         repository = RuntimePersistenceRepository()
         earliest = uuid4()
+        whole_second = uuid4()
+        fractional_second = uuid4()
         tied_first = uuid4()
         tied_second = uuid4()
-        newest = uuid4()
+        same_end_later_start = uuid4()
+        equal_cutoff = uuid4()
+        after_cutoff = uuid4()
         other_observation_id = uuid4()
         async with session_factory() as session:
             async with session.begin():
@@ -2669,15 +2681,38 @@ def test_postgresql_history_reader_filters_orders_and_bounds_event_time_candidat
                     )
                 )
                 await session.flush()
-                # Persisted deliberately newest-first: event time must still control selection.
-                for lens_run_id, start, end, mean, status, quality in (
-                    (newest, -1, 2, 40.0, LensRunStatus.PARTIAL, "degraded"),
-                    (tied_second, -13, -5, 30.0, LensRunStatus.COMPLETED, "good"),
-                    (tied_first, -13, -5, 20.0, LensRunStatus.COMPLETED, "good"),
-                    (earliest, -20, -10, 10.0, LensRunStatus.COMPLETED, "good"),
-                    (uuid4(), -4, 3, 50.0, LensRunStatus.COMPLETED, "good"),
-                    (uuid4(), -4, -2, None, LensRunStatus.COMPLETED, "insufficient"),
-                    (uuid4(), -4, -2, None, LensRunStatus.FAILED, None),
+                # Deliberately non-chronological persistence order. The cutoff mixes
+                # whole and fractional UTC seconds, while selected candidates cover
+                # event-end ordering and the required start/UUID tie-breaks.
+                for (
+                    lens_run_id,
+                    start,
+                    end,
+                    start_microseconds,
+                    end_microseconds,
+                    mean,
+                    status,
+                    quality,
+                ) in (
+                    (after_cutoff, -4, 3, 0, 600_000, 90.0, LensRunStatus.COMPLETED, "good"),
+                    (equal_cutoff, -4, 3, 0, 500_000, 80.0, LensRunStatus.COMPLETED, "good"),
+                    (
+                        same_end_later_start,
+                        -12,
+                        3,
+                        0,
+                        250_000,
+                        70.0,
+                        LensRunStatus.PARTIAL,
+                        "degraded",
+                    ),
+                    (tied_second, -13, 3, 0, 250_000, 60.0, LensRunStatus.COMPLETED, "good"),
+                    (tied_first, -13, 3, 0, 250_000, 50.0, LensRunStatus.COMPLETED, "good"),
+                    (fractional_second, -13, 3, 0, 100_000, 40.0, LensRunStatus.COMPLETED, "good"),
+                    (whole_second, -13, 3, 0, 0, 30.0, LensRunStatus.COMPLETED, "good"),
+                    (earliest, -20, -10, 0, 0, 10.0, LensRunStatus.COMPLETED, "good"),
+                    (uuid4(), -4, -2, 0, 0, None, LensRunStatus.COMPLETED, "insufficient"),
+                    (uuid4(), -4, -2, 0, 0, None, LensRunStatus.FAILED, None),
                 ):
                     await persist_candidate(
                         session,
@@ -2687,9 +2722,9 @@ def test_postgresql_history_reader_filters_orders_and_bounds_event_time_candidat
                         window=MetricAnalysisWindow(
                             **{
                                 "from": execution_context.analysis_window.from_
-                                + timedelta(minutes=start),
+                                + timedelta(minutes=start, microseconds=start_microseconds),
                                 "to": execution_context.analysis_window.from_
-                                + timedelta(minutes=end),
+                                + timedelta(minutes=end, microseconds=end_microseconds),
                             }
                         ),
                         mean=mean,
@@ -2736,15 +2771,22 @@ def test_postgresql_history_reader_filters_orders_and_bounds_event_time_candidat
 
         assert isinstance(history, MetricHistoryCandidates)
         expected_tied = sorted((tied_first, tied_second), key=str)
-        assert [candidate.lens_run_id for candidate in history.candidates] == [
+        candidate_ids = [candidate.lens_run_id for candidate in history.candidates]
+        assert candidate_ids == [
+            whole_second,
+            fractional_second,
             *expected_tied,
-            newest,
+            same_end_later_start,
         ]
         assert [candidate.mean for candidate in history.candidates] == [
-            20.0 if expected_tied[0] == tied_first else 30.0,
-            30.0 if expected_tied[1] == tied_second else 20.0,
+            30.0,
             40.0,
+            50.0 if expected_tied[0] == tied_first else 60.0,
+            60.0 if expected_tied[1] == tied_second else 50.0,
+            70.0,
         ]
+        assert equal_cutoff not in candidate_ids
+        assert after_cutoff not in candidate_ids
 
     run(scenario())
 

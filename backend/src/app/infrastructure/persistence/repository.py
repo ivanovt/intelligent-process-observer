@@ -6,7 +6,7 @@ import json
 from datetime import UTC, datetime
 from uuid import UUID
 
-from sqlalchemy import String, cast, select
+from sqlalchemy import DateTime, String, cast, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
@@ -130,15 +130,18 @@ class RuntimePersistenceRepository:
     ) -> MetricHistoryRead:
         """Load the bounded, usable Metric History projection for one Lens identity.
 
-        Metric result timestamps are normalized UTC strings by the strict result contract,
-        so PostgreSQL JSON string ordering is the same as event-time ordering.  The query
-        fetches only the newest effective lookback, then restores chronological order for
-        the framework-neutral History analyzer.
+        PostgreSQL parses the strict UTC timestamp payloads before applying the ADR-158
+        cutoff and total ordering. This avoids treating mixed whole- and fractional-second
+        JSON strings as lexically chronological. The query fetches only the newest
+        effective lookback, then restores chronological order for the framework-neutral
+        History analyzer.
         """
 
         payload = LensAnalysisResultModel.payload
         window_end = payload["analysis_window"]["to"].as_string()
         window_start = payload["analysis_window"]["from"].as_string()
+        event_window_end = cast(window_end, DateTime(timezone=True))
+        event_window_start = cast(window_start, DateTime(timezone=True))
         data_quality = payload["data_quality"].as_string()
         result = await session.execute(
             select(
@@ -160,11 +163,11 @@ class RuntimePersistenceRepository:
                     (LensRunStatus.COMPLETED.value, LensRunStatus.PARTIAL.value)
                 ),
                 data_quality.in_(("good", "degraded")),
-                window_end < context.analysis_window.to.isoformat().replace("+00:00", "Z"),
+                event_window_end < context.analysis_window.to,
             )
             .order_by(
-                window_end.desc(),
-                window_start.desc(),
+                event_window_end.desc(),
+                event_window_start.desc(),
                 cast(LensRunModel.id, String).desc(),
             )
             .limit(context.history_policy.lookback_runs)
