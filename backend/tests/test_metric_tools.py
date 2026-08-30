@@ -12,6 +12,7 @@ from app.metrics.tools import (
     analyze_oscillation,
     analyze_spike,
     analyze_stuck_signal,
+    project_successful_optional_tools,
 )
 
 START = datetime(2026, 8, 28, tzinfo=UTC)
@@ -52,9 +53,90 @@ def test_registry_is_exactly_the_three_approved_tools_and_binds_one_dataset() ->
         "exact_repeated_value_run_detection",
     )
     assert tuple(item.minimum_samples for item in registry.descriptors) == (5, 8, 5)
-    with pytest.raises(KeyError):
-        asyncio.run(registry.execute("drift"))
-    assert registry.ledger == ()
+    rejected = asyncio.run(registry.execute("drift"))
+    assert rejected.outcome == "rejected"
+    assert rejected.reason == "unregistered"
+    assert registry.ledger[0].model_dump() == {
+        "ordinal": 1,
+        "requested_name": "drift",
+        "outcome": {"outcome": "rejected", "reason": "unregistered"},
+        "executed": False,
+        "consumed_slot": True,
+    }
+
+
+def test_request_policy_records_duplicate_unregistered_and_over_budget() -> None:
+    registry = MetricToolRegistry("opaque-run-dataset", prepared((1.0, 2.0, 3.0, 4.0, 5.0)))
+
+    async def scenario() -> None:
+        await registry.execute("spike")
+        duplicate = await registry.execute("spike")
+        unregistered = await registry.execute("drift")
+        over_budget = await registry.execute("stuck_signal")
+
+        assert duplicate.reason == "duplicate"
+        assert unregistered.reason == "unregistered"
+        assert over_budget.reason == "over_budget"
+
+    asyncio.run(scenario())
+
+    assert [
+        (attempt.ordinal, attempt.requested_name, attempt.executed, attempt.consumed_slot)
+        for attempt in registry.ledger
+    ] == [
+        (1, "spike", True, True),
+        (2, "spike", False, True),
+        (3, "drift", False, True),
+        (4, "stuck_signal", False, False),
+    ]
+    assert [getattr(attempt.outcome, "outcome", "success") for attempt in registry.ledger] == [
+        "success",
+        "rejected",
+        "rejected",
+        "rejected",
+    ]
+    assert [getattr(attempt.outcome, "reason", None) for attempt in registry.ledger] == [
+        None,
+        "duplicate",
+        "unregistered",
+        "over_budget",
+    ]
+    assert registry.protocol_failure is not None
+    projections = project_successful_optional_tools(registry.ledger)
+    assert projections.spike is not None
+    assert projections.oscillation is None
+    assert projections.stuck_signal is None
+
+
+def test_request_policy_rejects_parallel_execution_and_keeps_request_ordinals_ordered() -> None:
+    series = prepared((1.0, 2.0, 3.0, 4.0, 5.0))
+    registry = MetricToolRegistry("opaque-run-dataset", series)
+    started = asyncio.Event()
+    release = asyncio.Event()
+
+    async def blocking_spike(_):
+        started.set()
+        await release.wait()
+        return analyze_spike(series)
+
+    registry._evaluators["spike"] = blocking_spike
+
+    async def scenario() -> None:
+        first = asyncio.create_task(registry.execute("spike"))
+        await started.wait()
+        parallel = await registry.execute("oscillation")
+        release.set()
+        await first
+
+        assert parallel.outcome == "rejected"
+        assert parallel.reason == "parallel"
+
+    asyncio.run(scenario())
+
+    assert [
+        (attempt.ordinal, attempt.requested_name, attempt.executed, attempt.consumed_slot)
+        for attempt in registry.ledger
+    ] == [(1, "spike", True, True), (2, "oscillation", False, True)]
 
 
 def test_spike_covers_modified_z_and_every_zero_mad_branch() -> None:

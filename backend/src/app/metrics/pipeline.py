@@ -19,6 +19,7 @@ from app.metrics.contracts import (
     MetricAgentCompletion,
     MetricAgentInsufficientRequest,
     MetricAgentOperationalFailure,
+    MetricAgentProtocolFailure,
     MetricAgentUsableRequest,
     MetricAnalysisWindow,
     MetricCurrentAcquisitionFailed,
@@ -70,6 +71,7 @@ class MetricPreTransactionAnalysis:
     reference_evidence: tuple[MetricReferenceEvidence, ...] = ()
     optional_projections: MetricOptionalProjections = MetricOptionalProjections()
     optional_failure_component: str | None = None
+    agent_protocol_failure: MetricAgentProtocolFailure | None = None
     tool_ledger: tuple[MetricToolAttempt, ...] = ()
 
 
@@ -192,7 +194,12 @@ class MetricAnalysisPipeline:
         MetricAgentCompletion.model_validate(completion)
         tool_ledger = registry.ledger
         optional_projections = project_successful_optional_tools(tool_ledger)
-        optional_failure_component = earliest_optional_tool_failure(tool_ledger)
+        agent_protocol_failure = registry.protocol_failure
+        optional_failure_component = (
+            "metrics_agent"
+            if agent_protocol_failure is not None
+            else earliest_optional_tool_failure(tool_ledger)
+        )
         comparisons, reference_evidence, comparison_diagnostics = self._compare_references(
             current=usable_prepared,
             current_semantics=semantics,
@@ -244,6 +251,7 @@ class MetricAnalysisPipeline:
             reference_evidence=reference_evidence,
             optional_projections=optional_projections,
             optional_failure_component=optional_failure_component,
+            agent_protocol_failure=agent_protocol_failure,
             tool_ledger=tool_ledger,
         )
 
@@ -495,6 +503,7 @@ class MetricAnalysisPipeline:
                 reference_evidence=analysis.reference_evidence,
                 optional_projections=analysis.optional_projections,
                 optional_failure_component=analysis.optional_failure_component,
+                agent_protocol_failure=analysis.agent_protocol_failure,
                 tool_ledger=analysis.tool_ledger,
             )
         self._record_phase("lens_run_transition")

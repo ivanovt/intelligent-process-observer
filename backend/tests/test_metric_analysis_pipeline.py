@@ -199,6 +199,32 @@ class ToolCallingAgent(FakeAgent):
         return MetricAgentCompletion()
 
 
+class ParallelToolCallingAgent(FakeAgent):
+    def __init__(self) -> None:
+        super().__init__()
+        self.started = asyncio.Event()
+        self.release = asyncio.Event()
+
+    async def complete(self, request, tools=None):
+        self.requests.append(request)
+        assert tools is not None
+        original = tools._evaluators["spike"]
+
+        async def blocking_spike(prepared):
+            self.started.set()
+            await self.release.wait()
+            return original(prepared)
+
+        tools._evaluators["spike"] = blocking_spike
+        first = asyncio.create_task(tools.execute("spike"))
+        await self.started.wait()
+        parallel = await tools.execute("oscillation")
+        self.release.set()
+        await first
+        assert parallel.reason == "parallel"
+        return MetricAgentCompletion()
+
+
 class FakeHistoryReader:
     def __init__(self) -> None:
         self.calls = []
@@ -483,6 +509,106 @@ def test_earliest_failed_tool_creates_correlated_partial_without_transient_ledge
     assert payload["current_state"]["stuck_signal"]["state"] == "absent"
     assert "tool_ledger" not in payload
     assert "diagnostic" not in str(payload)
+
+
+@pytest.mark.parametrize(
+    ("tool_names", "expected_rejection"),
+    [
+        (("stuck_signal", "stuck_signal"), "duplicate"),
+        (("stuck_signal", "drift"), "unregistered"),
+        (("spike", "oscillation", "stuck_signal", "spike"), "over_budget"),
+    ],
+)
+def test_protocol_rejections_preserve_successful_tool_results_and_select_metrics_agent(
+    tool_names: tuple[str, ...], expected_rejection: str
+) -> None:
+    agent = ToolCallingAgent(tool_names)
+    repository = RecordingRepository([])
+    pipeline = MetricAnalysisPipeline(
+        provider=FakeProvider(available_from_values((1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0))),
+        agent=agent,
+        history_reader=FakeHistoryReader(),
+        repository=repository,
+        result_builder=MetricResultBuilder(lambda: WINDOW_START + timedelta(minutes=5)),
+    )
+
+    analysis = run(pipeline.analyze(context()))
+    lens_run = SimpleNamespace(status="running", reason=None)
+    artifact = run(pipeline.persist_terminal(object(), lens_run, analysis))
+
+    assert analysis.agent_protocol_failure is not None
+    assert analysis.optional_failure_component == "metrics_agent"
+    assert analysis.tool_ledger[-1].outcome.reason == expected_rejection
+    assert analysis.tool_ledger[-1].executed is False
+    assert analysis.tool_ledger[-1].consumed_slot is (expected_rejection != "over_budget")
+    assert artifact.status == "partial"
+    assert lens_run.reason == {
+        "code": "optional_analysis_failed",
+        "component": "metrics_agent",
+    }
+    payload = repository.persisted[0].payload
+    assert payload["reason"] == lens_run.reason
+    assert payload["current_state"]["stuck_signal"]["state"] == "absent"
+    assert "tool_ledger" not in payload
+    assert "dataset_ref" not in payload
+    assert "diagnostic" not in str(payload)
+
+
+def test_parallel_protocol_rejection_selects_metrics_agent_without_parallel_execution() -> None:
+    agent = ParallelToolCallingAgent()
+    repository = RecordingRepository([])
+    pipeline = MetricAnalysisPipeline(
+        provider=FakeProvider(available_from_values((1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0))),
+        agent=agent,
+        history_reader=FakeHistoryReader(),
+        repository=repository,
+        result_builder=MetricResultBuilder(lambda: WINDOW_START + timedelta(minutes=5)),
+    )
+
+    analysis = run(pipeline.analyze(context()))
+    lens_run = SimpleNamespace(status="running", reason=None)
+    run(pipeline.persist_terminal(object(), lens_run, analysis))
+
+    assert [
+        (attempt.ordinal, attempt.requested_name, attempt.executed, attempt.consumed_slot)
+        for attempt in analysis.tool_ledger
+    ] == [(1, "spike", True, True), (2, "oscillation", False, True)]
+    assert analysis.tool_ledger[1].outcome.reason == "parallel"
+    assert lens_run.reason == {
+        "code": "optional_analysis_failed",
+        "component": "metrics_agent",
+    }
+
+
+def test_protocol_rejection_outranks_an_earlier_registered_tool_failure(monkeypatch) -> None:
+    from app.metrics import tools as metric_tools
+
+    def fail_spike(prepared):
+        raise RuntimeError("tool backend unavailable")
+
+    monkeypatch.setattr(metric_tools, "analyze_spike", fail_spike)
+    repository = RecordingRepository([])
+    pipeline = MetricAnalysisPipeline(
+        provider=FakeProvider(available_from_values((1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0))),
+        agent=ToolCallingAgent(("spike", "spike")),
+        history_reader=FakeHistoryReader(),
+        repository=repository,
+        result_builder=MetricResultBuilder(lambda: WINDOW_START + timedelta(minutes=5)),
+    )
+
+    analysis = run(pipeline.analyze(context()))
+    lens_run = SimpleNamespace(status="running", reason=None)
+    run(pipeline.persist_terminal(object(), lens_run, analysis))
+
+    assert [getattr(attempt.outcome, "outcome", "success") for attempt in analysis.tool_ledger] == [
+        "failed",
+        "rejected",
+    ]
+    assert analysis.optional_failure_component == "metrics_agent"
+    assert lens_run.reason == {
+        "code": "optional_analysis_failed",
+        "component": "metrics_agent",
+    }
 
 
 def test_completed_sufficient_metric_round_trips_through_runtime_aggregate(
@@ -1680,6 +1806,89 @@ def test_optional_tool_partial_round_trips_through_runtime_aggregate(
             assert payload["evidence"]["reference_periods"][0]["offset"] == "1h"
             assert payload["history"]["run_ids"] == [str(history_candidate_id)]
             assert payload["evidence"]["history"]["decreasing_transitions"] == 1
+
+    run(scenario())
+
+
+@pytest.mark.parametrize("rejection", ["duplicate", "unregistered", "parallel", "over_budget"])
+def test_protocol_rejection_partial_round_trips_through_runtime_aggregate(
+    session_factory: async_sessionmaker[AsyncSession], rejection: str
+) -> None:
+    async def scenario() -> None:
+        execution_context = context()
+        repository = RuntimePersistenceRepository()
+        if rejection == "duplicate":
+            agent = ToolCallingAgent(("spike", "spike"))
+        elif rejection == "unregistered":
+            agent = ToolCallingAgent(("spike", "drift"))
+        elif rejection == "parallel":
+            agent = ParallelToolCallingAgent()
+        else:
+            agent = ToolCallingAgent(("spike", "oscillation", "stuck_signal", "spike"))
+        pipeline = MetricAnalysisPipeline(
+            provider=FakeProvider(available_from_values((1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0))),
+            agent=agent,
+            history_reader=repository,
+            repository=repository,
+            result_builder=MetricResultBuilder(lambda: WINDOW_START + timedelta(minutes=5)),
+        )
+
+        async with session_factory() as session:
+            async with session.begin():
+                observation = ObservationModel(
+                    id=execution_context.identity.observation_id,
+                    name=f"Metric protocol rejection {uuid4()}",
+                    objective="Verify protocol rejection persistence.",
+                    schema_version=1,
+                )
+                session.add(observation)
+                await session.flush()
+                observation_run = await repository.create_observation_run(
+                    session,
+                    ObservationRunInput(
+                        id=execution_context.identity.observation_run_id,
+                        observation_id=observation.id,
+                    ),
+                )
+                await repository.advance_observation_run(
+                    session, observation_run, ObservationRunStatus.RUNNING
+                )
+                lens_run = await repository.create_lens_run(
+                    session,
+                    observation_run,
+                    LensRunInput(
+                        id=execution_context.identity.lens_run_id,
+                        lens_id=execution_context.identity.lens_id,
+                        lens_type=LensType.METRIC,
+                    ),
+                )
+                await repository.advance_lens_run(session, lens_run, LensRunStatus.RUNNING)
+
+            analysis = await pipeline.analyze(execution_context)
+            async with session.begin():
+                await pipeline.persist_terminal(session, lens_run, analysis)
+
+        async with session_factory() as session:
+            restored = await repository.get_observation_run(
+                session, execution_context.identity.observation_run_id
+            )
+            assert restored is not None
+            restored_lens_run = restored.lens_runs[0]
+            assert restored_lens_run.status == "partial"
+            assert restored_lens_run.reason == {
+                "code": "optional_analysis_failed",
+                "component": "metrics_agent",
+            }
+            assert restored_lens_run.analysis_result is not None
+            payload = restored_lens_run.analysis_result.payload
+            assert payload["reason"] == restored_lens_run.reason
+            assert "tool_ledger" not in payload
+            assert "dataset_ref" not in payload
+            assert "diagnostic" not in str(payload)
+
+        assert analysis.tool_ledger[-1].outcome.reason == rejection
+        assert analysis.tool_ledger[-1].executed is False
+        assert analysis.tool_ledger[-1].consumed_slot is (rejection != "over_budget")
 
     run(scenario())
 

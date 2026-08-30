@@ -276,6 +276,7 @@ MetricAgentOutcome = MetricAgentCompletion | MetricAgentOperationalFailure
 
 
 MetricToolName = Literal["spike", "oscillation", "stuck_signal"]
+MetricToolRejectionReason = Literal["duplicate", "unregistered", "parallel", "over_budget"]
 
 
 class MetricOptionalProperty(StrictMetricModel):
@@ -374,24 +375,48 @@ class MetricToolTimedOut(StrictMetricModel):
     diagnostic: str = Field(min_length=1, max_length=512)
 
 
-MetricToolOutcome = (
+class MetricToolRejected(StrictMetricModel):
+    """An application-owned request rejection before deterministic evaluation."""
+
+    outcome: Literal["rejected"] = "rejected"
+    reason: MetricToolRejectionReason
+
+
+MetricToolExecutionOutcome = (
     MetricToolSuccess | MetricToolNotApplicable | MetricToolFailed | MetricToolTimedOut
 )
+
+MetricToolOutcome = MetricToolExecutionOutcome | MetricToolRejected
 
 
 class MetricToolAttempt(StrictMetricModel):
     ordinal: int = Field(gt=0)
-    requested_name: MetricToolName
+    requested_name: str = Field(min_length=1)
     outcome: MetricToolOutcome
     executed: bool
+    consumed_slot: bool
 
     @model_validator(mode="after")
     def require_correlated_outcome(self) -> MetricToolAttempt:
+        if isinstance(self.outcome, MetricToolRejected):
+            if self.executed:
+                raise ValueError("rejected tool attempts must not execute")
+            if self.consumed_slot != (self.outcome.reason != "over_budget"):
+                raise ValueError("rejection slot consumption must match its reason")
+            return self
         if self.requested_name != self.outcome.name:
             raise ValueError("tool attempt name must match outcome name")
         if not self.executed:
             raise ValueError("registered deterministic tool attempts must execute")
+        if not self.consumed_slot:
+            raise ValueError("executed tool attempts must consume a slot")
         return self
+
+
+class MetricAgentProtocolFailure(StrictMetricModel):
+    """Transient signal that an agent-bound request violated the request policy."""
+
+    state: Literal["protocol_failure"] = "protocol_failure"
 
 
 class MetricOptionalProjections(StrictMetricModel):

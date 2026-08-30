@@ -3,17 +3,22 @@
 from __future__ import annotations
 
 import math
-from collections.abc import Callable
+from collections.abc import Awaitable, Callable
+from inspect import isawaitable
 from statistics import median
 
 from app.metrics.contracts import (
     FIXED_ALLOWED_TOOLS,
+    MetricAgentProtocolFailure,
     MetricOptionalProjections,
     MetricToolAttempt,
+    MetricToolExecutionOutcome,
     MetricToolFailed,
     MetricToolName,
     MetricToolNotApplicable,
     MetricToolOutcome,
+    MetricToolRejected,
+    MetricToolRejectionReason,
     MetricToolSuccess,
     MetricToolTimedOut,
     OscillationEvidence,
@@ -26,10 +31,12 @@ from app.metrics.contracts import (
     StuckSignalToolSuccess,
 )
 
-ToolEvaluator = Callable[[PreparedUsableSeries], MetricToolOutcome]
+ToolEvaluator = Callable[
+    [PreparedUsableSeries], MetricToolExecutionOutcome | Awaitable[MetricToolExecutionOutcome]
+]
 
 
-def analyze_spike(prepared: PreparedUsableSeries) -> MetricToolOutcome:
+def analyze_spike(prepared: PreparedUsableSeries) -> MetricToolExecutionOutcome:
     samples = prepared.samples
     if len(samples) < 5:
         return MetricToolNotApplicable(name="spike")
@@ -71,7 +78,7 @@ def analyze_spike(prepared: PreparedUsableSeries) -> MetricToolOutcome:
     )
 
 
-def analyze_oscillation(prepared: PreparedUsableSeries) -> MetricToolOutcome:
+def analyze_oscillation(prepared: PreparedUsableSeries) -> MetricToolExecutionOutcome:
     if len(prepared.samples) < 8:
         return MetricToolNotApplicable(name="oscillation")
     scale = max(abs(prepared.evidence.mean), prepared.evidence.max - prepared.evidence.min)
@@ -101,7 +108,7 @@ def analyze_oscillation(prepared: PreparedUsableSeries) -> MetricToolOutcome:
     )
 
 
-def analyze_stuck_signal(prepared: PreparedUsableSeries) -> MetricToolOutcome:
+def analyze_stuck_signal(prepared: PreparedUsableSeries) -> MetricToolExecutionOutcome:
     samples = prepared.samples
     if len(samples) < 5:
         return MetricToolNotApplicable(name="stuck_signal")
@@ -136,6 +143,10 @@ class MetricToolRegistry:
         self._dataset_ref = dataset_ref
         self._prepared = prepared
         self._attempts: list[MetricToolAttempt] = []
+        self._used_names: set[MetricToolName] = set()
+        self._active_execution = False
+        self._consumed_slots = 0
+        self._next_ordinal = 1
         self._evaluators: dict[MetricToolName, ToolEvaluator] = {
             "spike": analyze_spike,
             "oscillation": analyze_oscillation,
@@ -148,28 +159,78 @@ class MetricToolRegistry:
 
     @property
     def ledger(self) -> tuple[MetricToolAttempt, ...]:
-        return tuple(self._attempts)
+        return tuple(sorted(self._attempts, key=lambda attempt: attempt.ordinal))
 
-    async def execute(self, name: MetricToolName) -> MetricToolOutcome:
-        """Execute one registered tool over the sole bound prepared-current dataset."""
+    @property
+    def protocol_failure(self) -> MetricAgentProtocolFailure | None:
+        if any(isinstance(attempt.outcome, MetricToolRejected) for attempt in self._attempts):
+            return MetricAgentProtocolFailure()
+        return None
 
+    async def execute(self, name: str) -> MetricToolOutcome:
+        """Apply request admission before evaluating the sole bound prepared-current dataset."""
+
+        ordinal = self._reserve_ordinal()
+        if self._consumed_slots >= 3:
+            return self._reject(name, ordinal, "over_budget")
+        if self._active_execution:
+            return self._reject(name, ordinal, "parallel")
         if name not in self._evaluators:
-            raise KeyError(name)
+            return self._reject(name, ordinal, "unregistered")
+
+        registered_name: MetricToolName = name
+        if registered_name in self._used_names:
+            return self._reject(name, ordinal, "duplicate")
+
+        self._consumed_slots += 1
+        self._used_names.add(registered_name)
+        self._active_execution = True
         try:
-            outcome = self._evaluators[name](self._prepared)
+            outcome = self._evaluators[registered_name](self._prepared)
+            if isawaitable(outcome):
+                outcome = await outcome
         except TimeoutError as error:
-            outcome = MetricToolTimedOut(name=name, diagnostic=_diagnostic(error))
+            outcome = MetricToolTimedOut(name=registered_name, diagnostic=_diagnostic(error))
         except Exception as error:
-            outcome = MetricToolFailed(name=name, diagnostic=_diagnostic(error))
+            outcome = MetricToolFailed(name=registered_name, diagnostic=_diagnostic(error))
+        finally:
+            self._active_execution = False
         self._attempts.append(
             MetricToolAttempt(
-                ordinal=len(self._attempts) + 1,
-                requested_name=name,
+                ordinal=ordinal,
+                requested_name=registered_name,
                 outcome=outcome,
                 executed=True,
+                consumed_slot=True,
             )
         )
         return outcome
+
+    def _reserve_ordinal(self) -> int:
+        ordinal = self._next_ordinal
+        self._next_ordinal += 1
+        return ordinal
+
+    def _reject(
+        self,
+        requested_name: str,
+        ordinal: int,
+        reason: MetricToolRejectionReason,
+    ) -> MetricToolRejected:
+        rejected = MetricToolRejected(reason=reason)
+        consumed_slot = reason != "over_budget"
+        if consumed_slot:
+            self._consumed_slots += 1
+        self._attempts.append(
+            MetricToolAttempt(
+                ordinal=ordinal,
+                requested_name=requested_name,
+                outcome=rejected,
+                executed=False,
+                consumed_slot=consumed_slot,
+            )
+        )
+        return rejected
 
 
 def project_successful_optional_tools(
