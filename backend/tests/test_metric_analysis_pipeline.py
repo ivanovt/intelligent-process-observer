@@ -1935,6 +1935,138 @@ def test_reference_partial_round_trips_through_runtime_aggregate(
     run(scenario())
 
 
+@pytest.mark.parametrize(
+    ("reference_unavailable", "history_failure", "expected_reason"),
+    [
+        (
+            True,
+            True,
+            {"code": "reference_unavailable", "component": "reference_periods"},
+        ),
+        (
+            True,
+            False,
+            {"code": "reference_unavailable", "component": "reference_periods"},
+        ),
+        (
+            False,
+            True,
+            {"code": "history_analysis_failed", "component": "history"},
+        ),
+    ],
+)
+def test_cross_cause_precedence_persists_one_public_reason_without_diagnostics(
+    session_factory: async_sessionmaker[AsyncSession],
+    monkeypatch,
+    reference_unavailable: bool,
+    history_failure: bool,
+    expected_reason: dict[str, str],
+) -> None:
+    """Reference, History, and optional failures retain only their primary public reason."""
+
+    async def scenario() -> None:
+        execution_context = context(reference_periods=("1h",) if reference_unavailable else ())
+        repository = RuntimePersistenceRepository()
+        if reference_unavailable:
+            provider = SequencedProvider(
+                (good_available(), MetricSeriesUnavailable(diagnostic="reference unavailable"))
+            )
+        else:
+            provider = FakeProvider()
+        history_reader = (
+            CandidateHistoryReader(
+                (
+                    MetricHistoryCandidate(
+                        lens_run_id=uuid4(),
+                        analysis_window=MetricAnalysisWindow(
+                            **{
+                                "from": WINDOW_START - timedelta(hours=1),
+                                "to": WINDOW_START - timedelta(minutes=30),
+                            }
+                        ),
+                        status="completed",
+                        data_quality="good",
+                        mean=10.0,
+                    ),
+                )
+            )
+            if history_failure
+            else FakeHistoryReader()
+        )
+        pipeline = MetricAnalysisPipeline(
+            provider=provider,
+            agent=FakeAgent(RuntimeError("agent transport detail")),
+            history_reader=history_reader,
+            repository=repository,
+            result_builder=MetricResultBuilder(lambda: WINDOW_START + timedelta(minutes=5)),
+        )
+
+        async with session_factory() as session:
+            async with session.begin():
+                observation = ObservationModel(
+                    id=execution_context.identity.observation_id,
+                    name=f"Metric cross-cause conformance {uuid4()}",
+                    objective="Verify Metric partial-reason precedence.",
+                    schema_version=1,
+                )
+                session.add(observation)
+                await session.flush()
+                observation_run = await repository.create_observation_run(
+                    session,
+                    ObservationRunInput(
+                        id=execution_context.identity.observation_run_id,
+                        observation_id=observation.id,
+                    ),
+                )
+                await repository.advance_observation_run(
+                    session, observation_run, ObservationRunStatus.RUNNING
+                )
+                lens_run = await repository.create_lens_run(
+                    session,
+                    observation_run,
+                    LensRunInput(
+                        id=execution_context.identity.lens_run_id,
+                        lens_id=execution_context.identity.lens_id,
+                        lens_type=LensType.METRIC,
+                    ),
+                )
+                await repository.advance_lens_run(session, lens_run, LensRunStatus.RUNNING)
+
+            analysis = await pipeline.analyze(execution_context)
+            assert analysis.optional_failure_component == "metrics_agent"
+            assert bool(analysis.reference_diagnostics) is reference_unavailable
+            async with session.begin():
+                persisted = await pipeline.persist_terminal(session, lens_run, analysis)
+            assert persisted.status == "partial"
+            assert persisted.payload["reason"] == expected_reason
+
+        async with session_factory() as session:
+            restored = await repository.get_observation_run(
+                session, execution_context.identity.observation_run_id
+            )
+            assert restored is not None
+            restored_lens_run = restored.lens_runs[0]
+            assert restored_lens_run.status == "partial"
+            assert restored_lens_run.reason == expected_reason
+            assert restored_lens_run.analysis_result is not None
+            payload = restored_lens_run.analysis_result.payload
+            assert payload == persisted.payload
+            assert payload["reason"] == expected_reason
+            assert "reference_diagnostics" not in payload
+            assert "tool_ledger" not in payload
+            assert "diagnostic" not in str(payload)
+
+    if history_failure:
+        import app.metrics.pipeline as pipeline_module
+
+        monkeypatch.setattr(
+            pipeline_module,
+            "analyze_history",
+            lambda *_: (_ for _ in ()).throw(RuntimeError("History computation detail")),
+        )
+    run(scenario())
+
+
 def test_optional_tool_partial_round_trips_through_runtime_aggregate(
     session_factory: async_sessionmaker[AsyncSession], monkeypatch
 ) -> None:
