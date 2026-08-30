@@ -85,7 +85,7 @@ their completion gates and any required independent high-risk review.
 | VS-07 | Add deterministic optional tools, registered-execution ledger behavior, and tool-caused partial persistence | VS-02 | high-risk | COMPLETE | 9f598785 + 56a03b2 | `implementation/VS-07-handoff.md` |
 | VS-07R | Add the framework-neutral rejection-capable request policy and persist protocol-caused partial outcomes | VS-07 | high-risk | COMPLETE | 4213e5b + 146abb1 | `implementation/VS-07R-handoff.md` |
 | VS-08 | Translate the accepted framework-neutral policy through PydanticAI and enforce framework request ceilings | VS-07R; existing dependency approval verified by Coordinator | high-risk | COMPLETE | 5337676 + e07273e | `implementation/VS-08-handoff.md` |
-| VS-09 | Verify cross-cause composition, document boundaries, and run full conformance | VS-04, VS-06, and VS-08 | high-risk | IN_PROGRESS | - | - |
+| VS-09 | Verify cross-cause composition, document boundaries, and run full conformance | VS-04, VS-06, and VS-08 | high-risk | COMPLETE | c3739ab | `implementation/VS-09-handoff.md` |
 
 ## Slice definitions
 
@@ -468,4 +468,5 @@ Mutable Coordinator-owned execution metadata only. Do not place new requirements
 - Coordinator resumption record (2026-08-30): the stop condition is cleared. Commit `9c75203` normally reverted only unaccepted `d4d8e48`; VS-08 is reset to `PLANNED` without credit. VS-07R is now in progress under the renewed approved plan.
 - Coordinator execution record (2026-08-30): VS-07R is accepted. The plan's existing approval for `pydantic-ai-slim>=2,<3` without provider extras was re-verified before the fresh VS-08 re-execution; no new dependency decision is needed.
 - Coordinator stop record (2026-08-30): user directed execution to stop after VS-08. Superseded by the subsequent direction to execute VS-09. The VS-08 handoff's wrapper-model shared-knowledge candidate is rejected as version-sensitive implementation detail rather than durable project knowledge.
+- Coordinator completion record (2026-08-30): all approved implementation slices VS-01 through VS-09, including VS-07R, are accepted. Full database-enabled `make check` passed; the change is handed to independent final implementation review. Archive, push, PR creation, and merge remain out of scope.
 - Completion of VS-09 means ready for official change verification and independent implementation review. It does not authorize archive, push, PR creation, merge, or direct work on `main`.
