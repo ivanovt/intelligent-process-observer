@@ -784,7 +784,7 @@ def test_pydantic_ai_later_failure_retains_prior_successful_tool_result(
     if later_failure == "model":
         assert len(calls) == 2
     else:
-        assert len(calls) == 3
+        assert len(calls) == 2
         assert analysis.agent_protocol_failure is not None
 
 

@@ -163,26 +163,39 @@ def test_adapter_routes_each_serial_tool_call_through_the_existing_registry() ->
 
 def test_adapter_routes_duplicate_parallel_unregistered_and_fourth_requests_to_policy() -> None:
     cases = {
-        "duplicate": [
-            lambda _: ModelResponse(parts=[ToolCallPart("spike", {})]),
-            lambda _: ModelResponse(parts=[ToolCallPart("spike", {})]),
-            completion,
-        ],
-        "parallel": [
-            lambda _: ModelResponse(
-                parts=[ToolCallPart("spike", {}), ToolCallPart("oscillation", {})]
-            ),
-            completion,
-        ],
-        "unregistered": [lambda _: ModelResponse(parts=[ToolCallPart("drift", {})])],
-        "over_budget": [
-            lambda _: ModelResponse(parts=[ToolCallPart("spike", {})]),
-            lambda _: ModelResponse(parts=[ToolCallPart("oscillation", {})]),
-            lambda _: ModelResponse(parts=[ToolCallPart("stuck_signal", {})]),
-            lambda _: ModelResponse(parts=[ToolCallPart("spike", {})]),
-        ],
+        "duplicate": (
+            [
+                lambda _: ModelResponse(parts=[ToolCallPart("spike", {})]),
+                lambda _: ModelResponse(parts=[ToolCallPart("spike", {})]),
+                completion,
+            ],
+            2,
+        ),
+        "parallel": (
+            [
+                lambda _: ModelResponse(
+                    parts=[ToolCallPart("spike", {}), ToolCallPart("oscillation", {})]
+                ),
+                completion,
+            ],
+            1,
+        ),
+        "unregistered": (
+            [lambda _: ModelResponse(parts=[ToolCallPart("drift", {})]), completion],
+            1,
+        ),
+        "over_budget": (
+            [
+                lambda _: ModelResponse(parts=[ToolCallPart("spike", {})]),
+                lambda _: ModelResponse(parts=[ToolCallPart("oscillation", {})]),
+                lambda _: ModelResponse(parts=[ToolCallPart("stuck_signal", {})]),
+                lambda _: ModelResponse(parts=[ToolCallPart("spike", {})]),
+                completion,
+            ],
+            4,
+        ),
     }
-    for reason, responses in cases.items():
+    for reason, (responses, expected_request_count) in cases.items():
         model, calls = function_model(responses)
         registry = tool_registry()
 
@@ -191,12 +204,8 @@ def test_adapter_routes_duplicate_parallel_unregistered_and_fourth_requests_to_p
         assert registry.ledger[-1].outcome == MetricToolRejected(reason=reason)
         assert registry.ledger[-1].executed is False
         assert registry.ledger[-1].consumed_slot is (reason != "over_budget")
-        if reason in {"unregistered", "over_budget"}:
-            assert isinstance(outcome, MetricAgentOperationalFailure)
-        else:
-            assert outcome == MetricAgentCompletion()
-        if reason == "over_budget":
-            assert len(calls) == 4
+        assert isinstance(outcome, MetricAgentOperationalFailure)
+        assert len(calls) == expected_request_count
 
 
 def test_adapter_has_no_validation_retry_or_fifth_model_request() -> None:

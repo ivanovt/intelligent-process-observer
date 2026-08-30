@@ -18,6 +18,7 @@ from app.metrics.contracts import (
     MetricAgentOutcome,
     MetricAgentRequest,
     MetricToolOutcome,
+    MetricToolRejected,
 )
 from app.metrics.ports import MetricToolExecutor
 
@@ -77,6 +78,8 @@ class _PolicyObservingModel(WrapperModel):
                 for tool_call, outcome in zip(tool_calls, outcomes, strict=True)
             }
         )
+        if any(isinstance(outcome, MetricToolRejected) for outcome in outcomes):
+            raise ValueError("Metrics Agent request violated the tool request policy")
 
     @staticmethod
     def _validate_tool_inputs(tool_calls: tuple[ToolCallPart, ...]) -> None:
