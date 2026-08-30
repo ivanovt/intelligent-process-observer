@@ -1,9 +1,13 @@
 # VS-07R Handoff — framework-neutral request admission and protocol partials
 
 Implemented an application-owned request policy within the run-scoped optional-tool
-registry. Every request receives a deterministic ordinal and ledger record. The first
-three actions consume one slot whether executed or rejected; a subsequent request is
-recorded as `over_budget` with `executed=false` and `consumed_slot=false`.
+registry. `MetricToolExecutor.execute_batch()` is the framework-neutral concurrent
+admission boundary: it admits the first action and records later actions in that batch
+as `parallel` before any evaluator runs. This makes rejection independent of whether a
+registered evaluator happens to await. Every request receives a deterministic ordinal
+and ledger record. The first three actions consume one slot whether executed or
+rejected; a subsequent request is recorded as `over_budget` with `executed=false` and
+`consumed_slot=false`.
 
 The policy rejects `duplicate`, `unregistered`, `parallel`, and `over_budget` requests
 before deterministic evaluation. Rejected entries retain the raw requested name,
@@ -33,6 +37,23 @@ Verification:
 - `cd backend && IPO_TEST_DATABASE_URL=postgresql+psycopg://ipo:ipo@localhost:55432/ipo_test DATABASE_URL=postgresql+psycopg://ipo:ipo@localhost:55432/ipo_test UV_CACHE_DIR=/tmp/ipo-vs07r-uv-cache uv run pytest tests/test_metric_tools.py tests/test_metric_analysis_pipeline.py tests/test_metric_history.py tests/test_runtime_persistence.py tests/test_runtime_persistence_integration.py -q` — 152 passed; two existing Alembic `path_separator` deprecation warnings.
 - `git diff --check` — passed.
 
+Corrective review evidence:
+
+- The parallel regression uses `execute_batch(("spike", "oscillation"))` with the
+  real registered synchronous evaluators; it does not monkeypatch or block an
+  evaluator. Its deterministic ledger is successful `spike` at ordinal one followed
+  by an unexecuted, slot-consuming `parallel` rejection for `oscillation` at ordinal
+  two.
+- The PostgreSQL-backed protocol-rejection regression exercises that same fake-agent
+  batch and round-trips one `partial` LensRun/result with the correlated
+  `optional_analysis_failed/metrics_agent` reason and no transient ledger, dataset, or
+  diagnostic payload fields.
+
+- `cd backend && UV_CACHE_DIR=/tmp/ipo-vs07r-corrective-uv-cache uv run pytest tests/test_metric_tools.py tests/test_metric_analysis_pipeline.py -q` — 75 passed, 19 skipped without PostgreSQL configuration.
+- `cd backend && IPO_TEST_DATABASE_URL=postgresql+psycopg://ipo:ipo@localhost:55432/ipo_test DATABASE_URL=postgresql+psycopg://ipo:ipo@localhost:55432/ipo_test UV_CACHE_DIR=/tmp/ipo-vs07r-corrective-uv-cache uv run pytest tests/test_metric_tools.py tests/test_metric_analysis_pipeline.py -q` — 94 passed; one existing Alembic `path_separator` deprecation warning.
+- `cd backend && UV_CACHE_DIR=/tmp/ipo-vs07r-corrective-uv-cache uv run ruff check src/app/metrics/tools.py src/app/metrics/ports.py tests/test_metric_tools.py tests/test_metric_analysis_pipeline.py` — passed.
+- `cd backend && UV_CACHE_DIR=/tmp/ipo-vs07r-corrective-uv-cache uv run ruff format --check src/app/metrics/tools.py src/app/metrics/ports.py tests/test_metric_tools.py tests/test_metric_analysis_pipeline.py` — passed.
+
 Downstream adapter obligations: VS-08 must route every framework-observable tool
 request through this executor/policy; it must not duplicate the ledger, bypass
 admission, or alter rejection and component selection. Framework retry/model-request
@@ -42,7 +63,7 @@ Known limitations within approved scope: no PydanticAI, dependency, adapter, pro
 model-request limit, transport, schema, reference/History behavior, or cross-cause
 precedence work was added.
 
-Commit SHA: `HEAD` (atomic VS-07R commit).
+Commit SHA: `HEAD` (atomic VS-07R corrective commit).
 
 Plan change requested: none.
 

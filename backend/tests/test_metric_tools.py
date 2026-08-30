@@ -108,26 +108,14 @@ def test_request_policy_records_duplicate_unregistered_and_over_budget() -> None
     assert projections.stuck_signal is None
 
 
-def test_request_policy_rejects_parallel_execution_and_keeps_request_ordinals_ordered() -> None:
+def test_request_policy_rejects_batched_parallel_execution_with_synchronous_evaluators() -> None:
     series = prepared((1.0, 2.0, 3.0, 4.0, 5.0))
     registry = MetricToolRegistry("opaque-run-dataset", series)
-    started = asyncio.Event()
-    release = asyncio.Event()
-
-    async def blocking_spike(_):
-        started.set()
-        await release.wait()
-        return analyze_spike(series)
-
-    registry._evaluators["spike"] = blocking_spike
 
     async def scenario() -> None:
-        first = asyncio.create_task(registry.execute("spike"))
-        await started.wait()
-        parallel = await registry.execute("oscillation")
-        release.set()
-        await first
+        first, parallel = await registry.execute_batch(("spike", "oscillation"))
 
+        assert first.model_dump()["name"] == "spike"
         assert parallel.outcome == "rejected"
         assert parallel.reason == "parallel"
 

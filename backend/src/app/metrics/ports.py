@@ -31,6 +31,9 @@ class MetricsAnalysisAgent(Protocol):
 class MetricToolExecutor(Protocol):
     async def execute(self, name: str) -> MetricToolOutcome: ...
 
+    async def execute_batch(self, names: tuple[str, ...]) -> tuple[MetricToolOutcome, ...]:
+        """Admit a concurrently requested batch through the application-owned policy."""
+
 
 class MetricHistoryReader(Protocol):
     async def load(

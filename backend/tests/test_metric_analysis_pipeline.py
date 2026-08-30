@@ -200,27 +200,11 @@ class ToolCallingAgent(FakeAgent):
 
 
 class ParallelToolCallingAgent(FakeAgent):
-    def __init__(self) -> None:
-        super().__init__()
-        self.started = asyncio.Event()
-        self.release = asyncio.Event()
-
     async def complete(self, request, tools=None):
         self.requests.append(request)
         assert tools is not None
-        original = tools._evaluators["spike"]
-
-        async def blocking_spike(prepared):
-            self.started.set()
-            await self.release.wait()
-            return original(prepared)
-
-        tools._evaluators["spike"] = blocking_spike
-        first = asyncio.create_task(tools.execute("spike"))
-        await self.started.wait()
-        parallel = await tools.execute("oscillation")
-        self.release.set()
-        await first
+        first, parallel = await tools.execute_batch(("spike", "oscillation"))
+        assert first.model_dump()["name"] == "spike"
         assert parallel.reason == "parallel"
         return MetricAgentCompletion()
 

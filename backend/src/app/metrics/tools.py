@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import math
 from collections.abc import Awaitable, Callable
+from dataclasses import dataclass
 from inspect import isawaitable
 from statistics import median
 
@@ -34,6 +35,12 @@ from app.metrics.contracts import (
 ToolEvaluator = Callable[
     [PreparedUsableSeries], MetricToolExecutionOutcome | Awaitable[MetricToolExecutionOutcome]
 ]
+
+
+@dataclass(frozen=True)
+class _AcceptedToolRequest:
+    ordinal: int
+    name: MetricToolName
 
 
 def analyze_spike(prepared: PreparedUsableSeries) -> MetricToolExecutionOutcome:
@@ -170,10 +177,32 @@ class MetricToolRegistry:
     async def execute(self, name: str) -> MetricToolOutcome:
         """Apply request admission before evaluating the sole bound prepared-current dataset."""
 
+        admitted = self._admit(name)
+        if isinstance(admitted, MetricToolRejected):
+            return admitted
+        return await self._evaluate(admitted)
+
+    async def execute_batch(self, names: tuple[str, ...]) -> tuple[MetricToolOutcome, ...]:
+        """Reject batched requests before evaluator timing can make them appear serial."""
+
+        admissions = tuple(
+            self._admit(name, parallel=index > 0) for index, name in enumerate(names)
+        )
+        outcomes: list[MetricToolOutcome] = []
+        for admission in admissions:
+            if isinstance(admission, MetricToolRejected):
+                outcomes.append(admission)
+            else:
+                outcomes.append(await self._evaluate(admission))
+        return tuple(outcomes)
+
+    def _admit(
+        self, name: str, *, parallel: bool = False
+    ) -> _AcceptedToolRequest | MetricToolRejected:
         ordinal = self._reserve_ordinal()
         if self._consumed_slots >= 3:
             return self._reject(name, ordinal, "over_budget")
-        if self._active_execution:
+        if parallel or self._active_execution:
             return self._reject(name, ordinal, "parallel")
         if name not in self._evaluators:
             return self._reject(name, ordinal, "unregistered")
@@ -184,21 +213,24 @@ class MetricToolRegistry:
 
         self._consumed_slots += 1
         self._used_names.add(registered_name)
+        return _AcceptedToolRequest(ordinal=ordinal, name=registered_name)
+
+    async def _evaluate(self, request: _AcceptedToolRequest) -> MetricToolExecutionOutcome:
         self._active_execution = True
         try:
-            outcome = self._evaluators[registered_name](self._prepared)
+            outcome = self._evaluators[request.name](self._prepared)
             if isawaitable(outcome):
                 outcome = await outcome
         except TimeoutError as error:
-            outcome = MetricToolTimedOut(name=registered_name, diagnostic=_diagnostic(error))
+            outcome = MetricToolTimedOut(name=request.name, diagnostic=_diagnostic(error))
         except Exception as error:
-            outcome = MetricToolFailed(name=registered_name, diagnostic=_diagnostic(error))
+            outcome = MetricToolFailed(name=request.name, diagnostic=_diagnostic(error))
         finally:
             self._active_execution = False
         self._attempts.append(
             MetricToolAttempt(
-                ordinal=ordinal,
-                requested_name=registered_name,
+                ordinal=request.ordinal,
+                requested_name=request.name,
                 outcome=outcome,
                 executed=True,
                 consumed_slot=True,
