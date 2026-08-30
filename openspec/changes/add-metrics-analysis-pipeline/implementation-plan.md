@@ -1,6 +1,6 @@
 # Implementation Plan — add-metrics-analysis-pipeline
 
-**Status:** DRAFT
+**Status:** APPROVED
 **Artifact type:** Non-normative execution plan
 **Approved OpenSpec change:** `add-metrics-analysis-pipeline`
 **Planning branch:** `feature/add-metrics-analysis-pipeline`
@@ -470,4 +470,5 @@ Mutable Coordinator-owned execution metadata only. Do not place new requirements
 - Coordinator stop record (2026-08-30): user directed execution to stop after VS-08. Superseded by the subsequent direction to execute VS-09. The VS-08 handoff's wrapper-model shared-knowledge candidate is rejected as version-sensitive implementation detail rather than durable project knowledge.
 - Coordinator completion record (2026-08-30): all approved implementation slices VS-01 through VS-09, including VS-07R, are accepted. Full database-enabled `make check` passed; the change is handed to independent final implementation review. Archive, push, PR creation, and merge remain out of scope.
 - Coordinator final-review stop record (2026-08-30): independent final implementation review returned `CHANGES REQUIRED`. IR-001 (HIGH) requires correct PostgreSQL fractional-second History cutoff/order behavior; IR-002 (MEDIUM) requires terminal adapter behavior immediately after a recorded protocol rejection. IR-003 (LOW) identifies stale OpenSpec task and plan-status metadata. No archive or task-completion update may proceed until the user triages the findings and accepted targeted fixes are independently verified.
+- Coordinator final-review remediation record (2026-08-30): the user accepted targeted fixes. IR-001 was fixed in `25a478d` and independently verified resolved; IR-002 was fixed in `be6525f` and independently verified resolved; IR-003 reconciles this plan status and all 37 task checkboxes. The change remains pending narrow metadata verification and whole-change final-review recheck; archive, push, PR creation, and merge remain out of scope.
 - Completion of VS-09 means ready for official change verification and independent implementation review. It does not authorize archive, push, PR creation, merge, or direct work on `main`.
