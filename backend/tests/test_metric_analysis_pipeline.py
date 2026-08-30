@@ -454,6 +454,31 @@ def test_usable_request_derives_descriptors_from_the_precreated_registry() -> No
     assert "allowed_tools=registry.descriptors" in source
 
 
+def test_usable_agent_failure_persists_a_partial_without_changing_mandatory_evidence() -> None:
+    repository = RecordingRepository([])
+    pipeline = MetricAnalysisPipeline(
+        provider=FakeProvider(),
+        agent=FakeAgent(RuntimeError("adapter unavailable")),
+        history_reader=FakeHistoryReader(),
+        repository=repository,
+        result_builder=MetricResultBuilder(lambda: WINDOW_START + timedelta(minutes=5)),
+    )
+
+    analysis = run(pipeline.analyze(context()))
+    lens_run = SimpleNamespace(status="running", reason=None)
+    artifact = run(pipeline.persist_terminal(object(), lens_run, analysis))
+
+    assert analysis.optional_failure_component == "metrics_agent"
+    assert artifact.status == "partial"
+    assert lens_run.reason == {
+        "code": "optional_analysis_failed",
+        "component": "metrics_agent",
+    }
+    assert repository.persisted[0].payload["evidence"]["current"] == (
+        analysis.prepared.evidence.model_dump()
+    )
+
+
 def test_earliest_failed_tool_creates_correlated_partial_without_transient_ledger(
     monkeypatch,
 ) -> None:
@@ -906,6 +931,7 @@ def test_pipeline_projects_degraded_and_resilient_insufficient_agent_requests() 
     ("available", "agent_failure", "quality"),
     [
         (degraded_available(), None, "degraded"),
+        (good_available(), RuntimeError("adapter unavailable"), "good"),
         (
             available_from_values((float("nan"), 10.0, 20.0)),
             RuntimeError("unavailable"),
@@ -977,11 +1003,16 @@ def test_degraded_and_insufficient_metric_outcomes_round_trip_through_runtime_ag
             )
             assert restored is not None
             restored_lens_run = restored.lens_runs[0]
-            assert restored_lens_run.status == "completed"
+            expected_status = (
+                "partial"
+                if agent_failure is not None and quality != "insufficient"
+                else "completed"
+            )
+            assert restored_lens_run.status == expected_status
             assert restored_lens_run.analysis_result is not None
             payload = restored_lens_run.analysis_result.payload
             assert payload["data_quality"] == quality
-            assert payload["status"] == {"state": "completed"}
+            assert payload["status"] == {"state": expected_status}
             assert payload["identity"] == execution_context.identity.model_dump(mode="json")
             assert payload["analysis_window"] == execution_context.analysis_window.model_dump(
                 mode="json", by_alias=True
@@ -990,7 +1021,7 @@ def test_degraded_and_insufficient_metric_outcomes_round_trip_through_runtime_ag
                 "source": "prometheus",
                 "generated_at": "2026-08-27T12:05:00Z",
             }
-            if quality == "degraded":
+            if quality in {"good", "degraded"}:
                 assert set(payload) == {
                     "schema_version",
                     "lens_type",
@@ -1001,7 +1032,12 @@ def test_degraded_and_insufficient_metric_outcomes_round_trip_through_runtime_ag
                     "current_state",
                     "evidence",
                     "provenance",
-                }
+                } | ({"reason"} if expected_status == "partial" else set())
+                if expected_status == "partial":
+                    assert payload["reason"] == {
+                        "code": "optional_analysis_failed",
+                        "component": "metrics_agent",
+                    }
             else:
                 assert set(payload) == {
                     "schema_version",
@@ -1015,7 +1051,7 @@ def test_degraded_and_insufficient_metric_outcomes_round_trip_through_runtime_ag
 
         assert len(provider.requests) == 1
         assert len(agent.requests) == 1
-        if quality == "degraded":
+        if quality != "insufficient":
             assert phase_trace == [
                 "provider_acquisition",
                 "current_preparation",
@@ -1040,6 +1076,8 @@ def test_degraded_and_insufficient_metric_outcomes_round_trip_through_runtime_ag
         if quality == "insufficient":
             assert analysis.insufficient_agent_outcome is not None
             assert analysis.insufficient_agent_outcome.state == "operational_failure"
+        elif agent_failure is not None:
+            assert analysis.optional_failure_component == "metrics_agent"
 
     run(scenario())
 
