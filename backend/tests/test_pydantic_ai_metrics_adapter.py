@@ -179,7 +179,7 @@ def test_adapter_routes_duplicate_parallel_unregistered_and_fourth_requests_to_p
             lambda _: ModelResponse(parts=[ToolCallPart("spike", {})]),
             lambda _: ModelResponse(parts=[ToolCallPart("oscillation", {})]),
             lambda _: ModelResponse(parts=[ToolCallPart("stuck_signal", {})]),
-            lambda _: ModelResponse(parts=[ToolCallPart("drift", {})]),
+            lambda _: ModelResponse(parts=[ToolCallPart("spike", {})]),
         ],
     }
     for reason, responses in cases.items():
@@ -208,9 +208,16 @@ def test_adapter_has_no_validation_retry_or_fifth_model_request() -> None:
     assert len(calls) == 1
 
 
-def test_adapter_does_not_retry_an_invalid_tool_call() -> None:
+def test_adapter_rejects_invalid_tool_input_before_any_batch_admission() -> None:
     model, calls = function_model(
-        [lambda _: ModelResponse(parts=[ToolCallPart("spike", {"unexpected": True})])]
+        [
+            lambda _: ModelResponse(
+                parts=[
+                    ToolCallPart("spike", {}),
+                    ToolCallPart("oscillation", {"unexpected": True}),
+                ]
+            )
+        ]
     )
     registry = tool_registry()
 
@@ -218,7 +225,7 @@ def test_adapter_does_not_retry_an_invalid_tool_call() -> None:
 
     assert isinstance(outcome, MetricAgentOperationalFailure)
     assert len(calls) == 1
-    assert registry.ledger[0].requested_name == "spike"
+    assert registry.ledger == ()
 
 
 def test_adapter_maps_model_failure_to_operational_failure() -> None:

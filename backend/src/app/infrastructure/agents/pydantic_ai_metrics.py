@@ -67,6 +67,7 @@ class _PolicyObservingModel(WrapperModel):
             return
         if self._state.tools is None:
             raise ValueError("insufficient Metrics Agent request exposes no tools")
+        self._validate_tool_inputs(tool_calls)
         outcomes = await self._state.tools.execute_batch(
             tuple(tool_call.tool_name for tool_call in tool_calls)
         )
@@ -76,6 +77,18 @@ class _PolicyObservingModel(WrapperModel):
                 for tool_call, outcome in zip(tool_calls, outcomes, strict=True)
             }
         )
+
+    @staticmethod
+    def _validate_tool_inputs(tool_calls: tuple[ToolCallPart, ...]) -> None:
+        """Reject malformed or non-empty tool input before application admission."""
+
+        for tool_call in tool_calls:
+            try:
+                arguments = tool_call.args_as_dict(raise_if_invalid=True)
+            except (AssertionError, ValueError) as error:
+                raise ValueError("Metrics Agent tool input must be an empty object") from error
+            if arguments:
+                raise ValueError("Metrics Agent tools do not accept input arguments")
 
 
 class PydanticAIMetricsAnalysisAgent:

@@ -8,10 +8,13 @@ infrastructure-only, injected-`Model` implementation of `MetricsAnalysisAgent`;
 it selects no provider, model name, credentials, or transport.
 
 For usable requests, its model wrapper observes each framework function-tool
-response and sends the complete response batch through the supplied VS-07R
-`MetricToolExecutor`. The executor remains the sole ledger/admission owner for
-duplicate, unregistered, parallel, and over-budget requests. Tool closures only
-return the already admitted outcome. Insufficient requests expose no tools.
+response, first validates that every tool input is an empty object, and only then
+sends the complete valid batch through the supplied VS-07R `MetricToolExecutor`.
+Malformed/non-empty input therefore becomes an adapter failure before executor
+admission: no evaluator runs and no successful optional projection can leak. The
+executor remains the sole ledger/admission owner for duplicate, unregistered,
+parallel, and over-budget requests. Tool closures only return an already admitted
+outcome. Insufficient requests expose no tools.
 
 PydanticAI agent and tool retries are zero, no retry hook is registered, and
 `UsageLimits(request_limit=4)` is paired with a wrapper guard so an underlying
@@ -24,11 +27,15 @@ return the existing operational outcome: usable pipeline paths persist partial
 
 - Exact good, degraded, and insufficient request projections without scope/raw/
   reference/History leakage.
-- Zero and all-three serial tool calls, plus all VS-07R rejection kinds.
+- Zero and all-three serial tool calls, plus all VS-07R rejection kinds; a registered
+  fourth call reaches four model requests, becomes over-budget, and cannot trigger a
+  fifth request.
 - Zero tool/output validation retries, four model requests/no fifth, model timeout,
   and usable/insufficient quality-specific failure handling.
-- Partial result and PostgreSQL runtime-artifact persistence regression for usable
-  agent failure, while preserving mandatory evidence.
+- PostgreSQL runtime-artifact persistence for usable adapter failure
+  (`metrics_agent` partial), insufficient adapter failure (completed-insufficient),
+  prior successful tool output retained after later model/protocol failure, and the
+  registered-fourth-call ceiling.
 
 ## Important files and invariants
 
@@ -37,16 +44,16 @@ return the existing operational outcome: usable pipeline paths persist partial
 - `backend/src/app/metrics/pipeline.py` treats a usable agent exception or invalid
   outcome as the existing agent partial path; it does not alter policy, registry,
   contracts, or deterministic tool algorithms.
-- Framework batches always call `MetricToolExecutor.execute_batch()` once before
-  any PydanticAI tool closure returns, so framework concurrency cannot bypass the
-  VS-07R admission policy.
+- Only a fully input-valid framework batch calls `MetricToolExecutor.execute_batch()`
+  before any PydanticAI tool closure returns, so malformed input and framework
+  concurrency cannot bypass the VS-07R admission policy.
 
 ## Verification
 
-- `cd backend && PYTHONPATH=src UV_CACHE_DIR=/tmp/ipo-vs08-uv-cache uv run pytest tests/test_pydantic_ai_metrics_adapter.py -q` — 7 passed.
-- `cd backend && IPO_TEST_DATABASE_URL=postgresql+psycopg://ipo:ipo@localhost:55432/ipo_test DATABASE_URL=postgresql+psycopg://ipo:ipo@localhost:55432/ipo_test PYTHONPATH=src UV_CACHE_DIR=/tmp/ipo-vs08-uv-cache uv run pytest tests/test_metric_analysis_pipeline.py tests/test_metric_tools.py tests/test_metric_history.py tests/test_runtime_persistence.py tests/test_runtime_persistence_integration.py -q` — 154 passed; two existing Alembic deprecation warnings.
-- `make check` — passed (159 passed, 22 skipped; lint, build, and strict OpenSpec validation passed).
-- `git diff --check` and `uv lock --check` — passed.
+- `cd backend && PYTHONPATH=src UV_CACHE_DIR=/tmp/ipo-vs08-fix-uv-cache uv run pytest tests/test_pydantic_ai_metrics_adapter.py tests/test_metric_analysis_pipeline.py -q` — 70 passed, 25 skipped.
+- `cd backend && IPO_TEST_DATABASE_URL=postgresql+psycopg://ipo:ipo@localhost:55432/ipo_test DATABASE_URL=postgresql+psycopg://ipo:ipo@localhost:55432/ipo_test PYTHONPATH=src UV_CACHE_DIR=/tmp/ipo-vs08-fix-uv-cache uv run pytest tests/test_pydantic_ai_metrics_adapter.py tests/test_metric_analysis_pipeline.py tests/test_metric_tools.py tests/test_metric_history.py tests/test_runtime_persistence.py tests/test_runtime_persistence_integration.py -q` — 166 passed; two existing Alembic deprecation warnings.
+- Focused Ruff check and format check for the adapter and changed tests — passed.
+- `git diff --check` — passed.
 
 ## Scope and handoff
 
@@ -62,7 +69,4 @@ Commit SHA: `HEAD` (atomic VS-08 commit).
 
 Plan change requested: none.
 
-Shared knowledge candidates: the PydanticAI `WrapperModel` boundary can observe a
-whole function-call response and admit it through an application-owned batch policy
-before framework tool closures execute; retain this only if a later review confirms
-the 2.x API is stable enough to reuse.
+Shared knowledge candidates: none.

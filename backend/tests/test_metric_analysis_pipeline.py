@@ -14,9 +14,12 @@ import pytest
 from alembic import command
 from alembic.config import Config
 from pydantic import ValidationError
+from pydantic_ai.messages import ModelResponse, TextPart, ToolCallPart
+from pydantic_ai.models.function import AgentInfo, FunctionModel
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
 from app.core.settings import get_settings
+from app.infrastructure.agents.pydantic_ai_metrics import PydanticAIMetricsAnalysisAgent
 from app.infrastructure.persistence.models import ObservationModel
 from app.infrastructure.persistence.repository import RuntimePersistenceRepository
 from app.infrastructure.persistence.runtime_contracts import (
@@ -270,6 +273,78 @@ def session_factory(postgres_url: str) -> async_sessionmaker[AsyncSession]:
     factory = async_sessionmaker(engine, expire_on_commit=False)
     yield factory
     asyncio.run(engine.dispose())
+
+
+def pydantic_ai_function_model(responses):
+    calls: list[tuple[object, AgentInfo]] = []
+
+    def scripted(messages, info: AgentInfo) -> ModelResponse:
+        calls.append((messages, info))
+        return responses[len(calls) - 1](info)
+
+    return FunctionModel(scripted), calls
+
+
+def pydantic_ai_completion(info: AgentInfo) -> ModelResponse:
+    return ModelResponse(parts=[ToolCallPart(info.output_tools[0].name, {"state": "completed"})])
+
+
+async def persist_pydantic_ai_adapter_analysis(
+    session_factory: async_sessionmaker[AsyncSession],
+    available: MetricSeriesAvailable,
+    agent: PydanticAIMetricsAnalysisAgent,
+):
+    execution_context = context()
+    repository = RuntimePersistenceRepository()
+    pipeline = MetricAnalysisPipeline(
+        provider=FakeProvider(available),
+        agent=agent,
+        history_reader=repository,
+        repository=repository,
+        result_builder=MetricResultBuilder(lambda: WINDOW_START + timedelta(minutes=5)),
+    )
+
+    async with session_factory() as session:
+        async with session.begin():
+            observation = ObservationModel(
+                id=execution_context.identity.observation_id,
+                name=f"PydanticAI Metric {uuid4()}",
+                objective="Verify PydanticAI adapter persistence.",
+                schema_version=1,
+            )
+            session.add(observation)
+            await session.flush()
+            observation_run = await repository.create_observation_run(
+                session,
+                ObservationRunInput(
+                    id=execution_context.identity.observation_run_id,
+                    observation_id=observation.id,
+                ),
+            )
+            await repository.advance_observation_run(
+                session, observation_run, ObservationRunStatus.RUNNING
+            )
+            lens_run = await repository.create_lens_run(
+                session,
+                observation_run,
+                LensRunInput(
+                    id=execution_context.identity.lens_run_id,
+                    lens_id=execution_context.identity.lens_id,
+                    lens_type=LensType.METRIC,
+                ),
+            )
+            await repository.advance_lens_run(session, lens_run, LensRunStatus.RUNNING)
+
+        analysis = await pipeline.analyze(execution_context)
+        async with session.begin():
+            await pipeline.persist_terminal(session, lens_run, analysis)
+
+    async with session_factory() as session:
+        restored = await repository.get_observation_run(
+            session, execution_context.identity.observation_run_id
+        )
+        assert restored is not None
+        return analysis, restored.lens_runs[0]
 
 
 def test_context_is_frozen_utc_and_rejects_aliases_or_duplicate_offsets() -> None:
@@ -614,6 +689,136 @@ def test_protocol_rejection_outranks_an_earlier_registered_tool_failure(monkeypa
         "rejected",
     ]
     assert analysis.optional_failure_component == "metrics_agent"
+    assert lens_run.reason == {
+        "code": "optional_analysis_failed",
+        "component": "metrics_agent",
+    }
+
+
+def test_pydantic_ai_usable_failure_persists_metrics_agent_partial(
+    session_factory: async_sessionmaker[AsyncSession],
+) -> None:
+    model, calls = pydantic_ai_function_model(
+        [lambda _: ModelResponse(parts=[TextPart("not a completion")])]
+    )
+
+    analysis, lens_run = run(
+        persist_pydantic_ai_adapter_analysis(
+            session_factory,
+            good_available(),
+            PydanticAIMetricsAnalysisAgent(model),
+        )
+    )
+
+    assert len(calls) == 1
+    assert analysis.optional_failure_component == "metrics_agent"
+    assert lens_run.status == "partial"
+    assert lens_run.reason == {
+        "code": "optional_analysis_failed",
+        "component": "metrics_agent",
+    }
+    assert lens_run.analysis_result is not None
+    assert lens_run.analysis_result.payload["reason"] == lens_run.reason
+
+
+def test_pydantic_ai_insufficient_failure_stays_completed_insufficient(
+    session_factory: async_sessionmaker[AsyncSession],
+) -> None:
+    model, calls = pydantic_ai_function_model(
+        [lambda _: ModelResponse(parts=[TextPart("not a completion")])]
+    )
+
+    analysis, lens_run = run(
+        persist_pydantic_ai_adapter_analysis(
+            session_factory,
+            available_from_values((float("nan"), 10.0, 20.0)),
+            PydanticAIMetricsAnalysisAgent(model),
+        )
+    )
+
+    assert len(calls) == 1
+    assert analysis.insufficient_agent_outcome is not None
+    assert analysis.insufficient_agent_outcome.state == "operational_failure"
+    assert lens_run.status == "completed"
+    assert lens_run.reason is None
+    assert lens_run.analysis_result is not None
+    assert lens_run.analysis_result.payload["data_quality"] == "insufficient"
+    assert "reason" not in lens_run.analysis_result.payload
+
+
+@pytest.mark.parametrize("later_failure", ["model", "protocol"])
+def test_pydantic_ai_later_failure_retains_prior_successful_tool_result(
+    session_factory: async_sessionmaker[AsyncSession], later_failure: str
+) -> None:
+    if later_failure == "model":
+        responses = [
+            lambda _: ModelResponse(parts=[ToolCallPart("spike", {})]),
+            lambda _: ModelResponse(parts=[TextPart("not a completion")]),
+        ]
+    else:
+        responses = [
+            lambda _: ModelResponse(parts=[ToolCallPart("spike", {})]),
+            lambda _: ModelResponse(parts=[ToolCallPart("spike", {})]),
+            pydantic_ai_completion,
+        ]
+    model, calls = pydantic_ai_function_model(responses)
+
+    analysis, lens_run = run(
+        persist_pydantic_ai_adapter_analysis(
+            session_factory,
+            available_from_values((1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0)),
+            PydanticAIMetricsAnalysisAgent(model),
+        )
+    )
+
+    assert analysis.optional_failure_component == "metrics_agent"
+    assert analysis.tool_ledger[0].requested_name == "spike"
+    assert analysis.tool_ledger[0].executed is True
+    assert lens_run.status == "partial"
+    assert lens_run.reason == {
+        "code": "optional_analysis_failed",
+        "component": "metrics_agent",
+    }
+    assert lens_run.analysis_result is not None
+    assert lens_run.analysis_result.payload["current_state"]["spike"]["state"] == "absent"
+    if later_failure == "model":
+        assert len(calls) == 2
+    else:
+        assert len(calls) == 3
+        assert analysis.agent_protocol_failure is not None
+
+
+def test_pydantic_ai_registered_fourth_call_stops_after_four_model_requests(
+    session_factory: async_sessionmaker[AsyncSession],
+) -> None:
+    model, calls = pydantic_ai_function_model(
+        [
+            lambda _: ModelResponse(parts=[ToolCallPart("spike", {})]),
+            lambda _: ModelResponse(parts=[ToolCallPart("oscillation", {})]),
+            lambda _: ModelResponse(parts=[ToolCallPart("stuck_signal", {})]),
+            lambda _: ModelResponse(parts=[ToolCallPart("spike", {})]),
+        ]
+    )
+
+    analysis, lens_run = run(
+        persist_pydantic_ai_adapter_analysis(
+            session_factory,
+            available_from_values((1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0)),
+            PydanticAIMetricsAnalysisAgent(model),
+        )
+    )
+
+    assert len(calls) == 4
+    assert [attempt.requested_name for attempt in analysis.tool_ledger] == [
+        "spike",
+        "oscillation",
+        "stuck_signal",
+        "spike",
+    ]
+    assert analysis.tool_ledger[-1].outcome.reason == "over_budget"
+    assert analysis.tool_ledger[-1].executed is False
+    assert analysis.tool_ledger[-1].consumed_slot is False
+    assert lens_run.status == "partial"
     assert lens_run.reason == {
         "code": "optional_analysis_failed",
         "component": "metrics_agent",
