@@ -83,7 +83,7 @@ their completion gates and any required independent high-risk review.
 | VS-05 | Add eligible persisted-result History behavior through the reader boundary | VS-01 | high-risk | COMPLETE | 442557e | `implementation/VS-05-handoff.md` |
 | VS-06 | Implement PostgreSQL History selection and regress transaction ordering/atomicity for all result variants | VS-03 and VS-05 | high-risk | COMPLETE | ad59b9d + f6648d0 + 51b5236 | `implementation/VS-06-handoff.md` |
 | VS-07 | Add deterministic optional tools, registered-execution ledger behavior, and tool-caused partial persistence | VS-02 | high-risk | COMPLETE | 9f598785 + 56a03b2 | `implementation/VS-07-handoff.md` |
-| VS-07R | Add the framework-neutral rejection-capable request policy and persist protocol-caused partial outcomes | VS-07 | high-risk | IN_PROGRESS | - | - |
+| VS-07R | Add the framework-neutral rejection-capable request policy and persist protocol-caused partial outcomes | VS-07 | high-risk | COMPLETE | 4213e5b + 146abb1 | `implementation/VS-07R-handoff.md` |
 | VS-08 | Translate the accepted framework-neutral policy through PydanticAI and enforce framework request ceilings | VS-07R; existing dependency approval verified by Coordinator | high-risk | PLANNED | - | - |
 | VS-09 | Verify cross-cause composition, document boundaries, and run full conformance | VS-04, VS-06, and VS-08 | high-risk | PLANNED | - | - |
 
