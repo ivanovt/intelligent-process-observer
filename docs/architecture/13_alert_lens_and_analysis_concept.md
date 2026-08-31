@@ -2,8 +2,8 @@
 
 **Проект:** „Интелигентна мулти-агентна система за откриване на аномалии и супервизия на технологични процеси“  
 **Статус:** Работна нормативна референция за MVP  
-**Версия:** 2.0  
-**Актуализирано:** 2026-08-13
+**Версия:** 2.1  
+**Актуализирано:** 2026-08-31
 
 ## 1. Цел
 
@@ -54,7 +54,7 @@ specific alert rule -> restrictive selector
 bounded alert set   -> broader selector
 ```
 
-### 3.2. Working definition
+### 3.2. Accepted serialized definition contract
 
 ```yaml
 alert_lens:
@@ -68,22 +68,61 @@ alert_lens:
   selector:
     query: "<provider-native query>"
 
+  analysis_objectives:
+    - "Assess recurrence and persistence"
+
   reference_periods:
     - offset: 1d
     - offset: 7d
 ```
 
-Точната serialized configuration schema остава implementation detail; семантиката по-горе е нормативна.
+MVP definition contract е нормативно фиксиран:
+
+- `id` reuse-ва canonical Lens ID primitive;
+- `type` е required exact literal `alert`;
+- `name` е required non-whitespace string; `description` е optional non-whitespace string;
+- `source` е supported-provider identifier и за MVP допуска само `jira_track_and_release`;
+- `selector` е object с recognized required field `query`; query е non-whitespace opaque provider-native string и се запазва точно както е подаден, без trim/normalize/parse/rewrite;
+- `analysis_objectives` е optional ordered duplicate-free list от opaque non-whitespace strings, default `[]`; няма vocabulary, priority, max-count, inheritance/default hierarchy или tool-selection semantics;
+- `reference_periods` е optional ordered `0..N` list, default `[]`, reuse-ва canonical Metric reference-offset primitive, забранява duplicate offsets и няма implicit defaults;
+- unknown/extra input fields се толерират и игнорират; не се persist-ват и не се връщат в canonical read output;
+- configured order на objectives/reference periods се запазва.
+
+### 3.3. Observation Definition ownership и validation
+
+Alert Lens не е standalone top-level resource. Той е owned child на съществуващия Observation Definition aggregate чрез `alert_lenses`.
+
+```text
+Observation Definition
+├── metric_lenses: 0..N
+├── alert_lenses:  0..N
+└── relationships: 0..N
+```
+
+За MVP:
+
+- create/read/update на Alert Lens се извършват чрез Observation Definition; няма отделни Alert Lens CRUD endpoints;
+- update на `alert_lenses` е snapshot/replacement и се валидира/persist-ва атомарно като част от aggregate update-а;
+- липсващо `alert_lenses` на input означава `[]`; canonical read винаги включва collection-а;
+- Observation Definition трябва да има поне един Lens общо, затова Metric-only, Alert-only и mixed definitions са валидни;
+- Alert Lens IDs са unique в `alert_lenses`, Metric Lens IDs са unique в `metric_lenses`; еднакъв ID между различни types е допустим;
+- Relationship participant validation остава Metric-only и resolve-ва participant IDs само срещу `metric_lenses`.
+
+### 3.4. Definition persistence ownership
+
+Alert Lens definition persistence използва dedicated owned child storage/table `alert_lens_definitions`, без generic polymorphic `lens_definitions` refactor. Stable scalar properties се съхраняват explicit, а ordered list properties могат да използват structured storage.
+
+Removal на Alert Lens от replacement snapshot физически изтрива owned row. Delete на Observation Definition cascade-ва към Alert Lens definitions. Aggregate update/delete е atomic; soft-delete и independent Alert Lens lifecycle не са част от MVP.
 
 ## 4. Provider и query semantics
 
 ### 4.1. Current MVP provider
 
-Текущият provider за MVP е `Jira Track and Release`. Дизайнът обаче е source-agnostic на analytical ниво и допуска бъдещи provider adapters.
+Текущият provider за MVP е `Jira Track and Release`, представен в definition contract-а чрез exact supported-source identifier `jira_track_and_release`. Друг source identifier не е валиден за текущия MVP definition. Дизайнът остава source-agnostic на analytical ниво и бъдещ provider се добавя чрез explicit contract/adapter extension.
 
 ### 4.2. Provider-native selector
 
-Alert Lens използва provider-native query/filter. Analysis pipeline-ът не трябва да знае provider-specific syntax.
+Alert Lens използва provider-native query/filter. Analysis pipeline-ът не трябва да знае provider-specific syntax. Definition layer-ът валидира единствено, че `selector.query` съдържа non-whitespace content; иначе query-то е opaque и се пази точно както е подадено, без trim, normalization, parsing или rewriting.
 
 ```text
 Alert Lens
@@ -842,13 +881,12 @@ Alerts pipeline не трябва да:
 
 ## 24. Accepted decisions / ADR range
 
-Текущите Alert решения са консолидирани в `03_ADR_log.md`, ADR-089..ADR-132.
+Текущите Alert решения са консолидирани в `03_ADR_log.md`, ADR-089..ADR-132 и ADR-161..ADR-163.
 
 ## 25. Open decisions
 
 Остават Open главно implementation/configuration details:
 
-- exact serialized Alert Lens schema;
 - exact Jira Track and Release field mapping и adapter interface;
 - exact canonical `evidence_refs` syntax и exact mapping при finding, derived от transient optional tool evidence;
 - precedence на primary `reason`, ако има няколко partial causes;

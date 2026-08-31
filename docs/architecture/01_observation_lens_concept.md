@@ -2,8 +2,8 @@
 
 **Проект:** „Интелигентна мулти-агентна система за откриване на аномалии и супервизия на технологични процеси“  
 **Статус:** Работна нормативна референция за MVP  
-**Версия:** 6.0  
-**Актуализирано:** 2026-08-19
+**Версия:** 6.1  
+**Актуализирано:** 2026-08-31
 
 ## 1. Цел
 
@@ -83,6 +83,33 @@ execution:
 
 Фиксирано е **поведението** (конфигурируем concurrency limit), но точната schema позиция и default стойност остават implementation/configuration decision.
 
+### 4.4. Observation Definition и type-specific Lens collections
+
+За MVP `Observation Definition` остава aggregate owner на Lens конфигурациите. Metric и Alert Lens-овете се моделират като отделни type-specific collections в същия definition contract:
+
+```text
+Observation Definition
+├── metric_lenses: 0..N
+├── alert_lenses:  0..N
+└── relationships: 0..N
+```
+
+Няма standalone Alert Lens lifecycle/API. Create/read/update на Alert Lens конфигурации се извършват чрез Observation Definition. Update семантиката е snapshot/replacement: подаденият collection описва желаното крайно състояние и се валидира/persist-ва атомарно като част от aggregate update-а.
+
+Observation Definition трябва да съдържа поне един Lens общо. Следователно за MVP са валидни:
+
+```text
+Metric-only Observation
+Alert-only Observation
+Metric + Alert Observation
+```
+
+Невалидна е конфигурация без нито един Metric или Alert Lens. Липсващо `alert_lenses` при вход означава празен списък; canonical read projection винаги съдържа `alert_lenses`, включително `[]`.
+
+`lens_id` uniqueness е type-local: Metric Lens IDs са уникални сред `metric_lenses`, Alert Lens IDs са уникални сред `alert_lenses`, а еднакъв ID между различни Lens типове е допустим. Runtime identity остава type-aware.
+
+Relationships са Metric-only за MVP. Configuration-time participant validation resolve-ва participant IDs само спрямо `metric_lenses`; наличието на Alert Lens със същия ID не създава ambiguity и не го прави Relationship participant.
+
 ## 5. Lens
 
 ### 5.1. Атомарна перспектива
@@ -109,11 +136,15 @@ LogLens
 
 Lens съдържа смисъл и аналитична цел за конкретния Observation. Една и съща метрика може да участва в различни Observations с различни Lens IDs и отделна история.
 
-Минималният идентификатор на историческия контекст е:
+`analysis_objectives` е общ Lens-definition primitive за аналитичен intent, а не tool whitelist. За MVP се моделира като optional ordered duplicate-free list от non-whitespace opaque strings, без controlled vocabulary, priority, inheritance/default hierarchy или implicit tool selection. Конфигурираният ред и стойности се запазват.
+
+Минималният type-aware идентификатор на Lens контекста е:
 
 ```text
-observation_id + lens_id
+observation_id + lens_type + lens_id
 ```
+
+В type-specific анализ като Metric History `lens_type` е implicit чрез самия pipeline/result type, но cross-type конфигурацията не разчита на глобална `lens_id` uniqueness.
 
 ## 6. Metric Lens — semantic state
 
@@ -297,15 +328,23 @@ Priority:
 alert_lens:
   id: database_alerts
   type: alert
+  name: "Database alerts"
+  description: "Alert activity related to the database service"
   source: jira_track_and_release
   selector:
-    query: "..."
+    query: "<provider-native query>"
+  analysis_objectives:
+    - "Assess recurrence and persistence"
   reference_periods:
     - offset: 1d
     - offset: 7d
 ```
 
-Selector-ът определя **кои alert-и** са релевантни; `LensRun` определя **кога** се наблюдават.
+MVP serialized definition използва explicit `type: alert`, required non-empty `name`, optional non-empty `description`, strict supported-provider identifier `source`, provider-native `selector.query`, optional `analysis_objectives` и optional `reference_periods`. Текущият supported Alert source е само `jira_track_and_release`.
+
+`selector.query` е required non-whitespace opaque string. Definition layer-ът не го parse-ва, trim-ва, normalize-ва, rewrite-ва или допълва с time/status predicates; при persistence/read стойността се запазва точно както е конфигурирана. Selector-ът определя **кои alert-и** са релевантни; `LensRun` определя **кога** се наблюдават.
+
+`reference_periods` е explicit ordered `0..N` collection, използва същия canonical offset primitive като Metric Lens, забранява duplicate offsets и няма implicit/system/Observation defaults за MVP. Unknown extra fields в Alert Lens-related input се толерират и игнорират; те не се persist-ват и не се връщат в canonical read projection.
 
 ### 8.2. Time membership
 

@@ -1,14 +1,13 @@
 # Open decisions и архитектурен backlog
 
 **Статус:** Open / Deferred register  
-**Версия:** 5.1
-**Актуализирано:** 2026-08-26
+**Версия:** 5.1  
+**Актуализирано:** 2026-08-31
 
 Този файл съдържа **само нерешени или съзнателно deferred** въпроси. Нищо тук не трябва да се използва като implicit requirement.
 
 ## 1. Lens configuration
 
-- Exact machine-readable schema на `analysis_objectives`.
 - Exact config location/default hierarchy за `max_parallel_lens_runs`.
 - Exact per-Lens timeout/retry policy.
 
@@ -26,9 +25,10 @@
 
 ### 3.1. Alerts — resolved architecture, remaining implementation decisions
 
-Концепцията, stage decomposition, agent boundary, failure/partial semantics и `AlertAnalysisResult` са Accepted. Open остават:
+Концепцията, stage decomposition, agent boundary, failure/partial semantics, `AlertAnalysisResult` и exact Alert Lens definition/API/persistence semantics са Accepted. Alert Lens schema/aggregate ownership са фиксирани от ADR-161..ADR-163. Open остават:
 
-- exact serialized Alert Lens configuration schema (`selector`, `reference_periods`, defaults);
+Провайдър API/field mapping и adapter interface (Jira Track and Release, включително Opsgenie alert surface) са съзнателно deferred — ще бъдат изяснени и проектирани заедно с (и като част от) спецификацията и имплементацията на Alerts pipeline-а.
+
 - exact `Jira Track and Release` API/field mapping и provider adapter interface;
 - exact retry/timeout values за current/reference provider calls;
 - exact canonical `evidence_refs` path/URI grammar;
@@ -43,6 +43,8 @@
 ### 3.2. Logs — resolved architecture, remaining implementation decisions
 
 Концепцията, stage decomposition, deterministic/agentic boundaries, RAG boundary, reference/history semantics и `LogAnalysisResult` са Accepted. Open остават:
+
+Провайдър API/client (Loki) и adapter interface са съзнателно deferred — ще бъдат изяснени и проектирани заедно с (и като част от) спецификацията и имплементацията на Logs pipeline-а.
 
 - exact serialized Log Lens configuration schema (`selector`, `reference_periods`, parsing config);
 - exact Loki API/client и LogQL mapping;

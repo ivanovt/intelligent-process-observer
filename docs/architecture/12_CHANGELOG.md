@@ -1,5 +1,22 @@
 # Changelog
 
+## 6.4 — 2026-08-31
+
+Фиксиран exact Alert Lens definition/API/persistence contract преди `add-alert-lens-definition`:
+
+- `alert_lenses` е nested collection в съществуващия Observation Definition aggregate; няма standalone Alert Lens CRUD lifecycle за MVP;
+- Observation Definition може да бъде Metric-only, Alert-only или mixed, но изисква поне един Lens общо;
+- update semantics са snapshot/replacement; липсващо `alert_lenses` на input означава `[]`, а canonical read винаги връща collection-а;
+- Lens ID uniqueness е type-local; еднакъв `lens_id` между Metric и Alert е допустим;
+- Relationship participant validation остава Metric-only и resolve-ва само срещу `metric_lenses`;
+- Alert Lens serialized contract включва `id`, literal `type=alert`, required `name`, optional `description`, strict supported `source`, opaque `selector.query`, optional `analysis_objectives` и optional `reference_periods`;
+- MVP `source` е само `jira_track_and_release`; query се валидира само за non-whitespace и иначе се пази без trim/normalize/parse/rewrite;
+- `analysis_objectives` е ordered duplicate-free opaque intent list; `reference_periods` е ordered duplicate-free `0..N` list със същия canonical offset primitive като Metrics и без implicit defaults;
+- unknown Alert definition input fields се игнорират и не се persist/read-ват;
+- Alert definitions използват dedicated owned child persistence с explicit scalar fields + structured ordered list storage, без generic polymorphic Lens refactor;
+- snapshot removal физически изтрива Alert definition row; Observation delete cascade-ва към Alert Lens definitions в aggregate transaction;
+- добавени ADR-161..ADR-163; обновени Observation/Lens concept, Alert concept, backlog и glossary.
+
 ## 6.3 — 2026-08-26
 
 - added ADR-159 clarifying ADR-021 with an exact pair-relative near-zero guard,

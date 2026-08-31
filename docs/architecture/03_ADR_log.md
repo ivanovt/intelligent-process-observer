@@ -2,7 +2,7 @@
 
 **Проект:** „Интелигентна мулти-агентна система за откриване на аномалии и супервизия на технологични процеси“  
 **Статус на записите:** Accepted, освен ако изрично не е посочено друго  
-**Версия на регистъра:** 6.1
+**Версия на регистъра:** 6.2
 
 ---
 
@@ -875,7 +875,10 @@ Agentът не може да добавя метрики, да променя ti
 **Consequences**
 - запазва се agentic reasoning стойността;
 - tool registry остава централизирано ограничение;
-- exact objectives schema остава Open.
+- exact objectives schema остава Open към момента на това решение.
+
+**Follow-up**
+Exact Lens-definition `analysis_objectives` shape е по-късно фиксиран от ADR-162 като ordered duplicate-free list от opaque non-whitespace intent strings.
 
 ---
 
@@ -2901,6 +2904,100 @@ Normative examples use full transition names:
   together, consistently with ADR-022;
 - the accepted vocabulary and priority remain unchanged;
 - ADR-025 remains the original decision and this ADR supplies its missing mechanics.
+
+---
+
+## ADR-161 — Alert Lens definition е nested child на Observation Definition aggregate
+
+**Status:** Accepted
+
+**Context**
+След приемането на Alert Lens analytical semantics е необходимо exact definition/API ownership да бъде фиксирано, без да се въвежда отделен Alert CRUD lifecycle или преждевременен generic Lens-definition модел.
+
+**Decision**
+`Observation Definition` съдържа отделна nested `alert_lenses` collection наред с `metric_lenses` и `relationships`. Alert Lens create/read/update се извършва чрез съществуващия Observation Definition aggregate/API; standalone Alert Lens endpoints не са част от MVP.
+
+- update семантиката е snapshot/replacement и се прилага атомарно върху aggregate-а;
+- липсващо `alert_lenses` при input означава `[]`; canonical read винаги връща `alert_lenses`, включително празен списък;
+- Observation Definition трябва да съдържа поне един Lens общо, така че Metric-only, Alert-only и mixed Metric+Alert configurations са валидни;
+- Metric Lens IDs са unique в `metric_lenses`, Alert Lens IDs са unique в `alert_lenses`; еднакъв `lens_id` между различни Lens типове е допустим;
+- Relationship participant validation остава Metric-only и resolve-ва IDs само срещу `metric_lenses`; Alert Lens не става Relationship participant поради съвпадащ ID.
+
+**Consequences**
+- Alert Lens следва съществуващия Observation Definition ownership model;
+- backward compatibility се запазва за Metric-only clients, които не изпращат `alert_lenses`;
+- Alert-only Observation може да бъде валиден без да се въвеждат cross-type Relationships;
+- не е необходима cross-table/global Lens ID uniqueness или нов type discriminator в Relationship DSL.
+
+---
+
+## ADR-162 — Alert Lens serialized definition използва explicit recognized fields с opaque provider query
+
+**Status:** Accepted
+
+**Context**
+Работният Alert Lens пример до момента фиксираше semantic scope, но exact machine-readable configuration schema оставаше Open. Необходимо е стабилен definition contract преди Alerts Analysis Pipeline implementation.
+
+**Decision**
+MVP Alert Lens definition съдържа:
+
+```yaml
+id: database_alerts
+type: alert
+name: "Database alerts"
+description: "Alert activity related to the database service" # optional
+source: jira_track_and_release
+selector:
+  query: "<provider-native query>"
+analysis_objectives: []   # optional, default []
+reference_periods: []     # optional, default []
+```
+
+Rules:
+
+- `id` reuse-ва canonical Lens ID primitive;
+- `type` е required exact literal `alert`;
+- `name` е required non-whitespace string; `description` е optional non-whitespace string;
+- `source` е supported-provider identifier; MVP допуска само `jira_track_and_release`;
+- `selector` е object с required `query`; query трябва да има non-whitespace content, но иначе е opaque provider-native string и се запазва точно както е подаден; system не го trim-ва, normalize-ва, parse-ва, lint-ва или rewrite-ва;
+- `analysis_objectives` е optional ordered duplicate-free list от non-whitespace opaque strings, без max-count, controlled vocabulary, priority, inheritance/default hierarchy или tool-selection semantics;
+- `reference_periods` е optional ordered `0..N` list, reuse-ва canonical Metric reference-offset primitive, забранява duplicate offsets и няма implicit defaults;
+- configured order на `analysis_objectives` и `reference_periods` се запазва;
+- unknown/extra input fields се толерират и игнорират, не се persist-ват и не се връщат в canonical read output; recognized fields продължават да се валидират по правилата по-горе.
+
+**Consequences**
+- Alert definition е self-describing чрез explicit `type`;
+- provider query остава faithful към native syntax и definition layer-ът не поема Jira parsing responsibilities;
+- objectives описват intent, не capabilities;
+- reference semantics са съгласувани с Metric offset primitive без implicit temporal policy;
+- tolerated unknown fields позволяват forward-compatible input, но не се превръщат в мълчаливо поддържана конфигурация.
+
+---
+
+## ADR-163 — Alert Lens definition persistence използва dedicated owned child storage
+
+**Status:** Accepted
+
+**Context**
+Добавянето на Alert Lens definitions не трябва да преработва съществуващия Metric definition persistence в generic polymorphic model, но трябва да осигури atomic aggregate updates, ordering и deletion ownership.
+
+**Decision**
+Alert Lens definitions се persist-ват като owned children на Observation Definition в dedicated `alert_lens_definitions` storage/table.
+
+- stable scalar properties (`lens_id`, `type`, `name`, `description`, `source`, `selector_query`) се моделират explicit;
+- ordered list properties (`analysis_objectives`, `reference_periods`) използват подходящо structured storage, без generic opaque payload за целия Alert Lens;
+- configured order трябва да се запазва при persistence/read, включително order на `alert_lenses` в Observation Definition projection;
+- removal на Alert Lens от replacement snapshot физически премахва owned definition row;
+- delete на Observation Definition cascade-ва към всички негови Alert Lens definition rows;
+- create/update/delete на aggregate-а и owned Alert rows се извършват атомарно;
+- soft-delete и independent Alert Lens lifecycle не се въвеждат за MVP;
+- не се прави generic `lens_definitions` refactor само заради добавянето на Alert Lens.
+
+**Consequences**
+- persistence остава explicit и inspectable;
+- Metric definition storage не се мигрира към нов polymorphic abstraction;
+- няма orphan Alert definitions след snapshot update или Observation deletion;
+- бъдещи Lens types могат да бъдат добавени отделно и да мотивират generalization само при реална нужда.
 
 ---
 

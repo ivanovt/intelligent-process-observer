@@ -1,16 +1,22 @@
 # Glossary и naming conventions
 
-**Версия:** 5.0
-**Актуализирано:** 2026-08-19
+**Версия:** 5.1
+**Актуализирано:** 2026-08-31
 
 ## Observation
 Конфигурационна единица, която дефинира цялостна задача за наблюдение и съдържа Lens-ове, Relationships и политики.
+
+## Observation Definition
+Persisted/configured aggregate, който съдържа Observation metadata, type-specific Lens collections и Relationships. За MVP Alert Lens definitions са nested в `alert_lenses`; няма standalone Alert Lens lifecycle/API. Observation Definition трябва да съдържа поне един Lens общо.
 
 ## ObservationRun
 Конкретно runtime изпълнение на Observation.
 
 ## Lens
 Атомарна наблюдателна перспектива. Lens е definition/configuration, не изпълнение.
+
+## analysis_objectives
+Ordered duplicate-free Lens-definition list от opaque non-whitespace strings, който описва analytical intent. Не е tool whitelist, няма priority/controlled vocabulary и не разширява observational data scope-а.
 
 ## LensRun
 Конкретно изпълнение на Lens в рамките на ObservationRun.
@@ -105,6 +111,15 @@ Human-readable presentation artifact, генериран от Report Agent. За
 
 ## Alert Lens
 Lens type за bounded perspective върху alert activity. Един модел поддържа както конкретен alert rule/type, така и filtered provider set чрез provider-native selector.
+
+## Alert Lens Definition
+Nested child configuration в `Observation Definition.alert_lenses`. Съдържа `id`, literal `type=alert`, `name`, optional `description`, supported `source`, provider-native `selector`, optional `analysis_objectives` и optional `reference_periods`. ID uniqueness е само в Alert Lens namespace-а.
+
+## Alert source
+Supported-provider identifier в Alert Lens definition. За MVP единствената accepted стойност е `jira_track_and_release`. Не съдържа endpoint, credentials, retry policy или provider client configuration.
+
+## Provider-native Alert selector
+Alert Lens scope configuration с shape `selector.query`. Query-то е required non-whitespace opaque provider-native string; definition layer-ът не го parse-ва/normalize-ва/rewrite-ва и го запазва точно както е конфигуриран. Selector определя „which“, а LensRun time window определя „when“.
 
 ## Alert Provider Adapter
 Детерминистичен integration component, който изолира provider-specific API/query/field mapping от source-agnostic Alerts Analysis Pipeline.
@@ -225,4 +240,3 @@ Versioned structured analytical artifact за `completed|partial` Log LensRun. F
 
 ## LogAnalysisResult Builder / Validator
 Deterministic final contract owner, който сглобява и валидира LogAnalysisResult и гарантира separation между observational evidence и knowledge enrichment.
-
