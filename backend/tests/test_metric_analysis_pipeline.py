@@ -1,0 +1,2978 @@
+from __future__ import annotations
+
+import asyncio
+import inspect
+import math
+import os
+from datetime import UTC, datetime, timedelta
+from pathlib import Path
+from types import SimpleNamespace
+from unittest.mock import ANY
+from uuid import UUID, uuid4
+
+import pytest
+from alembic import command
+from alembic.config import Config
+from pydantic import ValidationError
+from pydantic_ai.messages import ModelResponse, TextPart, ToolCallPart
+from pydantic_ai.models.function import AgentInfo, FunctionModel
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
+
+from app.core.settings import get_settings
+from app.infrastructure.agents.pydantic_ai_metrics import PydanticAIMetricsAnalysisAgent
+from app.infrastructure.persistence.models import ObservationModel
+from app.infrastructure.persistence.repository import RuntimePersistenceRepository
+from app.infrastructure.persistence.runtime_contracts import (
+    LensAnalysisResultInput,
+    LensResultIdentity,
+    LensRunInput,
+    LensRunStatus,
+    LensType,
+    ObservationRunInput,
+    ObservationRunStatus,
+    StructuredReason,
+)
+from app.metrics.contracts import (
+    FIXED_ALLOWED_TOOLS,
+    CompletedInsufficientMetricResult,
+    CurrentMetricAcquisitionFailedError,
+    CurrentMetricSeriesMalformedError,
+    FailedMetricResult,
+    MandatoryMetricAnalysisFailedError,
+    MetricAgentCompletion,
+    MetricAnalysisWindow,
+    MetricCurrentAcquisitionFailed,
+    MetricCurrentSeriesMalformed,
+    MetricEvidence,
+    MetricHistoryCandidate,
+    MetricHistoryCandidates,
+    MetricHistoryEmpty,
+    MetricHistoryPolicy,
+    MetricIdentity,
+    MetricLensExecutionContext,
+    MetricMandatoryAnalysisFailure,
+    MetricProviderScope,
+    MetricReferenceUnavailable,
+    MetricSample,
+    MetricSemantics,
+    MetricSeriesAcquisitionFailure,
+    MetricSeriesAcquisitionTimeout,
+    MetricSeriesAvailable,
+    MetricSeriesUnavailable,
+    MetricTrend,
+    MetricVariability,
+    PreparedGoodSeries,
+    PreparedInsufficientSeries,
+)
+from app.metrics.pipeline import MetricAnalysisPipeline
+from app.metrics.preprocessing import prepare_series
+from app.metrics.references import compare_reference, reference_window
+from app.metrics.result_builder import MetricResultBuilder
+from app.metrics.semantics import semanticize_mandatory
+
+WINDOW_START = datetime(2026, 8, 27, 12, 0, tzinfo=UTC)
+BACKEND_ROOT = Path(__file__).resolve().parents[1]
+
+
+def run(coroutine):
+    return asyncio.run(coroutine)
+
+
+def context(*, reference_periods: tuple[str, ...] = ()) -> MetricLensExecutionContext:
+    return MetricLensExecutionContext(
+        identity=MetricIdentity(
+            observation_id=uuid4(),
+            observation_run_id=uuid4(),
+            lens_id="coolant-temperature",
+            lens_run_id=uuid4(),
+            metric_ref="coolant_temperature",
+            unit="celsius",
+        ),
+        provider_scope=MetricProviderScope(
+            adapter_type="prometheus",
+            source_id="plant-prometheus",
+            query="avg(coolant_temperature_celsius)",
+        ),
+        analysis_window=MetricAnalysisWindow(
+            **{"from": WINDOW_START, "to": WINDOW_START + timedelta(seconds=180)}
+        ),
+        analysis_objectives=("spike", "drift"),
+        reference_periods=reference_periods,
+        history_policy=MetricHistoryPolicy(),
+    )
+
+
+def good_available() -> MetricSeriesAvailable:
+    return MetricSeriesAvailable(
+        source="prometheus",
+        samples=(
+            MetricSample(timestamp=WINDOW_START, value=10.0),
+            MetricSample(timestamp=WINDOW_START + timedelta(seconds=60), value=20.0),
+            MetricSample(timestamp=WINDOW_START + timedelta(seconds=180), value=40.0),
+        ),
+    )
+
+
+def available_from_values(values: tuple[float, ...]) -> MetricSeriesAvailable:
+    return MetricSeriesAvailable(
+        source="prometheus",
+        samples=tuple(
+            MetricSample(timestamp=WINDOW_START + timedelta(seconds=index * 20), value=value)
+            for index, value in enumerate(values)
+        ),
+    )
+
+
+def degraded_available() -> MetricSeriesAvailable:
+    return MetricSeriesAvailable(
+        source="prometheus",
+        samples=(
+            MetricSample(timestamp=WINDOW_START, value=10.0),
+            MetricSample(timestamp=WINDOW_START + timedelta(seconds=30), value=float("nan")),
+            MetricSample(timestamp=WINDOW_START + timedelta(seconds=60), value=20.0),
+            MetricSample(timestamp=WINDOW_START + timedelta(seconds=90), value=float("inf")),
+            MetricSample(timestamp=WINDOW_START + timedelta(seconds=150), value=float("-inf")),
+            MetricSample(timestamp=WINDOW_START + timedelta(seconds=180), value=40.0),
+        ),
+    )
+
+
+class FakeProvider:
+    def __init__(self, available: MetricSeriesAvailable | None = None) -> None:
+        self.requests: list[tuple[MetricProviderScope, MetricAnalysisWindow]] = []
+        self.available = available or good_available()
+
+    async def acquire(
+        self, scope: MetricProviderScope, window: MetricAnalysisWindow
+    ) -> MetricSeriesAvailable:
+        self.requests.append((scope, window))
+        return self.available
+
+
+class SequencedProvider:
+    def __init__(self, outcomes) -> None:
+        self.requests: list[tuple[MetricProviderScope, MetricAnalysisWindow]] = []
+        self.outcomes = list(outcomes)
+
+    async def acquire(self, scope, window):
+        self.requests.append((scope, window))
+        outcome = self.outcomes.pop(0)
+        if isinstance(outcome, BaseException):
+            raise outcome
+        return outcome
+
+
+def available_for_window(
+    window: MetricAnalysisWindow, values: tuple[float, ...]
+) -> MetricSeriesAvailable:
+    timestamps = (window.from_, window.from_ + timedelta(seconds=60), window.to)
+    return MetricSeriesAvailable(
+        source="prometheus",
+        samples=tuple(
+            MetricSample(timestamp=timestamp, value=value)
+            for timestamp, value in zip(timestamps, values, strict=True)
+        ),
+    )
+
+
+class FakeAgent:
+    def __init__(self, failure: Exception | None = None) -> None:
+        self.requests = []
+        self.failure = failure
+
+    async def complete(self, request, tools=None):
+        self.requests.append(request)
+        if self.failure is not None:
+            raise self.failure
+        return MetricAgentCompletion()
+
+
+class ToolCallingAgent(FakeAgent):
+    def __init__(self, tool_names: tuple[str, ...]) -> None:
+        super().__init__()
+        self.tool_names = tool_names
+        self.registries = []
+
+    async def complete(self, request, tools=None):
+        self.requests.append(request)
+        self.registries.append(tools)
+        assert tools is not None
+        for name in self.tool_names:
+            await tools.execute(name)
+        return MetricAgentCompletion()
+
+
+class ParallelToolCallingAgent(FakeAgent):
+    async def complete(self, request, tools=None):
+        self.requests.append(request)
+        assert tools is not None
+        first, parallel = await tools.execute_batch(("spike", "oscillation"))
+        assert first.model_dump()["name"] == "spike"
+        assert parallel.reason == "parallel"
+        return MetricAgentCompletion()
+
+
+class FakeHistoryReader:
+    def __init__(self) -> None:
+        self.calls = []
+
+    async def load(self, session, execution_context):
+        self.calls.append((session, execution_context))
+        return MetricHistoryEmpty()
+
+
+class CandidateHistoryReader:
+    def __init__(self, candidates: tuple[MetricHistoryCandidate, ...]) -> None:
+        self.calls = []
+        self.candidates = candidates
+
+    async def load(self, session, execution_context):
+        self.calls.append((session, execution_context))
+        return MetricHistoryCandidates(candidates=self.candidates)
+
+
+class RecordingRepository:
+    def __init__(self, trace: list[str]) -> None:
+        self.trace = trace
+        self.persisted = []
+
+    async def advance_lens_run(self, session, lens_run, target, *, reason=None):
+        self.trace.append("repository_transition_flush")
+        lens_run.status = target.value
+        lens_run.reason = None if reason is None else reason.model_dump(mode="json")
+        return lens_run
+
+    async def persist_lens_analysis_result(self, session, lens_run, result):
+        self.trace.append("repository_artifact_flush")
+        self.persisted.append(result)
+        return SimpleNamespace(payload=result.payload, status=result.status.value)
+
+
+@pytest.fixture(scope="module")
+def postgres_url() -> str:
+    database_url = os.environ.get("IPO_TEST_DATABASE_URL")
+    if not database_url:
+        pytest.skip("set IPO_TEST_DATABASE_URL to run PostgreSQL integration tests")
+    previous_url = os.environ.get("DATABASE_URL")
+    os.environ["DATABASE_URL"] = database_url
+    get_settings.cache_clear()
+    config = Config(str(BACKEND_ROOT / "alembic.ini"))
+    config.set_main_option("script_location", str(BACKEND_ROOT / "migrations"))
+    command.upgrade(config, "head")
+    yield database_url
+    if previous_url is None:
+        os.environ.pop("DATABASE_URL", None)
+    else:
+        os.environ["DATABASE_URL"] = previous_url
+    get_settings.cache_clear()
+
+
+@pytest.fixture
+def session_factory(postgres_url: str) -> async_sessionmaker[AsyncSession]:
+    engine = create_async_engine(postgres_url)
+    factory = async_sessionmaker(engine, expire_on_commit=False)
+    yield factory
+    asyncio.run(engine.dispose())
+
+
+def pydantic_ai_function_model(responses):
+    calls: list[tuple[object, AgentInfo]] = []
+
+    def scripted(messages, info: AgentInfo) -> ModelResponse:
+        calls.append((messages, info))
+        return responses[len(calls) - 1](info)
+
+    return FunctionModel(scripted), calls
+
+
+def pydantic_ai_completion(info: AgentInfo) -> ModelResponse:
+    return ModelResponse(parts=[ToolCallPart(info.output_tools[0].name, {"state": "completed"})])
+
+
+async def persist_pydantic_ai_adapter_analysis(
+    session_factory: async_sessionmaker[AsyncSession],
+    available: MetricSeriesAvailable,
+    agent: PydanticAIMetricsAnalysisAgent,
+):
+    execution_context = context()
+    repository = RuntimePersistenceRepository()
+    pipeline = MetricAnalysisPipeline(
+        provider=FakeProvider(available),
+        agent=agent,
+        history_reader=repository,
+        repository=repository,
+        result_builder=MetricResultBuilder(lambda: WINDOW_START + timedelta(minutes=5)),
+    )
+
+    async with session_factory() as session:
+        async with session.begin():
+            observation = ObservationModel(
+                id=execution_context.identity.observation_id,
+                name=f"PydanticAI Metric {uuid4()}",
+                objective="Verify PydanticAI adapter persistence.",
+                schema_version=1,
+            )
+            session.add(observation)
+            await session.flush()
+            observation_run = await repository.create_observation_run(
+                session,
+                ObservationRunInput(
+                    id=execution_context.identity.observation_run_id,
+                    observation_id=observation.id,
+                ),
+            )
+            await repository.advance_observation_run(
+                session, observation_run, ObservationRunStatus.RUNNING
+            )
+            lens_run = await repository.create_lens_run(
+                session,
+                observation_run,
+                LensRunInput(
+                    id=execution_context.identity.lens_run_id,
+                    lens_id=execution_context.identity.lens_id,
+                    lens_type=LensType.METRIC,
+                ),
+            )
+            await repository.advance_lens_run(session, lens_run, LensRunStatus.RUNNING)
+
+        analysis = await pipeline.analyze(execution_context)
+        async with session.begin():
+            await pipeline.persist_terminal(session, lens_run, analysis)
+
+    async with session_factory() as session:
+        restored = await repository.get_observation_run(
+            session, execution_context.identity.observation_run_id
+        )
+        assert restored is not None
+        return analysis, restored.lens_runs[0]
+
+
+def test_context_is_frozen_utc_and_rejects_aliases_or_duplicate_offsets() -> None:
+    execution_context = context()
+    assert execution_context.analysis_window.from_.tzinfo is UTC
+    with pytest.raises(ValidationError):
+        execution_context.identity.lens_id = "other"
+    with pytest.raises(ValidationError):
+        MetricAnalysisWindow(start=WINDOW_START, end=WINDOW_START + timedelta(minutes=1))
+    with pytest.raises(ValidationError):
+        MetricIdentity(
+            observation_id=str(uuid4()),
+            observation_run_id=uuid4(),
+            lens_id="coolant-temperature",
+            lens_run_id=uuid4(),
+            metric_ref="coolant_temperature",
+            unit="celsius",
+        )
+    with pytest.raises(ValidationError, match="duplicates"):
+        MetricLensExecutionContext(**(context().model_dump() | {"reference_periods": ("1h", "1h")}))
+
+
+def test_preparation_statistics_and_semantics_are_exact_for_representative_good_series() -> None:
+    prepared = prepare_series(good_available().samples, context().analysis_window)
+    semantics = semanticize_mandatory(prepared, context().analysis_window)
+
+    assert prepared.data_quality == "good"
+    assert [sample.timestamp for sample in prepared.samples] == sorted(
+        sample.timestamp for sample in prepared.samples
+    )
+    assert prepared.evidence.mean == pytest.approx(70 / 3)
+    assert prepared.evidence.std == pytest.approx(math.sqrt(1400 / 9))
+    assert prepared.evidence.min == 10
+    assert prepared.evidence.max == 40
+    assert prepared.evidence.slope == pytest.approx(1 / 6)
+    assert semantics.model_dump() == {
+        "trend": {"direction": "increasing", "rate": "fast"},
+        "variability": {"state": "low"},
+    }
+
+
+def test_pipeline_projects_only_exact_good_agent_scope_and_two_phase_order() -> None:
+    phase_trace: list[str] = []
+    provider = FakeProvider()
+    agent = FakeAgent()
+    history = FakeHistoryReader()
+    repository = RecordingRepository(phase_trace)
+    pipeline = MetricAnalysisPipeline(
+        provider=provider,
+        agent=agent,
+        history_reader=history,
+        repository=repository,
+        result_builder=MetricResultBuilder(lambda: WINDOW_START + timedelta(minutes=5)),
+        record_phase=phase_trace.append,
+    )
+    execution_context = context()
+
+    analysis = run(pipeline.analyze(execution_context))
+    phase_trace.append("caller_transaction_open")
+    lens_run = SimpleNamespace(status="running")
+    artifact = run(pipeline.persist_terminal(object(), lens_run, analysis))
+    phase_trace.append("caller_commit")
+
+    assert provider.requests == [
+        (execution_context.provider_scope, execution_context.analysis_window)
+    ]
+    assert len(agent.requests) == 1
+    request = agent.requests[0]
+    assert request.model_dump() == {
+        "identity": execution_context.identity.model_dump(),
+        "analysis_window": execution_context.analysis_window.model_dump(),
+        "analysis_objectives": ("spike", "drift"),
+        "data_quality": "good",
+        "evidence": analysis.prepared.evidence.model_dump(),
+        "semantics": analysis.semantics.model_dump(),
+        "allowed_tools": tuple(tool.model_dump() for tool in FIXED_ALLOWED_TOOLS),
+        "dataset_ref": analysis.dataset_ref,
+    }
+    assert "query" not in request.model_dump()
+    assert "samples" not in request.model_dump()
+    assert len(analysis.dataset_ref) == 32
+    assert history.calls == [(ANY, execution_context)]
+    assert artifact.status == "completed"
+    assert lens_run.status == "completed"
+    assert phase_trace == [
+        "provider_acquisition",
+        "current_preparation",
+        "mandatory_semanticization",
+        "agent_execution",
+        "caller_transaction_open",
+        "history_read",
+        "lens_run_transition",
+        "repository_transition_flush",
+        "artifact_insertion_flush",
+        "repository_artifact_flush",
+        "caller_commit",
+    ]
+    payload = repository.persisted[0].payload
+    assert payload == {
+        "schema_version": "1.0",
+        "lens_type": "metric",
+        "identity": execution_context.identity.model_dump(mode="json"),
+        "status": {"state": "completed"},
+        "analysis_window": execution_context.analysis_window.model_dump(mode="json", by_alias=True),
+        "data_quality": "good",
+        "current_state": analysis.semantics.model_dump(),
+        "evidence": {"current": analysis.prepared.evidence.model_dump()},
+        "provenance": {
+            "source": "prometheus",
+            "generated_at": "2026-08-27T12:05:00Z",
+        },
+    }
+
+
+def test_domain_modules_remain_transport_and_framework_free() -> None:
+    import app.metrics.contracts as contracts
+    import app.metrics.pipeline as pipeline
+    import app.metrics.ports as ports
+    import app.metrics.preprocessing as preprocessing
+    import app.metrics.semantics as semantics
+    import app.metrics.tools as tools
+
+    source = "\n".join(
+        inspect.getsource(module)
+        for module in (contracts, ports, preprocessing, semantics, tools, pipeline)
+    )
+    assert "pydantic_ai" not in source
+    assert "app.infrastructure.prometheus" not in source
+    assert "sqlalchemy" not in inspect.getsource(ports)
+
+
+def test_fake_agent_executes_the_exact_three_tool_registry_and_projects_all_outputs() -> None:
+    agent = ToolCallingAgent(("spike", "oscillation", "stuck_signal"))
+    repository = RecordingRepository([])
+    pipeline = MetricAnalysisPipeline(
+        provider=FakeProvider(available_from_values((1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0))),
+        agent=agent,
+        history_reader=FakeHistoryReader(),
+        repository=repository,
+        result_builder=MetricResultBuilder(lambda: WINDOW_START + timedelta(minutes=5)),
+    )
+
+    analysis = run(pipeline.analyze(context()))
+    lens_run = SimpleNamespace(status="running", reason=None)
+    artifact = run(pipeline.persist_terminal(object(), lens_run, analysis))
+
+    assert tuple(item.model_dump() for item in agent.requests[0].allowed_tools) == tuple(
+        item.model_dump() for item in FIXED_ALLOWED_TOOLS
+    )
+    assert agent.registries[0].dataset_ref == analysis.dataset_ref
+    attempts = [(item.ordinal, item.requested_name, item.executed) for item in analysis.tool_ledger]
+    assert attempts == [
+        (1, "spike", True),
+        (2, "oscillation", True),
+        (3, "stuck_signal", True),
+    ]
+    assert artifact.status == "completed"
+    payload = repository.persisted[0].payload
+    assert payload["current_state"]["spike"]["state"] == "absent"
+    assert payload["current_state"]["oscillation"]["state"] in {"absent", "unknown"}
+    assert payload["current_state"]["stuck_signal"]["state"] == "absent"
+    assert set(payload["evidence"]["current"]) == {
+        "mean",
+        "std",
+        "min",
+        "max",
+        "slope",
+        "spike",
+        "oscillation",
+        "stuck_signal",
+    }
+    assert "dataset_ref" not in payload
+    assert "tool_ledger" not in payload
+
+
+def test_usable_request_derives_descriptors_from_the_precreated_registry() -> None:
+    source = inspect.getsource(MetricAnalysisPipeline.analyze)
+
+    assert source.index("registry = MetricToolRegistry") < source.index(
+        "request = MetricAgentUsableRequest"
+    )
+    assert "allowed_tools=registry.descriptors" in source
+
+
+def test_usable_agent_failure_persists_a_partial_without_changing_mandatory_evidence() -> None:
+    repository = RecordingRepository([])
+    pipeline = MetricAnalysisPipeline(
+        provider=FakeProvider(),
+        agent=FakeAgent(RuntimeError("adapter unavailable")),
+        history_reader=FakeHistoryReader(),
+        repository=repository,
+        result_builder=MetricResultBuilder(lambda: WINDOW_START + timedelta(minutes=5)),
+    )
+
+    analysis = run(pipeline.analyze(context()))
+    lens_run = SimpleNamespace(status="running", reason=None)
+    artifact = run(pipeline.persist_terminal(object(), lens_run, analysis))
+
+    assert analysis.optional_failure_component == "metrics_agent"
+    assert artifact.status == "partial"
+    assert lens_run.reason == {
+        "code": "optional_analysis_failed",
+        "component": "metrics_agent",
+    }
+    assert repository.persisted[0].payload["evidence"]["current"] == (
+        analysis.prepared.evidence.model_dump()
+    )
+
+
+def test_earliest_failed_tool_creates_correlated_partial_without_transient_ledger(
+    monkeypatch,
+) -> None:
+    from app.metrics import tools as metric_tools
+
+    def fail_spike(prepared):
+        raise RuntimeError("tool backend unavailable")
+
+    def timeout_oscillation(prepared):
+        raise TimeoutError("tool deadline")
+
+    monkeypatch.setattr(metric_tools, "analyze_spike", fail_spike)
+    monkeypatch.setattr(metric_tools, "analyze_oscillation", timeout_oscillation)
+    agent = ToolCallingAgent(("spike", "oscillation", "stuck_signal"))
+    repository = RecordingRepository([])
+    pipeline = MetricAnalysisPipeline(
+        provider=FakeProvider(available_from_values((1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0))),
+        agent=agent,
+        history_reader=FakeHistoryReader(),
+        repository=repository,
+        result_builder=MetricResultBuilder(lambda: WINDOW_START + timedelta(minutes=5)),
+    )
+
+    analysis = run(pipeline.analyze(context()))
+    lens_run = SimpleNamespace(status="running", reason=None)
+    artifact = run(pipeline.persist_terminal(object(), lens_run, analysis))
+
+    assert analysis.optional_failure_component == "spike"
+    assert [item.outcome.outcome for item in analysis.tool_ledger[:2]] == ["failed", "timeout"]
+    assert artifact.status == "partial"
+    assert lens_run.status == "partial"
+    assert lens_run.reason == {"code": "optional_analysis_failed", "component": "spike"}
+    payload = repository.persisted[0].payload
+    assert payload["reason"] == lens_run.reason
+    assert "spike" not in payload["current_state"]
+    assert "oscillation" not in payload["current_state"]
+    assert payload["current_state"]["stuck_signal"]["state"] == "absent"
+    assert "tool_ledger" not in payload
+    assert "diagnostic" not in str(payload)
+
+
+@pytest.mark.parametrize(
+    ("tool_names", "expected_rejection"),
+    [
+        (("stuck_signal", "stuck_signal"), "duplicate"),
+        (("stuck_signal", "drift"), "unregistered"),
+        (("spike", "oscillation", "stuck_signal", "spike"), "over_budget"),
+    ],
+)
+def test_protocol_rejections_preserve_successful_tool_results_and_select_metrics_agent(
+    tool_names: tuple[str, ...], expected_rejection: str
+) -> None:
+    agent = ToolCallingAgent(tool_names)
+    repository = RecordingRepository([])
+    pipeline = MetricAnalysisPipeline(
+        provider=FakeProvider(available_from_values((1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0))),
+        agent=agent,
+        history_reader=FakeHistoryReader(),
+        repository=repository,
+        result_builder=MetricResultBuilder(lambda: WINDOW_START + timedelta(minutes=5)),
+    )
+
+    analysis = run(pipeline.analyze(context()))
+    lens_run = SimpleNamespace(status="running", reason=None)
+    artifact = run(pipeline.persist_terminal(object(), lens_run, analysis))
+
+    assert analysis.agent_protocol_failure is not None
+    assert analysis.optional_failure_component == "metrics_agent"
+    assert analysis.tool_ledger[-1].outcome.reason == expected_rejection
+    assert analysis.tool_ledger[-1].executed is False
+    assert analysis.tool_ledger[-1].consumed_slot is (expected_rejection != "over_budget")
+    assert artifact.status == "partial"
+    assert lens_run.reason == {
+        "code": "optional_analysis_failed",
+        "component": "metrics_agent",
+    }
+    payload = repository.persisted[0].payload
+    assert payload["reason"] == lens_run.reason
+    assert payload["current_state"]["stuck_signal"]["state"] == "absent"
+    assert "tool_ledger" not in payload
+    assert "dataset_ref" not in payload
+    assert "diagnostic" not in str(payload)
+
+
+def test_parallel_protocol_rejection_selects_metrics_agent_without_parallel_execution() -> None:
+    agent = ParallelToolCallingAgent()
+    repository = RecordingRepository([])
+    pipeline = MetricAnalysisPipeline(
+        provider=FakeProvider(available_from_values((1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0))),
+        agent=agent,
+        history_reader=FakeHistoryReader(),
+        repository=repository,
+        result_builder=MetricResultBuilder(lambda: WINDOW_START + timedelta(minutes=5)),
+    )
+
+    analysis = run(pipeline.analyze(context()))
+    lens_run = SimpleNamespace(status="running", reason=None)
+    run(pipeline.persist_terminal(object(), lens_run, analysis))
+
+    assert [
+        (attempt.ordinal, attempt.requested_name, attempt.executed, attempt.consumed_slot)
+        for attempt in analysis.tool_ledger
+    ] == [(1, "spike", True, True), (2, "oscillation", False, True)]
+    assert analysis.tool_ledger[1].outcome.reason == "parallel"
+    assert lens_run.reason == {
+        "code": "optional_analysis_failed",
+        "component": "metrics_agent",
+    }
+
+
+def test_protocol_rejection_outranks_an_earlier_registered_tool_failure(monkeypatch) -> None:
+    from app.metrics import tools as metric_tools
+
+    def fail_spike(prepared):
+        raise RuntimeError("tool backend unavailable")
+
+    monkeypatch.setattr(metric_tools, "analyze_spike", fail_spike)
+    repository = RecordingRepository([])
+    pipeline = MetricAnalysisPipeline(
+        provider=FakeProvider(available_from_values((1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0))),
+        agent=ToolCallingAgent(("spike", "spike")),
+        history_reader=FakeHistoryReader(),
+        repository=repository,
+        result_builder=MetricResultBuilder(lambda: WINDOW_START + timedelta(minutes=5)),
+    )
+
+    analysis = run(pipeline.analyze(context()))
+    lens_run = SimpleNamespace(status="running", reason=None)
+    run(pipeline.persist_terminal(object(), lens_run, analysis))
+
+    assert [getattr(attempt.outcome, "outcome", "success") for attempt in analysis.tool_ledger] == [
+        "failed",
+        "rejected",
+    ]
+    assert analysis.optional_failure_component == "metrics_agent"
+    assert lens_run.reason == {
+        "code": "optional_analysis_failed",
+        "component": "metrics_agent",
+    }
+
+
+def test_pydantic_ai_usable_failure_persists_metrics_agent_partial(
+    session_factory: async_sessionmaker[AsyncSession],
+) -> None:
+    model, calls = pydantic_ai_function_model(
+        [lambda _: ModelResponse(parts=[TextPart("not a completion")])]
+    )
+
+    analysis, lens_run = run(
+        persist_pydantic_ai_adapter_analysis(
+            session_factory,
+            good_available(),
+            PydanticAIMetricsAnalysisAgent(model),
+        )
+    )
+
+    assert len(calls) == 1
+    assert analysis.optional_failure_component == "metrics_agent"
+    assert lens_run.status == "partial"
+    assert lens_run.reason == {
+        "code": "optional_analysis_failed",
+        "component": "metrics_agent",
+    }
+    assert lens_run.analysis_result is not None
+    assert lens_run.analysis_result.payload["reason"] == lens_run.reason
+
+
+def test_pydantic_ai_insufficient_failure_stays_completed_insufficient(
+    session_factory: async_sessionmaker[AsyncSession],
+) -> None:
+    model, calls = pydantic_ai_function_model(
+        [lambda _: ModelResponse(parts=[TextPart("not a completion")])]
+    )
+
+    analysis, lens_run = run(
+        persist_pydantic_ai_adapter_analysis(
+            session_factory,
+            available_from_values((float("nan"), 10.0, 20.0)),
+            PydanticAIMetricsAnalysisAgent(model),
+        )
+    )
+
+    assert len(calls) == 1
+    assert analysis.insufficient_agent_outcome is not None
+    assert analysis.insufficient_agent_outcome.state == "operational_failure"
+    assert lens_run.status == "completed"
+    assert lens_run.reason is None
+    assert lens_run.analysis_result is not None
+    assert lens_run.analysis_result.payload["data_quality"] == "insufficient"
+    assert "reason" not in lens_run.analysis_result.payload
+
+
+@pytest.mark.parametrize("later_failure", ["model", "protocol"])
+def test_pydantic_ai_later_failure_retains_prior_successful_tool_result(
+    session_factory: async_sessionmaker[AsyncSession], later_failure: str
+) -> None:
+    if later_failure == "model":
+        responses = [
+            lambda _: ModelResponse(parts=[ToolCallPart("spike", {})]),
+            lambda _: ModelResponse(parts=[TextPart("not a completion")]),
+        ]
+    else:
+        responses = [
+            lambda _: ModelResponse(parts=[ToolCallPart("spike", {})]),
+            lambda _: ModelResponse(parts=[ToolCallPart("spike", {})]),
+            pydantic_ai_completion,
+        ]
+    model, calls = pydantic_ai_function_model(responses)
+
+    analysis, lens_run = run(
+        persist_pydantic_ai_adapter_analysis(
+            session_factory,
+            available_from_values((1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0)),
+            PydanticAIMetricsAnalysisAgent(model),
+        )
+    )
+
+    assert analysis.optional_failure_component == "metrics_agent"
+    assert analysis.tool_ledger[0].requested_name == "spike"
+    assert analysis.tool_ledger[0].executed is True
+    assert lens_run.status == "partial"
+    assert lens_run.reason == {
+        "code": "optional_analysis_failed",
+        "component": "metrics_agent",
+    }
+    assert lens_run.analysis_result is not None
+    assert lens_run.analysis_result.payload["current_state"]["spike"]["state"] == "absent"
+    if later_failure == "model":
+        assert len(calls) == 2
+    else:
+        assert len(calls) == 2
+        assert analysis.agent_protocol_failure is not None
+
+
+def test_pydantic_ai_registered_fourth_call_stops_after_four_model_requests(
+    session_factory: async_sessionmaker[AsyncSession],
+) -> None:
+    model, calls = pydantic_ai_function_model(
+        [
+            lambda _: ModelResponse(parts=[ToolCallPart("spike", {})]),
+            lambda _: ModelResponse(parts=[ToolCallPart("oscillation", {})]),
+            lambda _: ModelResponse(parts=[ToolCallPart("stuck_signal", {})]),
+            lambda _: ModelResponse(parts=[ToolCallPart("spike", {})]),
+        ]
+    )
+
+    analysis, lens_run = run(
+        persist_pydantic_ai_adapter_analysis(
+            session_factory,
+            available_from_values((1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0)),
+            PydanticAIMetricsAnalysisAgent(model),
+        )
+    )
+
+    assert len(calls) == 4
+    assert [attempt.requested_name for attempt in analysis.tool_ledger] == [
+        "spike",
+        "oscillation",
+        "stuck_signal",
+        "spike",
+    ]
+    assert analysis.tool_ledger[-1].outcome.reason == "over_budget"
+    assert analysis.tool_ledger[-1].executed is False
+    assert analysis.tool_ledger[-1].consumed_slot is False
+    assert lens_run.status == "partial"
+    assert lens_run.reason == {
+        "code": "optional_analysis_failed",
+        "component": "metrics_agent",
+    }
+
+
+def test_completed_sufficient_metric_round_trips_through_runtime_aggregate(
+    session_factory: async_sessionmaker[AsyncSession],
+) -> None:
+    async def scenario() -> None:
+        phase_trace: list[str] = []
+        provider = FakeProvider()
+        agent = FakeAgent()
+        repository = RuntimePersistenceRepository()
+        pipeline = MetricAnalysisPipeline(
+            provider=provider,
+            agent=agent,
+            history_reader=repository,
+            repository=repository,
+            result_builder=MetricResultBuilder(lambda: WINDOW_START + timedelta(minutes=5)),
+            record_phase=phase_trace.append,
+        )
+        execution_context = context()
+
+        async with session_factory() as session:
+            async with session.begin():
+                observation = ObservationModel(
+                    id=execution_context.identity.observation_id,
+                    name=f"Metric walking skeleton {uuid4()}",
+                    objective="Verify completed Metric persistence.",
+                    schema_version=1,
+                )
+                session.add(observation)
+                await session.flush()
+                observation_run = await repository.create_observation_run(
+                    session,
+                    ObservationRunInput(
+                        id=execution_context.identity.observation_run_id,
+                        observation_id=observation.id,
+                    ),
+                )
+                await repository.advance_observation_run(
+                    session, observation_run, ObservationRunStatus.RUNNING
+                )
+                lens_run = await repository.create_lens_run(
+                    session,
+                    observation_run,
+                    LensRunInput(
+                        id=execution_context.identity.lens_run_id,
+                        lens_id=execution_context.identity.lens_id,
+                        lens_type=LensType.METRIC,
+                    ),
+                )
+                await repository.advance_lens_run(session, lens_run, LensRunStatus.RUNNING)
+
+            analysis = await pipeline.analyze(execution_context)
+            phase_trace.append("caller_transaction_open")
+            async with session.begin():
+                await pipeline.persist_terminal(session, lens_run, analysis)
+            phase_trace.append("caller_commit")
+
+        async with session_factory() as session:
+            restored = await repository.get_observation_run(
+                session, execution_context.identity.observation_run_id
+            )
+            assert restored is not None
+            assert len(restored.lens_runs) == 1
+            restored_lens_run = restored.lens_runs[0]
+            assert restored_lens_run.status == "completed"
+            assert restored_lens_run.analysis_result is not None
+            assert restored_lens_run.analysis_result.payload == {
+                "schema_version": "1.0",
+                "lens_type": "metric",
+                "identity": execution_context.identity.model_dump(mode="json"),
+                "status": {"state": "completed"},
+                "analysis_window": execution_context.analysis_window.model_dump(
+                    mode="json", by_alias=True
+                ),
+                "data_quality": "good",
+                "current_state": analysis.semantics.model_dump(),
+                "evidence": {"current": analysis.prepared.evidence.model_dump()},
+                "provenance": {
+                    "source": "prometheus",
+                    "generated_at": "2026-08-27T12:05:00Z",
+                },
+            }
+
+        assert len(provider.requests) == 1
+        assert len(agent.requests) == 1
+        assert phase_trace == [
+            "provider_acquisition",
+            "current_preparation",
+            "mandatory_semanticization",
+            "agent_execution",
+            "caller_transaction_open",
+            "history_read",
+            "lens_run_transition",
+            "artifact_insertion_flush",
+            "caller_commit",
+        ]
+
+    run(scenario())
+
+
+@pytest.mark.parametrize(
+    ("available", "quality"),
+    [
+        (good_available(), "good"),
+        (degraded_available(), "degraded"),
+        (available_from_values((float("nan"), 10.0, float("inf"), 20.0)), "insufficient"),
+    ],
+)
+def test_preparation_filters_non_finite_samples_and_classifies_every_quality_boundary(
+    available: MetricSeriesAvailable, quality: str
+) -> None:
+    prepared = prepare_series(available.samples, context().analysis_window)
+
+    assert prepared.data_quality == quality
+    assert all(math.isfinite(sample.value) for sample in prepared.samples)
+    if quality == "insufficient":
+        assert isinstance(prepared, PreparedInsufficientSeries)
+        assert "evidence" not in prepared.model_dump()
+    else:
+        assert prepared.evidence.model_dump() == pytest.approx(
+            {"mean": 70 / 3, "std": math.sqrt(1400 / 9), "min": 10.0, "max": 40.0, "slope": 1 / 6}
+        )
+
+
+def test_preparation_calculates_irregular_and_constant_series_with_finite_evidence() -> None:
+    irregular_window = MetricAnalysisWindow(
+        **{"from": WINDOW_START, "to": WINDOW_START + timedelta(seconds=93)}
+    )
+    irregular = prepare_series(
+        (
+            MetricSample(timestamp=WINDOW_START + timedelta(seconds=93), value=13.0),
+            MetricSample(timestamp=WINDOW_START, value=5.0),
+            MetricSample(timestamp=WINDOW_START + timedelta(seconds=17), value=7.0),
+        ),
+        irregular_window,
+    )
+    constant = prepare_series(
+        available_from_values((3.0, 3.0, 3.0)).samples, context().analysis_window
+    )
+
+    assert irregular.evidence.mean == pytest.approx(25 / 3)
+    assert irregular.evidence.std == pytest.approx(math.sqrt(104 / 9))
+    assert irregular.evidence.slope == pytest.approx(0.0838657061302161)
+    assert all(math.isfinite(value) for value in irregular.evidence.model_dump().values())
+    assert constant.evidence.model_dump() == {
+        "mean": 3.0,
+        "std": 0.0,
+        "min": 3.0,
+        "max": 3.0,
+        "slope": 0.0,
+    }
+
+
+def _semantic_prepared(*, slope: float, residual_scale: float) -> PreparedGoodSeries:
+    return PreparedGoodSeries(
+        data_quality="good",
+        samples=(),
+        evidence=MetricEvidence(mean=1.0, std=0.0, min=1.0, max=1.0, slope=slope),
+        residuals=(-residual_scale, residual_scale),
+    )
+
+
+@pytest.mark.parametrize(
+    ("value", "direction", "rate"),
+    [
+        (math.nextafter(0.05, 0.0), "stable", "not_classified"),
+        (0.05, "increasing", "slow"),
+        (math.nextafter(0.05, math.inf), "increasing", "slow"),
+        (math.nextafter(0.15, 0.0), "increasing", "slow"),
+        (0.15, "increasing", "moderate"),
+        (math.nextafter(0.15, math.inf), "increasing", "moderate"),
+        (math.nextafter(0.35, 0.0), "increasing", "moderate"),
+        (0.35, "increasing", "fast"),
+        (math.nextafter(0.35, math.inf), "increasing", "fast"),
+        (math.nextafter(-0.05, 0.0), "stable", "not_classified"),
+        (-0.05, "decreasing", "slow"),
+        (math.nextafter(-0.05, -math.inf), "decreasing", "slow"),
+        (math.nextafter(-0.15, 0.0), "decreasing", "slow"),
+        (-0.15, "decreasing", "moderate"),
+        (math.nextafter(-0.15, -math.inf), "decreasing", "moderate"),
+        (math.nextafter(-0.35, 0.0), "decreasing", "moderate"),
+        (-0.35, "decreasing", "fast"),
+        (math.nextafter(-0.35, -math.inf), "decreasing", "fast"),
+    ],
+)
+def test_semanticizes_every_adr_153_trend_boundary(value: float, direction: str, rate: str) -> None:
+    one_second_window = MetricAnalysisWindow(
+        **{"from": WINDOW_START, "to": WINDOW_START + timedelta(seconds=1)}
+    )
+    semantics = semanticize_mandatory(
+        _semantic_prepared(slope=value, residual_scale=0.0), one_second_window
+    )
+
+    assert semantics.trend.model_dump() == {"direction": direction, "rate": rate}
+
+
+@pytest.mark.parametrize(
+    ("value", "state"),
+    [
+        (math.nextafter(0.05, 0.0), "low"),
+        (0.05, "moderate"),
+        (math.nextafter(0.05, math.inf), "moderate"),
+        (math.nextafter(0.15, 0.0), "moderate"),
+        (0.15, "high"),
+        (math.nextafter(0.15, math.inf), "high"),
+    ],
+)
+def test_semanticizes_every_adr_153_variability_boundary(value: float, state: str) -> None:
+    one_second_window = MetricAnalysisWindow(
+        **{"from": WINDOW_START, "to": WINDOW_START + timedelta(seconds=1)}
+    )
+    semantics = semanticize_mandatory(
+        _semantic_prepared(slope=0.0, residual_scale=value), one_second_window
+    )
+
+    assert semantics.variability.state == state
+
+
+def test_semanticizes_constant_scale_without_division_and_rejects_public_non_finite_values() -> (
+    None
+):
+    one_second_window = MetricAnalysisWindow(
+        **{"from": WINDOW_START, "to": WINDOW_START + timedelta(seconds=1)}
+    )
+    prepared = PreparedGoodSeries(
+        data_quality="good",
+        samples=(),
+        evidence=MetricEvidence(mean=0.0, std=0.0, min=0.0, max=0.0, slope=0.0),
+        residuals=(0.0, 0.0),
+    )
+
+    assert semanticize_mandatory(prepared, one_second_window) == MetricSemantics(
+        trend=MetricTrend(direction="stable", rate="not_classified"),
+        variability=MetricVariability(state="low"),
+    )
+    with pytest.raises(ValidationError):
+        MetricEvidence(mean=float("nan"), std=0.0, min=0.0, max=0.0, slope=0.0)
+
+
+def test_pipeline_projects_degraded_and_resilient_insufficient_agent_requests() -> None:
+    degraded_context = context()
+    degraded_provider = FakeProvider(degraded_available())
+    degraded_agent = FakeAgent()
+    degraded_pipeline = MetricAnalysisPipeline(
+        provider=degraded_provider,
+        agent=degraded_agent,
+        history_reader=FakeHistoryReader(),
+        repository=RecordingRepository([]),
+    )
+    degraded = run(degraded_pipeline.analyze(degraded_context))
+
+    degraded_request = degraded_agent.requests[0]
+    assert degraded_request.model_dump() == {
+        "identity": degraded_context.identity.model_dump(),
+        "analysis_window": degraded_context.analysis_window.model_dump(),
+        "analysis_objectives": degraded_context.analysis_objectives,
+        "data_quality": "degraded",
+        "evidence": degraded.prepared.evidence.model_dump(),
+        "semantics": degraded.semantics.model_dump(),
+        "allowed_tools": tuple(tool.model_dump() for tool in FIXED_ALLOWED_TOOLS),
+        "dataset_ref": degraded.dataset_ref,
+    }
+    assert degraded.dataset_ref is not None
+
+    insufficient_context = context()
+    insufficient_agent = FakeAgent(RuntimeError("adapter unavailable"))
+    insufficient_history = FakeHistoryReader()
+    insufficient_repository = RecordingRepository([])
+    insufficient_pipeline = MetricAnalysisPipeline(
+        provider=FakeProvider(available_from_values((float("nan"), 10.0, 20.0))),
+        agent=insufficient_agent,
+        history_reader=insufficient_history,
+        repository=insufficient_repository,
+        result_builder=MetricResultBuilder(lambda: WINDOW_START + timedelta(minutes=5)),
+    )
+    insufficient = run(insufficient_pipeline.analyze(insufficient_context))
+    lens_run = SimpleNamespace(status="running")
+    artifact = run(insufficient_pipeline.persist_terminal(object(), lens_run, insufficient))
+
+    request = insufficient_agent.requests[0]
+    assert request.model_dump() == {
+        "identity": insufficient_context.identity.model_dump(),
+        "analysis_window": insufficient_context.analysis_window.model_dump(),
+        "data_quality": "insufficient",
+    }
+    assert insufficient.insufficient_agent_outcome is not None
+    assert insufficient.insufficient_agent_outcome.state == "operational_failure"
+    assert insufficient.dataset_ref is None
+    assert insufficient.semantics is None
+    assert insufficient_history.calls == []
+    assert lens_run.status == "completed"
+    assert artifact.status == "completed"
+    assert insufficient_repository.persisted[0].payload == {
+        "schema_version": "1.0",
+        "lens_type": "metric",
+        "identity": insufficient_context.identity.model_dump(mode="json"),
+        "status": {"state": "completed"},
+        "analysis_window": insufficient_context.analysis_window.model_dump(
+            mode="json", by_alias=True
+        ),
+        "data_quality": "insufficient",
+        "provenance": {"source": "prometheus", "generated_at": "2026-08-27T12:05:00Z"},
+    }
+    with pytest.raises(ValidationError):
+        CompletedInsufficientMetricResult.model_validate(
+            insufficient_repository.persisted[0].payload | {"evidence": {}}
+        )
+
+
+@pytest.mark.parametrize(
+    ("available", "agent_failure", "quality"),
+    [
+        (degraded_available(), None, "degraded"),
+        (good_available(), RuntimeError("adapter unavailable"), "good"),
+        (
+            available_from_values((float("nan"), 10.0, 20.0)),
+            RuntimeError("unavailable"),
+            "insufficient",
+        ),
+    ],
+)
+def test_degraded_and_insufficient_metric_outcomes_round_trip_through_runtime_aggregate(
+    session_factory: async_sessionmaker[AsyncSession],
+    available: MetricSeriesAvailable,
+    agent_failure: Exception | None,
+    quality: str,
+) -> None:
+    async def scenario() -> None:
+        phase_trace: list[str] = []
+        execution_context = context()
+        provider = FakeProvider(available)
+        agent = FakeAgent(agent_failure)
+        repository = RuntimePersistenceRepository()
+        pipeline = MetricAnalysisPipeline(
+            provider=provider,
+            agent=agent,
+            history_reader=repository,
+            repository=repository,
+            result_builder=MetricResultBuilder(lambda: WINDOW_START + timedelta(minutes=5)),
+            record_phase=phase_trace.append,
+        )
+
+        async with session_factory() as session:
+            async with session.begin():
+                observation = ObservationModel(
+                    id=execution_context.identity.observation_id,
+                    name=f"Metric {quality} result {uuid4()}",
+                    objective="Verify Metric quality persistence.",
+                    schema_version=1,
+                )
+                session.add(observation)
+                await session.flush()
+                observation_run = await repository.create_observation_run(
+                    session,
+                    ObservationRunInput(
+                        id=execution_context.identity.observation_run_id,
+                        observation_id=observation.id,
+                    ),
+                )
+                await repository.advance_observation_run(
+                    session, observation_run, ObservationRunStatus.RUNNING
+                )
+                lens_run = await repository.create_lens_run(
+                    session,
+                    observation_run,
+                    LensRunInput(
+                        id=execution_context.identity.lens_run_id,
+                        lens_id=execution_context.identity.lens_id,
+                        lens_type=LensType.METRIC,
+                    ),
+                )
+                await repository.advance_lens_run(session, lens_run, LensRunStatus.RUNNING)
+
+            analysis = await pipeline.analyze(execution_context)
+            phase_trace.append("caller_transaction_open")
+            async with session.begin():
+                await pipeline.persist_terminal(session, lens_run, analysis)
+            phase_trace.append("caller_commit")
+
+        async with session_factory() as session:
+            restored = await repository.get_observation_run(
+                session, execution_context.identity.observation_run_id
+            )
+            assert restored is not None
+            restored_lens_run = restored.lens_runs[0]
+            expected_status = (
+                "partial"
+                if agent_failure is not None and quality != "insufficient"
+                else "completed"
+            )
+            assert restored_lens_run.status == expected_status
+            assert restored_lens_run.analysis_result is not None
+            payload = restored_lens_run.analysis_result.payload
+            assert payload["data_quality"] == quality
+            assert payload["status"] == {"state": expected_status}
+            assert payload["identity"] == execution_context.identity.model_dump(mode="json")
+            assert payload["analysis_window"] == execution_context.analysis_window.model_dump(
+                mode="json", by_alias=True
+            )
+            assert payload["provenance"] == {
+                "source": "prometheus",
+                "generated_at": "2026-08-27T12:05:00Z",
+            }
+            if quality in {"good", "degraded"}:
+                assert set(payload) == {
+                    "schema_version",
+                    "lens_type",
+                    "identity",
+                    "status",
+                    "analysis_window",
+                    "data_quality",
+                    "current_state",
+                    "evidence",
+                    "provenance",
+                } | ({"reason"} if expected_status == "partial" else set())
+                if expected_status == "partial":
+                    assert payload["reason"] == {
+                        "code": "optional_analysis_failed",
+                        "component": "metrics_agent",
+                    }
+            else:
+                assert set(payload) == {
+                    "schema_version",
+                    "lens_type",
+                    "identity",
+                    "status",
+                    "analysis_window",
+                    "data_quality",
+                    "provenance",
+                }
+
+        assert len(provider.requests) == 1
+        assert len(agent.requests) == 1
+        if quality != "insufficient":
+            assert phase_trace == [
+                "provider_acquisition",
+                "current_preparation",
+                "mandatory_semanticization",
+                "agent_execution",
+                "caller_transaction_open",
+                "history_read",
+                "lens_run_transition",
+                "artifact_insertion_flush",
+                "caller_commit",
+            ]
+        else:
+            assert phase_trace == [
+                "provider_acquisition",
+                "current_preparation",
+                "agent_execution",
+                "caller_transaction_open",
+                "lens_run_transition",
+                "artifact_insertion_flush",
+                "caller_commit",
+            ]
+        if quality == "insufficient":
+            assert analysis.insufficient_agent_outcome is not None
+            assert analysis.insufficient_agent_outcome.state == "operational_failure"
+        elif agent_failure is not None:
+            assert analysis.optional_failure_component == "metrics_agent"
+
+    run(scenario())
+
+
+@pytest.mark.parametrize(
+    ("failure", "error_type", "expected_error"),
+    [
+        (
+            MetricCurrentAcquisitionFailed(diagnostic="provider endpoint unavailable"),
+            CurrentMetricAcquisitionFailedError,
+            {
+                "code": "current_metric_acquisition_failed",
+                "message": "Current metric data acquisition failed.",
+            },
+        ),
+        (
+            MetricCurrentSeriesMalformed(diagnostic="duplicate timestamp"),
+            CurrentMetricSeriesMalformedError,
+            {
+                "code": "current_metric_series_malformed",
+                "message": "Current metric series is malformed.",
+            },
+        ),
+        (
+            MetricMandatoryAnalysisFailure(diagnostic="overflow in statistics"),
+            MandatoryMetricAnalysisFailedError,
+            {
+                "code": "mandatory_metric_analysis_failed",
+                "message": "Mandatory metric analysis failed.",
+            },
+        ),
+    ],
+)
+def test_failed_builder_uses_only_fixed_public_error_and_minimal_payload(
+    failure, error_type, expected_error
+) -> None:
+    execution_context = context()
+    result, envelope = MetricResultBuilder(lambda: WINDOW_START + timedelta(minutes=5)).failed(
+        execution_context, failure
+    )
+
+    assert isinstance(result.status.error, error_type)
+    assert result.model_dump(mode="json", by_alias=True) == {
+        "schema_version": "1.0",
+        "lens_type": "metric",
+        "identity": execution_context.identity.model_dump(mode="json"),
+        "status": {"state": "failed", "error": expected_error},
+        "analysis_window": execution_context.analysis_window.model_dump(mode="json", by_alias=True),
+        "provenance": {"source": "prometheus", "generated_at": "2026-08-27T12:05:00Z"},
+    }
+    assert envelope.status is LensRunStatus.FAILED
+    with pytest.raises(ValidationError):
+        FailedMetricResult.model_validate(result.model_dump() | {"evidence": {}})
+    with pytest.raises(ValidationError):
+        FailedMetricResult.model_validate(
+            result.model_dump()
+            | {"status": {"state": "failed", "error": expected_error | {"x": "y"}}}
+        )
+
+
+class FailingSufficientBuilder(MetricResultBuilder):
+    def completed_sufficient(self, context, prepared, semantics):
+        raise ValueError("result validation unexpectedly failed")
+
+
+@pytest.mark.parametrize(
+    ("provider", "result_builder", "expected_error", "expected_agent_calls", "phase_prefix"),
+    [
+        (
+            FakeProvider(MetricSeriesUnavailable(diagnostic="prometheus unavailable")),
+            MetricResultBuilder(lambda: WINDOW_START + timedelta(minutes=5)),
+            "current_metric_acquisition_failed",
+            0,
+            ["provider_acquisition"],
+        ),
+        (
+            FakeProvider(MetricSeriesAcquisitionFailure(diagnostic="provider rejected query")),
+            MetricResultBuilder(lambda: WINDOW_START + timedelta(minutes=5)),
+            "current_metric_acquisition_failed",
+            0,
+            ["provider_acquisition"],
+        ),
+        (
+            FakeProvider(MetricSeriesAcquisitionTimeout(diagnostic="provider timed out")),
+            MetricResultBuilder(lambda: WINDOW_START + timedelta(minutes=5)),
+            "current_metric_acquisition_failed",
+            0,
+            ["provider_acquisition"],
+        ),
+        (
+            FakeProvider(
+                MetricSeriesAvailable(
+                    source="prometheus",
+                    samples=(
+                        MetricSample(timestamp=WINDOW_START, value=10.0),
+                        MetricSample(timestamp=WINDOW_START, value=20.0),
+                    ),
+                )
+            ),
+            MetricResultBuilder(lambda: WINDOW_START + timedelta(minutes=5)),
+            "current_metric_series_malformed",
+            0,
+            ["provider_acquisition", "current_preparation"],
+        ),
+        (
+            FakeProvider(
+                MetricSeriesAvailable(
+                    source="prometheus",
+                    samples=(
+                        MetricSample(timestamp=WINDOW_START - timedelta(seconds=1), value=10.0),
+                        MetricSample(timestamp=WINDOW_START, value=20.0),
+                        MetricSample(timestamp=WINDOW_START + timedelta(seconds=60), value=30.0),
+                    ),
+                )
+            ),
+            MetricResultBuilder(lambda: WINDOW_START + timedelta(minutes=5)),
+            "current_metric_series_malformed",
+            0,
+            ["provider_acquisition", "current_preparation"],
+        ),
+        (
+            FakeProvider(),
+            FailingSufficientBuilder(lambda: WINDOW_START + timedelta(minutes=5)),
+            "mandatory_metric_analysis_failed",
+            1,
+            [
+                "provider_acquisition",
+                "current_preparation",
+                "mandatory_semanticization",
+                "agent_execution",
+            ],
+        ),
+    ],
+)
+def test_current_technical_failures_are_decided_before_terminal_persistence(
+    provider,
+    result_builder,
+    expected_error,
+    expected_agent_calls,
+    phase_prefix,
+) -> None:
+    phase_trace: list[str] = []
+    agent = FakeAgent()
+    history = FakeHistoryReader()
+    repository = RecordingRepository(phase_trace)
+    pipeline = MetricAnalysisPipeline(
+        provider=provider,
+        agent=agent,
+        history_reader=history,
+        repository=repository,
+        result_builder=result_builder,
+        record_phase=phase_trace.append,
+    )
+
+    analysis = run(pipeline.analyze(context()))
+    phase_trace.append("caller_transaction_open")
+    lens_run = SimpleNamespace(status="running", reason=None)
+    artifact = run(pipeline.persist_terminal(object(), lens_run, analysis))
+    phase_trace.append("caller_commit")
+
+    assert analysis.failure is not None
+    assert analysis.terminal_result.payload["status"] == {
+        "state": "failed",
+        "error": {
+            "code": expected_error,
+            "message": {
+                "current_metric_acquisition_failed": "Current metric data acquisition failed.",
+                "current_metric_series_malformed": "Current metric series is malformed.",
+                "mandatory_metric_analysis_failed": "Mandatory metric analysis failed.",
+            }[expected_error],
+        },
+    }
+    assert len(agent.requests) == expected_agent_calls
+    assert history.calls == []
+    assert lens_run.status == "failed"
+    assert lens_run.reason == {"code": expected_error, "component": None}
+    assert artifact.status == "failed"
+    assert phase_trace == phase_prefix + [
+        "caller_transaction_open",
+        "lens_run_transition",
+        "repository_transition_flush",
+        "artifact_insertion_flush",
+        "repository_artifact_flush",
+        "caller_commit",
+    ]
+
+
+@pytest.mark.parametrize(
+    ("stage", "expected_agent_calls"),
+    [("statistics", 0), ("semanticization", 0), ("result_validation", 1)],
+)
+def test_unexpected_mandatory_stage_failures_produce_minimal_failed_result(
+    monkeypatch, stage: str, expected_agent_calls: int
+) -> None:
+    import app.metrics.pipeline as pipeline_module
+
+    if stage == "statistics":
+        monkeypatch.setattr(
+            pipeline_module,
+            "prepare_series",
+            lambda samples, window: (_ for _ in ()).throw(ArithmeticError("statistics overflow")),
+        )
+        result_builder = MetricResultBuilder(lambda: WINDOW_START + timedelta(minutes=5))
+    elif stage == "semanticization":
+        monkeypatch.setattr(
+            pipeline_module,
+            "semanticize_mandatory",
+            lambda prepared, window: (_ for _ in ()).throw(ValueError("semanticization failure")),
+        )
+        result_builder = MetricResultBuilder(lambda: WINDOW_START + timedelta(minutes=5))
+    else:
+        result_builder = FailingSufficientBuilder(lambda: WINDOW_START + timedelta(minutes=5))
+    agent = FakeAgent()
+    history = FakeHistoryReader()
+    pipeline = MetricAnalysisPipeline(
+        provider=FakeProvider(),
+        agent=agent,
+        history_reader=history,
+        repository=RecordingRepository([]),
+        result_builder=result_builder,
+    )
+
+    analysis = run(pipeline.analyze(context()))
+
+    assert isinstance(analysis.failure, MetricMandatoryAnalysisFailure)
+    assert analysis.terminal_result.payload["status"] == {
+        "state": "failed",
+        "error": {
+            "code": "mandatory_metric_analysis_failed",
+            "message": "Mandatory metric analysis failed.",
+        },
+    }
+    assert len(agent.requests) == expected_agent_calls
+    assert history.calls == []
+
+
+@pytest.mark.parametrize(
+    ("case", "expected_error", "expected_agent_calls"),
+    [
+        ("acquisition", "current_metric_acquisition_failed", 0),
+        ("malformed", "current_metric_series_malformed", 0),
+        ("mandatory", "mandatory_metric_analysis_failed", 1),
+    ],
+)
+def test_failed_metric_outcomes_round_trip_through_runtime_aggregate(
+    session_factory: async_sessionmaker[AsyncSession],
+    case: str,
+    expected_error: str,
+    expected_agent_calls: int,
+) -> None:
+    async def scenario() -> None:
+        phase_trace: list[str] = []
+        execution_context = context()
+        if case == "acquisition":
+            provider = FakeProvider(MetricSeriesUnavailable(diagnostic="provider unavailable"))
+            result_builder = MetricResultBuilder(lambda: WINDOW_START + timedelta(minutes=5))
+        elif case == "malformed":
+            provider = FakeProvider(
+                MetricSeriesAvailable(
+                    source="prometheus",
+                    samples=(
+                        MetricSample(timestamp=WINDOW_START, value=10.0),
+                        MetricSample(timestamp=WINDOW_START, value=20.0),
+                    ),
+                )
+            )
+            result_builder = MetricResultBuilder(lambda: WINDOW_START + timedelta(minutes=5))
+        else:
+            provider = FakeProvider()
+            result_builder = FailingSufficientBuilder(lambda: WINDOW_START + timedelta(minutes=5))
+        agent = FakeAgent()
+        repository = RuntimePersistenceRepository()
+        pipeline = MetricAnalysisPipeline(
+            provider=provider,
+            agent=agent,
+            history_reader=repository,
+            repository=repository,
+            result_builder=result_builder,
+            record_phase=phase_trace.append,
+        )
+
+        async with session_factory() as session:
+            async with session.begin():
+                observation = ObservationModel(
+                    id=execution_context.identity.observation_id,
+                    name=f"Metric failed result {case} {uuid4()}",
+                    objective="Verify failed Metric persistence.",
+                    schema_version=1,
+                )
+                session.add(observation)
+                await session.flush()
+                observation_run = await repository.create_observation_run(
+                    session,
+                    ObservationRunInput(
+                        id=execution_context.identity.observation_run_id,
+                        observation_id=observation.id,
+                    ),
+                )
+                await repository.advance_observation_run(
+                    session, observation_run, ObservationRunStatus.RUNNING
+                )
+                lens_run = await repository.create_lens_run(
+                    session,
+                    observation_run,
+                    LensRunInput(
+                        id=execution_context.identity.lens_run_id,
+                        lens_id=execution_context.identity.lens_id,
+                        lens_type=LensType.METRIC,
+                    ),
+                )
+                await repository.advance_lens_run(session, lens_run, LensRunStatus.RUNNING)
+
+            analysis = await pipeline.analyze(execution_context)
+            assert analysis.failure is not None
+            phase_trace.append("caller_transaction_open")
+            async with session.begin():
+                await pipeline.persist_terminal(session, lens_run, analysis)
+            phase_trace.append("caller_commit")
+
+        async with session_factory() as session:
+            restored = await repository.get_observation_run(
+                session, execution_context.identity.observation_run_id
+            )
+            assert restored is not None
+            restored_lens_run = restored.lens_runs[0]
+            assert restored_lens_run.status == "failed"
+            assert restored_lens_run.reason == {"code": expected_error, "component": None}
+            assert restored_lens_run.analysis_result is not None
+            assert restored_lens_run.analysis_result.status == "failed"
+            assert restored_lens_run.analysis_result.payload == analysis.terminal_result.payload
+
+        assert len(agent.requests) == expected_agent_calls
+        expected_pre_transaction_phases = {
+            "acquisition": ["provider_acquisition"],
+            "malformed": ["provider_acquisition", "current_preparation"],
+            "mandatory": [
+                "provider_acquisition",
+                "current_preparation",
+                "mandatory_semanticization",
+                "agent_execution",
+            ],
+        }[case]
+        assert phase_trace == expected_pre_transaction_phases + [
+            "caller_transaction_open",
+            "lens_run_transition",
+            "artifact_insertion_flush",
+            "caller_commit",
+        ]
+
+    run(scenario())
+
+
+def test_reference_windows_and_comparison_relations_are_current_relative() -> None:
+    execution_context = context(reference_periods=("1h",))
+    reference_analysis_window = reference_window(execution_context.analysis_window, "1h")
+    assert reference_analysis_window.model_dump(by_alias=True) == {
+        "from": WINDOW_START - timedelta(hours=1),
+        "to": WINDOW_START + timedelta(seconds=180) - timedelta(hours=1),
+    }
+
+    current = prepare_series(good_available().samples, execution_context.analysis_window)
+    current_semantics = semanticize_mandatory(current, execution_context.analysis_window)
+    reference = prepare_series(
+        available_for_window(reference_analysis_window, (40.0, 30.0, 20.0)).samples,
+        reference_analysis_window,
+    )
+    reference_semantics = semanticize_mandatory(reference, reference_analysis_window)
+    comparison, evidence = compare_reference(
+        offset="1h",
+        window=reference_analysis_window,
+        current=current,
+        current_semantics=current_semantics,
+        reference=reference,
+        reference_semantics=reference_semantics,
+    )
+
+    assert comparison.model_dump(by_alias=True) == {
+        "offset": "1h",
+        "analysis_window": reference_analysis_window.model_dump(by_alias=True),
+        "level": {"relation": "lower"},
+        "trend": {
+            "direction": "decreasing",
+            "rate": "fast",
+            "direction_relation": "different",
+            "rate_relation": "same",
+        },
+        "variability": {"state": "moderate", "relation": "lower"},
+    }
+    assert evidence.offset == comparison.offset
+    assert evidence.analysis_window == comparison.analysis_window
+    assert evidence.relative_level_change == pytest.approx(-0.25)
+
+
+def test_extreme_finite_reference_means_do_not_create_a_false_partial_result() -> None:
+    execution_context = context(reference_periods=("1h",))
+    reference_analysis_window = reference_window(execution_context.analysis_window, "1h")
+    largest_finite = math.nextafter(math.inf, 0.0)
+    provider = SequencedProvider(
+        (
+            available_for_window(
+                execution_context.analysis_window,
+                (largest_finite, largest_finite, largest_finite),
+            ),
+            available_for_window(
+                reference_analysis_window,
+                (-largest_finite, -largest_finite, -largest_finite),
+            ),
+        )
+    )
+    repository = RecordingRepository([])
+    pipeline = MetricAnalysisPipeline(
+        provider=provider,
+        agent=FakeAgent(),
+        history_reader=FakeHistoryReader(),
+        repository=repository,
+        result_builder=MetricResultBuilder(lambda: WINDOW_START + timedelta(minutes=5)),
+    )
+
+    analysis = run(pipeline.analyze(execution_context))
+    lens_run = SimpleNamespace(status="running", reason=None)
+    artifact = run(pipeline.persist_terminal(object(), lens_run, analysis))
+
+    assert analysis.reference_diagnostics == ()
+    assert artifact.status == "completed"
+    assert lens_run.status == "completed"
+    assert lens_run.reason is None
+    reference_evidence = repository.persisted[0].payload["evidence"]["reference_periods"][0]
+    assert reference_evidence["relative_level_change"] == pytest.approx(2.0)
+
+
+@pytest.mark.parametrize(
+    ("reference_outcome", "category"),
+    [
+        (MetricSeriesUnavailable(diagnostic="upstream unavailable"), "acquisition"),
+        (
+            MetricSeriesAvailable(
+                source="prometheus",
+                samples=(
+                    MetricSample(timestamp=WINDOW_START - timedelta(hours=1), value=10.0),
+                    MetricSample(timestamp=WINDOW_START - timedelta(hours=1), value=20.0),
+                ),
+            ),
+            "malformed",
+        ),
+        (
+            MetricSeriesAvailable(
+                source="prometheus",
+                samples=(
+                    MetricSample(
+                        timestamp=WINDOW_START - timedelta(hours=1, seconds=1), value=10.0
+                    ),
+                    MetricSample(timestamp=WINDOW_START - timedelta(hours=1), value=20.0),
+                    MetricSample(
+                        timestamp=WINDOW_START - timedelta(hours=1) + timedelta(seconds=60),
+                        value=30.0,
+                    ),
+                ),
+            ),
+            "malformed",
+        ),
+        (None, "insufficient"),
+    ],
+)
+def test_each_unavailable_reference_yields_only_reference_partial(
+    reference_outcome, category: str
+) -> None:
+    execution_context = context(reference_periods=("1h",))
+    reference_analysis_window = reference_window(execution_context.analysis_window, "1h")
+    if reference_outcome is None:
+        reference_outcome = available_for_window(
+            reference_analysis_window, (float("nan"), 10.0, 20.0)
+        )
+    provider = SequencedProvider((good_available(), reference_outcome))
+    repository = RecordingRepository([])
+    pipeline = MetricAnalysisPipeline(
+        provider=provider,
+        agent=FakeAgent(),
+        history_reader=FakeHistoryReader(),
+        repository=repository,
+        result_builder=MetricResultBuilder(lambda: WINDOW_START + timedelta(minutes=5)),
+    )
+
+    analysis = run(pipeline.analyze(execution_context))
+    lens_run = SimpleNamespace(status="running", reason=None)
+    artifact = run(pipeline.persist_terminal(object(), lens_run, analysis))
+
+    assert [request[1] for request in provider.requests] == [
+        execution_context.analysis_window,
+        reference_analysis_window,
+    ]
+    assert analysis.reference_diagnostics == (
+        MetricReferenceUnavailable(
+            offset="1h", category=category, diagnostic=analysis.reference_diagnostics[0].diagnostic
+        ),
+    )
+    assert artifact.status == "partial"
+    assert lens_run.status == "partial"
+    assert lens_run.reason == {
+        "code": "reference_unavailable",
+        "component": "reference_periods",
+    }
+    payload = repository.persisted[0].payload
+    assert payload["reason"] == lens_run.reason
+    assert "reference_periods" not in payload
+    assert "reference_periods" not in payload["evidence"]
+
+
+def test_reference_successes_preserve_configured_order_around_a_failed_offset() -> None:
+    execution_context = context(reference_periods=("1h", "1d", "1w"))
+    first_window = reference_window(execution_context.analysis_window, "1h")
+    third_window = reference_window(execution_context.analysis_window, "1w")
+    provider = SequencedProvider(
+        (
+            good_available(),
+            available_for_window(first_window, (10.0, 20.0, 40.0)),
+            MetricSeriesAcquisitionTimeout(diagnostic="timeout"),
+            available_for_window(third_window, (40.0, 30.0, 20.0)),
+        )
+    )
+    phase_trace: list[str] = []
+    repository = RecordingRepository(phase_trace)
+    pipeline = MetricAnalysisPipeline(
+        provider=provider,
+        agent=FakeAgent(),
+        history_reader=FakeHistoryReader(),
+        repository=repository,
+        result_builder=MetricResultBuilder(lambda: WINDOW_START + timedelta(minutes=5)),
+        record_phase=phase_trace.append,
+    )
+
+    analysis = run(pipeline.analyze(execution_context))
+    lens_run = SimpleNamespace(status="running", reason=None)
+    run(pipeline.persist_terminal(object(), lens_run, analysis))
+
+    assert [window for _, window in provider.requests] == [
+        execution_context.analysis_window,
+        first_window,
+        reference_window(execution_context.analysis_window, "1d"),
+        third_window,
+    ]
+    assert [(item.offset, item.category) for item in analysis.reference_diagnostics] == [
+        ("1d", "acquisition")
+    ]
+    payload = repository.persisted[0].payload
+    assert [item["offset"] for item in payload["reference_periods"]] == ["1h", "1w"]
+    assert [item["offset"] for item in payload["evidence"]["reference_periods"]] == ["1h", "1w"]
+    assert payload["status"] == {"state": "partial"}
+    assert payload["reason"] == {"code": "reference_unavailable", "component": "reference_periods"}
+    assert (
+        phase_trace.index("mandatory_semanticization")
+        < phase_trace.index("reference_acquisition")
+        < phase_trace.index("agent_execution")
+        < phase_trace.index("reference_comparison")
+    )
+
+
+def test_reference_partial_round_trips_through_runtime_aggregate(
+    session_factory: async_sessionmaker[AsyncSession],
+) -> None:
+    async def scenario() -> None:
+        phase_trace: list[str] = []
+        execution_context = context(reference_periods=("1h", "1d"))
+        first_window = reference_window(execution_context.analysis_window, "1h")
+        provider = SequencedProvider(
+            (
+                good_available(),
+                available_for_window(first_window, (10.0, 20.0, 40.0)),
+                MetricSeriesUnavailable(diagnostic="reference unavailable"),
+            )
+        )
+        repository = RuntimePersistenceRepository()
+        pipeline = MetricAnalysisPipeline(
+            provider=provider,
+            agent=FakeAgent(),
+            history_reader=repository,
+            repository=repository,
+            result_builder=MetricResultBuilder(lambda: WINDOW_START + timedelta(minutes=5)),
+            record_phase=phase_trace.append,
+        )
+
+        async with session_factory() as session:
+            async with session.begin():
+                observation = ObservationModel(
+                    id=execution_context.identity.observation_id,
+                    name=f"Metric reference partial {uuid4()}",
+                    objective="Verify reference partial persistence.",
+                    schema_version=1,
+                )
+                session.add(observation)
+                await session.flush()
+                observation_run = await repository.create_observation_run(
+                    session,
+                    ObservationRunInput(
+                        id=execution_context.identity.observation_run_id,
+                        observation_id=observation.id,
+                    ),
+                )
+                await repository.advance_observation_run(
+                    session, observation_run, ObservationRunStatus.RUNNING
+                )
+                lens_run = await repository.create_lens_run(
+                    session,
+                    observation_run,
+                    LensRunInput(
+                        id=execution_context.identity.lens_run_id,
+                        lens_id=execution_context.identity.lens_id,
+                        lens_type=LensType.METRIC,
+                    ),
+                )
+                await repository.advance_lens_run(session, lens_run, LensRunStatus.RUNNING)
+
+            analysis = await pipeline.analyze(execution_context)
+            phase_trace.append("caller_transaction_open")
+            async with session.begin():
+                await pipeline.persist_terminal(session, lens_run, analysis)
+            phase_trace.append("caller_commit")
+
+        async with session_factory() as session:
+            restored = await repository.get_observation_run(
+                session, execution_context.identity.observation_run_id
+            )
+            assert restored is not None
+            restored_lens_run = restored.lens_runs[0]
+            assert restored_lens_run.status == "partial"
+            assert restored_lens_run.reason == {
+                "code": "reference_unavailable",
+                "component": "reference_periods",
+            }
+            assert restored_lens_run.analysis_result is not None
+            assert restored_lens_run.analysis_result.status == "partial"
+            assert restored_lens_run.analysis_result.payload == analysis.terminal_result.payload
+
+        assert phase_trace == [
+            "provider_acquisition",
+            "current_preparation",
+            "mandatory_semanticization",
+            "reference_acquisition",
+            "reference_preparation",
+            "reference_semanticization",
+            "reference_acquisition",
+            "agent_execution",
+            "reference_comparison",
+            "caller_transaction_open",
+            "history_read",
+            "lens_run_transition",
+            "artifact_insertion_flush",
+            "caller_commit",
+        ]
+
+    run(scenario())
+
+
+@pytest.mark.parametrize(
+    ("reference_unavailable", "history_failure", "expected_reason"),
+    [
+        (
+            True,
+            True,
+            {"code": "reference_unavailable", "component": "reference_periods"},
+        ),
+        (
+            True,
+            False,
+            {"code": "reference_unavailable", "component": "reference_periods"},
+        ),
+        (
+            False,
+            True,
+            {"code": "history_analysis_failed", "component": "history"},
+        ),
+    ],
+)
+def test_cross_cause_precedence_persists_one_public_reason_without_diagnostics(
+    session_factory: async_sessionmaker[AsyncSession],
+    monkeypatch,
+    reference_unavailable: bool,
+    history_failure: bool,
+    expected_reason: dict[str, str],
+) -> None:
+    """Reference, History, and optional failures retain only their primary public reason."""
+
+    async def scenario() -> None:
+        execution_context = context(reference_periods=("1h",) if reference_unavailable else ())
+        repository = RuntimePersistenceRepository()
+        if reference_unavailable:
+            provider = SequencedProvider(
+                (good_available(), MetricSeriesUnavailable(diagnostic="reference unavailable"))
+            )
+        else:
+            provider = FakeProvider()
+        history_reader = (
+            CandidateHistoryReader(
+                (
+                    MetricHistoryCandidate(
+                        lens_run_id=uuid4(),
+                        analysis_window=MetricAnalysisWindow(
+                            **{
+                                "from": WINDOW_START - timedelta(hours=1),
+                                "to": WINDOW_START - timedelta(minutes=30),
+                            }
+                        ),
+                        status="completed",
+                        data_quality="good",
+                        mean=10.0,
+                    ),
+                )
+            )
+            if history_failure
+            else FakeHistoryReader()
+        )
+        pipeline = MetricAnalysisPipeline(
+            provider=provider,
+            agent=FakeAgent(RuntimeError("agent transport detail")),
+            history_reader=history_reader,
+            repository=repository,
+            result_builder=MetricResultBuilder(lambda: WINDOW_START + timedelta(minutes=5)),
+        )
+
+        async with session_factory() as session:
+            async with session.begin():
+                observation = ObservationModel(
+                    id=execution_context.identity.observation_id,
+                    name=f"Metric cross-cause conformance {uuid4()}",
+                    objective="Verify Metric partial-reason precedence.",
+                    schema_version=1,
+                )
+                session.add(observation)
+                await session.flush()
+                observation_run = await repository.create_observation_run(
+                    session,
+                    ObservationRunInput(
+                        id=execution_context.identity.observation_run_id,
+                        observation_id=observation.id,
+                    ),
+                )
+                await repository.advance_observation_run(
+                    session, observation_run, ObservationRunStatus.RUNNING
+                )
+                lens_run = await repository.create_lens_run(
+                    session,
+                    observation_run,
+                    LensRunInput(
+                        id=execution_context.identity.lens_run_id,
+                        lens_id=execution_context.identity.lens_id,
+                        lens_type=LensType.METRIC,
+                    ),
+                )
+                await repository.advance_lens_run(session, lens_run, LensRunStatus.RUNNING)
+
+            analysis = await pipeline.analyze(execution_context)
+            assert analysis.optional_failure_component == "metrics_agent"
+            assert bool(analysis.reference_diagnostics) is reference_unavailable
+            async with session.begin():
+                persisted = await pipeline.persist_terminal(session, lens_run, analysis)
+            assert persisted.status == "partial"
+            assert persisted.payload["reason"] == expected_reason
+
+        async with session_factory() as session:
+            restored = await repository.get_observation_run(
+                session, execution_context.identity.observation_run_id
+            )
+            assert restored is not None
+            restored_lens_run = restored.lens_runs[0]
+            assert restored_lens_run.status == "partial"
+            assert restored_lens_run.reason == expected_reason
+            assert restored_lens_run.analysis_result is not None
+            payload = restored_lens_run.analysis_result.payload
+            assert payload == persisted.payload
+            assert payload["reason"] == expected_reason
+            assert "reference_diagnostics" not in payload
+            assert "tool_ledger" not in payload
+            assert "diagnostic" not in str(payload)
+
+    if history_failure:
+        import app.metrics.pipeline as pipeline_module
+
+        monkeypatch.setattr(
+            pipeline_module,
+            "analyze_history",
+            lambda *_: (_ for _ in ()).throw(RuntimeError("History computation detail")),
+        )
+    run(scenario())
+
+
+def test_optional_tool_partial_round_trips_through_runtime_aggregate(
+    session_factory: async_sessionmaker[AsyncSession], monkeypatch
+) -> None:
+    from app.metrics import tools as metric_tools
+
+    def fail_spike(prepared):
+        raise RuntimeError("tool backend unavailable")
+
+    monkeypatch.setattr(metric_tools, "analyze_spike", fail_spike)
+
+    async def scenario() -> None:
+        execution_context = context(reference_periods=("1h",))
+        repository = RuntimePersistenceRepository()
+        current_available = available_from_values((1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0))
+        reference_available = available_for_window(
+            reference_window(execution_context.analysis_window, "1h"),
+            (1.0, 2.0, 3.0),
+        )
+        history_candidate_id = uuid4()
+        history = CandidateHistoryReader(
+            (
+                MetricHistoryCandidate(
+                    lens_run_id=history_candidate_id,
+                    analysis_window=MetricAnalysisWindow(
+                        **{
+                            "from": WINDOW_START - timedelta(minutes=1),
+                            "to": WINDOW_START + timedelta(minutes=2),
+                        }
+                    ),
+                    status="completed",
+                    data_quality="good",
+                    mean=10.0,
+                ),
+            )
+        )
+        pipeline = MetricAnalysisPipeline(
+            provider=SequencedProvider((current_available, reference_available)),
+            agent=ToolCallingAgent(("spike", "stuck_signal")),
+            history_reader=history,
+            repository=repository,
+            result_builder=MetricResultBuilder(lambda: WINDOW_START + timedelta(minutes=5)),
+        )
+
+        async with session_factory() as session:
+            async with session.begin():
+                observation = ObservationModel(
+                    id=execution_context.identity.observation_id,
+                    name=f"Metric tool partial {uuid4()}",
+                    objective="Verify optional tool partial persistence.",
+                    schema_version=1,
+                )
+                session.add(observation)
+                await session.flush()
+                observation_run = await repository.create_observation_run(
+                    session,
+                    ObservationRunInput(
+                        id=execution_context.identity.observation_run_id,
+                        observation_id=observation.id,
+                    ),
+                )
+                await repository.advance_observation_run(
+                    session, observation_run, ObservationRunStatus.RUNNING
+                )
+                lens_run = await repository.create_lens_run(
+                    session,
+                    observation_run,
+                    LensRunInput(
+                        id=execution_context.identity.lens_run_id,
+                        lens_id=execution_context.identity.lens_id,
+                        lens_type=LensType.METRIC,
+                    ),
+                )
+                await repository.advance_lens_run(session, lens_run, LensRunStatus.RUNNING)
+
+            analysis = await pipeline.analyze(execution_context)
+            async with session.begin():
+                await pipeline.persist_terminal(session, lens_run, analysis)
+
+        async with session_factory() as session:
+            restored = await repository.get_observation_run(
+                session, execution_context.identity.observation_run_id
+            )
+            assert restored is not None
+            restored_lens_run = restored.lens_runs[0]
+            assert restored_lens_run.status == "partial"
+            assert restored_lens_run.reason == {
+                "code": "optional_analysis_failed",
+                "component": "spike",
+            }
+            assert restored_lens_run.analysis_result is not None
+            assert "tool_ledger" not in restored_lens_run.analysis_result.payload
+            assert analysis.terminal_result.payload["reference_periods"][0]["offset"] == "1h"
+            assert "history" not in analysis.terminal_result.payload
+            payload = restored_lens_run.analysis_result.payload
+            assert payload["reference_periods"][0]["offset"] == "1h"
+            assert payload["evidence"]["reference_periods"][0]["offset"] == "1h"
+            assert payload["history"]["run_ids"] == [str(history_candidate_id)]
+            assert payload["evidence"]["history"]["decreasing_transitions"] == 1
+
+    run(scenario())
+
+
+@pytest.mark.parametrize("rejection", ["duplicate", "unregistered", "parallel", "over_budget"])
+def test_protocol_rejection_partial_round_trips_through_runtime_aggregate(
+    session_factory: async_sessionmaker[AsyncSession], rejection: str
+) -> None:
+    async def scenario() -> None:
+        execution_context = context()
+        repository = RuntimePersistenceRepository()
+        if rejection == "duplicate":
+            agent = ToolCallingAgent(("spike", "spike"))
+        elif rejection == "unregistered":
+            agent = ToolCallingAgent(("spike", "drift"))
+        elif rejection == "parallel":
+            agent = ParallelToolCallingAgent()
+        else:
+            agent = ToolCallingAgent(("spike", "oscillation", "stuck_signal", "spike"))
+        pipeline = MetricAnalysisPipeline(
+            provider=FakeProvider(available_from_values((1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0))),
+            agent=agent,
+            history_reader=repository,
+            repository=repository,
+            result_builder=MetricResultBuilder(lambda: WINDOW_START + timedelta(minutes=5)),
+        )
+
+        async with session_factory() as session:
+            async with session.begin():
+                observation = ObservationModel(
+                    id=execution_context.identity.observation_id,
+                    name=f"Metric protocol rejection {uuid4()}",
+                    objective="Verify protocol rejection persistence.",
+                    schema_version=1,
+                )
+                session.add(observation)
+                await session.flush()
+                observation_run = await repository.create_observation_run(
+                    session,
+                    ObservationRunInput(
+                        id=execution_context.identity.observation_run_id,
+                        observation_id=observation.id,
+                    ),
+                )
+                await repository.advance_observation_run(
+                    session, observation_run, ObservationRunStatus.RUNNING
+                )
+                lens_run = await repository.create_lens_run(
+                    session,
+                    observation_run,
+                    LensRunInput(
+                        id=execution_context.identity.lens_run_id,
+                        lens_id=execution_context.identity.lens_id,
+                        lens_type=LensType.METRIC,
+                    ),
+                )
+                await repository.advance_lens_run(session, lens_run, LensRunStatus.RUNNING)
+
+            analysis = await pipeline.analyze(execution_context)
+            async with session.begin():
+                await pipeline.persist_terminal(session, lens_run, analysis)
+
+        async with session_factory() as session:
+            restored = await repository.get_observation_run(
+                session, execution_context.identity.observation_run_id
+            )
+            assert restored is not None
+            restored_lens_run = restored.lens_runs[0]
+            assert restored_lens_run.status == "partial"
+            assert restored_lens_run.reason == {
+                "code": "optional_analysis_failed",
+                "component": "metrics_agent",
+            }
+            assert restored_lens_run.analysis_result is not None
+            payload = restored_lens_run.analysis_result.payload
+            assert payload["reason"] == restored_lens_run.reason
+            assert "tool_ledger" not in payload
+            assert "dataset_ref" not in payload
+            assert "diagnostic" not in str(payload)
+
+        assert analysis.tool_ledger[-1].outcome.reason == rejection
+        assert analysis.tool_ledger[-1].executed is False
+        assert analysis.tool_ledger[-1].consumed_slot is (rejection != "over_budget")
+
+    run(scenario())
+
+
+def test_current_insufficiency_does_not_acquire_or_partial_configured_references() -> None:
+    execution_context = context(reference_periods=("1h", "1d"))
+    provider = SequencedProvider((available_from_values((float("nan"), 10.0, 20.0)),))
+    repository = RecordingRepository([])
+    pipeline = MetricAnalysisPipeline(
+        provider=provider,
+        agent=FakeAgent(),
+        history_reader=FakeHistoryReader(),
+        repository=repository,
+        result_builder=MetricResultBuilder(lambda: WINDOW_START + timedelta(minutes=5)),
+    )
+
+    analysis = run(pipeline.analyze(execution_context))
+    lens_run = SimpleNamespace(status="running", reason=None)
+    run(pipeline.persist_terminal(object(), lens_run, analysis))
+
+    assert [window for _, window in provider.requests] == [execution_context.analysis_window]
+    assert analysis.reference_diagnostics == ()
+    assert lens_run.status == "completed"
+    assert repository.persisted[0].payload["data_quality"] == "insufficient"
+    assert "reason" not in repository.persisted[0].payload
+
+
+@pytest.mark.parametrize("history_failure", [False, True])
+def test_fake_reader_history_outcomes_round_trip_through_runtime_aggregate(
+    session_factory: async_sessionmaker[AsyncSession],
+    history_failure: bool,
+    monkeypatch,
+) -> None:
+    async def scenario() -> None:
+        phase_trace: list[str] = []
+        execution_context = context()
+        candidate_id = uuid4()
+        history = CandidateHistoryReader(
+            (
+                MetricHistoryCandidate(
+                    lens_run_id=candidate_id,
+                    analysis_window=MetricAnalysisWindow(
+                        **{
+                            "from": WINDOW_START - timedelta(minutes=1),
+                            "to": WINDOW_START + timedelta(minutes=2),
+                        }
+                    ),
+                    status="completed",
+                    data_quality="good",
+                    mean=10.0,
+                ),
+            )
+        )
+        repository = RuntimePersistenceRepository()
+        pipeline = MetricAnalysisPipeline(
+            provider=FakeProvider(),
+            agent=FakeAgent(),
+            history_reader=history,
+            repository=repository,
+            result_builder=MetricResultBuilder(lambda: WINDOW_START + timedelta(minutes=5)),
+            record_phase=phase_trace.append,
+        )
+
+        async with session_factory() as session:
+            async with session.begin():
+                observation = ObservationModel(
+                    id=execution_context.identity.observation_id,
+                    name=f"Metric History result {uuid4()}",
+                    objective="Verify fake-reader Metric History persistence.",
+                    schema_version=1,
+                )
+                session.add(observation)
+                await session.flush()
+                observation_run = await repository.create_observation_run(
+                    session,
+                    ObservationRunInput(
+                        id=execution_context.identity.observation_run_id,
+                        observation_id=observation.id,
+                    ),
+                )
+                await repository.advance_observation_run(
+                    session, observation_run, ObservationRunStatus.RUNNING
+                )
+                lens_run = await repository.create_lens_run(
+                    session,
+                    observation_run,
+                    LensRunInput(
+                        id=execution_context.identity.lens_run_id,
+                        lens_id=execution_context.identity.lens_id,
+                        lens_type=LensType.METRIC,
+                    ),
+                )
+                await repository.advance_lens_run(session, lens_run, LensRunStatus.RUNNING)
+
+            analysis = await pipeline.analyze(execution_context)
+            phase_trace.append("caller_transaction_open")
+            async with session.begin():
+                await pipeline.persist_terminal(session, lens_run, analysis)
+            phase_trace.append("caller_commit")
+
+        async with session_factory() as session:
+            restored = await repository.get_observation_run(
+                session, execution_context.identity.observation_run_id
+            )
+            assert restored is not None
+            restored_lens_run = restored.lens_runs[0]
+            assert restored_lens_run.analysis_result is not None
+            payload = restored_lens_run.analysis_result.payload
+            if history_failure:
+                assert restored_lens_run.status == "partial"
+                assert restored_lens_run.reason == {
+                    "code": "history_analysis_failed",
+                    "component": "history",
+                }
+                assert "history" not in payload
+                assert "history" not in payload["evidence"]
+            else:
+                assert restored_lens_run.status == "completed"
+                assert payload["history"]["run_ids"] == [str(candidate_id)]
+                assert payload["evidence"]["history"]["increasing_transitions"] == 1
+        assert len(history.calls) == 1
+        assert phase_trace == [
+            "provider_acquisition",
+            "current_preparation",
+            "mandatory_semanticization",
+            "agent_execution",
+            "caller_transaction_open",
+            "history_read",
+            "lens_run_transition",
+            "artifact_insertion_flush",
+            "caller_commit",
+        ]
+
+    if history_failure:
+        import app.metrics.pipeline as pipeline_module
+
+        monkeypatch.setattr(
+            pipeline_module,
+            "analyze_history",
+            lambda *_: (_ for _ in ()).throw(RuntimeError("unexpected History failure")),
+        )
+    run(scenario())
+
+
+def test_postgresql_real_history_reader_precedes_history_partial_terminal_phase(
+    session_factory: async_sessionmaker[AsyncSession], monkeypatch
+) -> None:
+    """A real History load precedes the deterministic partial terminal outcome."""
+
+    async def create_running_lens_run(
+        session: AsyncSession,
+        execution_context: MetricLensExecutionContext,
+        repository: RuntimePersistenceRepository,
+    ):
+        observation_run = await repository.create_observation_run(
+            session,
+            ObservationRunInput(
+                id=execution_context.identity.observation_run_id,
+                observation_id=execution_context.identity.observation_id,
+            ),
+        )
+        await repository.advance_observation_run(
+            session, observation_run, ObservationRunStatus.RUNNING
+        )
+        lens_run = await repository.create_lens_run(
+            session,
+            observation_run,
+            LensRunInput(
+                id=execution_context.identity.lens_run_id,
+                lens_id=execution_context.identity.lens_id,
+                lens_type=LensType.METRIC,
+            ),
+        )
+        return await repository.advance_lens_run(session, lens_run, LensRunStatus.RUNNING)
+
+    async def scenario() -> None:
+        import app.metrics.pipeline as pipeline_module
+
+        phase_trace: list[str] = []
+        execution_context = context()
+        history_context = execution_context.model_copy(
+            update={
+                "identity": execution_context.identity.model_copy(
+                    update={"observation_run_id": uuid4(), "lens_run_id": uuid4()}
+                ),
+                "analysis_window": MetricAnalysisWindow(
+                    **{
+                        "from": WINDOW_START - timedelta(minutes=5),
+                        "to": WINDOW_START - timedelta(minutes=2),
+                    }
+                ),
+            }
+        )
+        repository = RuntimePersistenceRepository()
+        pipeline = MetricAnalysisPipeline(
+            provider=SequencedProvider(
+                (
+                    available_for_window(history_context.analysis_window, (10.0, 20.0, 40.0)),
+                    good_available(),
+                )
+            ),
+            agent=FakeAgent(),
+            history_reader=repository,
+            repository=repository,
+            result_builder=MetricResultBuilder(lambda: WINDOW_START + timedelta(minutes=5)),
+            record_phase=phase_trace.append,
+        )
+        loaded_history: list[MetricHistoryCandidates] = []
+
+        async with session_factory() as session:
+            async with session.begin():
+                session.add(
+                    ObservationModel(
+                        id=execution_context.identity.observation_id,
+                        name=f"Metric History partial trace {uuid4()}",
+                        objective="Verify real History loading before partial persistence.",
+                        schema_version=1,
+                    )
+                )
+                await session.flush()
+                historical_lens_run = await create_running_lens_run(
+                    session, history_context, repository
+                )
+
+            historical_analysis = await pipeline.analyze(history_context)
+            async with session.begin():
+                await pipeline.persist_terminal(session, historical_lens_run, historical_analysis)
+
+            async with session.begin():
+                lens_run = await create_running_lens_run(session, execution_context, repository)
+
+            original_load = repository.load
+
+            async def record_real_history_load(session, loaded_context):
+                history_read = await original_load(session, loaded_context)
+                assert isinstance(history_read, MetricHistoryCandidates)
+                loaded_history.append(history_read)
+                return history_read
+
+            monkeypatch.setattr(repository, "load", record_real_history_load)
+            monkeypatch.setattr(
+                pipeline_module,
+                "analyze_history",
+                lambda *_: (_ for _ in ()).throw(
+                    RuntimeError("forced History computation failure")
+                ),
+            )
+            phase_trace.clear()
+            analysis = await pipeline.analyze(execution_context)
+            phase_trace.append("caller_transaction_open")
+            async with session.begin():
+                await pipeline.persist_terminal(session, lens_run, analysis)
+            phase_trace.append("caller_commit")
+
+        async with session_factory() as session:
+            restored = await repository.get_observation_run(
+                session, execution_context.identity.observation_run_id
+            )
+            assert restored is not None
+            restored_lens_run = restored.lens_runs[0]
+            assert restored_lens_run.status == "partial"
+            assert restored_lens_run.reason == {
+                "code": "history_analysis_failed",
+                "component": "history",
+            }
+            assert restored_lens_run.analysis_result is not None
+            assert "history" not in restored_lens_run.analysis_result.payload
+
+        assert len(loaded_history) == 1
+        assert [candidate.lens_run_id for candidate in loaded_history[0].candidates] == [
+            history_context.identity.lens_run_id
+        ]
+        assert phase_trace == [
+            "provider_acquisition",
+            "current_preparation",
+            "mandatory_semanticization",
+            "agent_execution",
+            "caller_transaction_open",
+            "history_read",
+            "lens_run_transition",
+            "artifact_insertion_flush",
+            "caller_commit",
+        ]
+
+    run(scenario())
+
+
+def test_postgresql_history_reader_filters_orders_and_bounds_event_time_candidates(
+    session_factory: async_sessionmaker[AsyncSession],
+) -> None:
+    """The real reader applies fractional-second event time before bounded selection."""
+
+    async def persist_candidate(
+        session: AsyncSession,
+        repository: RuntimePersistenceRepository,
+        execution_context: MetricLensExecutionContext,
+        *,
+        lens_run_id,
+        window: MetricAnalysisWindow,
+        mean: float | None,
+        status: LensRunStatus,
+        data_quality: str | None,
+        observation_id: UUID | None = None,
+        lens_id: str | None = None,
+    ) -> None:
+        candidate_observation_id = observation_id or execution_context.identity.observation_id
+        candidate_lens_id = lens_id or execution_context.identity.lens_id
+        observation_run = await repository.create_observation_run(
+            session, ObservationRunInput(observation_id=candidate_observation_id)
+        )
+        await repository.advance_observation_run(
+            session, observation_run, ObservationRunStatus.RUNNING
+        )
+        lens_run = await repository.create_lens_run(
+            session,
+            observation_run,
+            LensRunInput(
+                id=lens_run_id,
+                lens_id=candidate_lens_id,
+                lens_type=LensType.METRIC,
+            ),
+        )
+        await repository.advance_lens_run(session, lens_run, LensRunStatus.RUNNING)
+        result_identity = LensResultIdentity.model_validate(
+            execution_context.identity.model_dump()
+            | {
+                "observation_id": candidate_observation_id,
+                "observation_run_id": observation_run.id,
+                "lens_id": candidate_lens_id,
+                "lens_run_id": lens_run_id,
+            }
+        )
+        reason = (
+            StructuredReason(code="history_analysis_failed", component="history")
+            if status is LensRunStatus.PARTIAL
+            else (
+                StructuredReason(code="current_metric_acquisition_failed")
+                if status is LensRunStatus.FAILED
+                else None
+            )
+        )
+        await repository.advance_lens_run(session, lens_run, status, reason=reason)
+        payload: dict[str, object] = {
+            "schema_version": "1.0",
+            "lens_type": "metric",
+            "identity": {
+                **result_identity.model_dump(mode="json", exclude_none=True),
+            },
+            "status": {"state": status.value},
+            "analysis_window": window.model_dump(mode="json", by_alias=True),
+            "provenance": {
+                "source": "prometheus",
+                "generated_at": "2026-08-27T12:05:00Z",
+            },
+        }
+        if status is LensRunStatus.FAILED:
+            payload["status"] = {
+                "state": "failed",
+                "error": {
+                    "code": "current_metric_acquisition_failed",
+                    "message": "Current metric data acquisition failed.",
+                },
+            }
+        elif data_quality == "insufficient":
+            payload["data_quality"] = "insufficient"
+        else:
+            assert mean is not None and data_quality is not None
+            payload |= {
+                "data_quality": data_quality,
+                "current_state": {
+                    "trend": {"direction": "stable", "rate": "not_classified"},
+                    "variability": {"state": "low"},
+                },
+                "evidence": {
+                    "current": {"mean": mean, "std": 0.0, "min": mean, "max": mean, "slope": 0.0}
+                },
+            }
+            if status is LensRunStatus.PARTIAL:
+                payload["reason"] = {"code": "history_analysis_failed", "component": "history"}
+        await repository.persist_lens_analysis_result(
+            session,
+            lens_run,
+            LensAnalysisResultInput(
+                result_type=LensType.METRIC,
+                status=status,
+                schema_version="1.0",
+                identity=result_identity,
+                provenance=payload["provenance"],
+                payload=payload,
+            ),
+        )
+
+    async def scenario() -> None:
+        execution_context = context().model_copy(
+            update={
+                "analysis_window": MetricAnalysisWindow(
+                    **{
+                        "from": WINDOW_START,
+                        "to": WINDOW_START + timedelta(minutes=3, microseconds=500_000),
+                    }
+                ),
+                "history_policy": MetricHistoryPolicy(lookback_runs=5),
+            }
+        )
+        repository = RuntimePersistenceRepository()
+        earliest = uuid4()
+        whole_second = uuid4()
+        fractional_second = uuid4()
+        tied_first = uuid4()
+        tied_second = uuid4()
+        same_end_later_start = uuid4()
+        equal_cutoff = uuid4()
+        after_cutoff = uuid4()
+        other_observation_id = uuid4()
+        async with session_factory() as session:
+            async with session.begin():
+                session.add(
+                    ObservationModel(
+                        id=execution_context.identity.observation_id,
+                        name=f"PostgreSQL Metric History {uuid4()}",
+                        objective="Verify History reader selection.",
+                        schema_version=1,
+                    )
+                )
+                session.add(
+                    ObservationModel(
+                        id=other_observation_id,
+                        name=f"Other PostgreSQL Metric History {uuid4()}",
+                        objective="Prove History aggregate scope filtering.",
+                        schema_version=1,
+                    )
+                )
+                await session.flush()
+                # Deliberately non-chronological persistence order. The cutoff mixes
+                # whole and fractional UTC seconds, while selected candidates cover
+                # event-end ordering and the required start/UUID tie-breaks.
+                for (
+                    lens_run_id,
+                    start,
+                    end,
+                    start_microseconds,
+                    end_microseconds,
+                    mean,
+                    status,
+                    quality,
+                ) in (
+                    (after_cutoff, -4, 3, 0, 600_000, 90.0, LensRunStatus.COMPLETED, "good"),
+                    (equal_cutoff, -4, 3, 0, 500_000, 80.0, LensRunStatus.COMPLETED, "good"),
+                    (
+                        same_end_later_start,
+                        -12,
+                        3,
+                        0,
+                        250_000,
+                        70.0,
+                        LensRunStatus.PARTIAL,
+                        "degraded",
+                    ),
+                    (tied_second, -13, 3, 0, 250_000, 60.0, LensRunStatus.COMPLETED, "good"),
+                    (tied_first, -13, 3, 0, 250_000, 50.0, LensRunStatus.COMPLETED, "good"),
+                    (fractional_second, -13, 3, 0, 100_000, 40.0, LensRunStatus.COMPLETED, "good"),
+                    (whole_second, -13, 3, 0, 0, 30.0, LensRunStatus.COMPLETED, "good"),
+                    (earliest, -20, -10, 0, 0, 10.0, LensRunStatus.COMPLETED, "good"),
+                    (uuid4(), -4, -2, 0, 0, None, LensRunStatus.COMPLETED, "insufficient"),
+                    (uuid4(), -4, -2, 0, 0, None, LensRunStatus.FAILED, None),
+                ):
+                    await persist_candidate(
+                        session,
+                        repository,
+                        execution_context,
+                        lens_run_id=lens_run_id,
+                        window=MetricAnalysisWindow(
+                            **{
+                                "from": execution_context.analysis_window.from_
+                                + timedelta(minutes=start, microseconds=start_microseconds),
+                                "to": execution_context.analysis_window.from_
+                                + timedelta(minutes=end, microseconds=end_microseconds),
+                            }
+                        ),
+                        mean=mean,
+                        status=status,
+                        data_quality=quality,
+                    )
+                # These are newer, eligible-looking artifacts, but they belong to
+                # different aggregates and must not enter this History projection.
+                await persist_candidate(
+                    session,
+                    repository,
+                    execution_context,
+                    lens_run_id=uuid4(),
+                    window=MetricAnalysisWindow(
+                        **{
+                            "from": execution_context.analysis_window.from_ - timedelta(minutes=3),
+                            "to": execution_context.analysis_window.from_ - timedelta(minutes=1),
+                        }
+                    ),
+                    mean=60.0,
+                    status=LensRunStatus.COMPLETED,
+                    data_quality="good",
+                    observation_id=other_observation_id,
+                )
+                await persist_candidate(
+                    session,
+                    repository,
+                    execution_context,
+                    lens_run_id=uuid4(),
+                    window=MetricAnalysisWindow(
+                        **{
+                            "from": execution_context.analysis_window.from_ - timedelta(minutes=3),
+                            "to": execution_context.analysis_window.from_ - timedelta(minutes=1),
+                        }
+                    ),
+                    mean=70.0,
+                    status=LensRunStatus.COMPLETED,
+                    data_quality="good",
+                    lens_id="different-metric-lens",
+                )
+
+            async with session.begin():
+                history = await repository.load(session, execution_context)
+
+        assert isinstance(history, MetricHistoryCandidates)
+        expected_tied = sorted((tied_first, tied_second), key=str)
+        candidate_ids = [candidate.lens_run_id for candidate in history.candidates]
+        assert candidate_ids == [
+            whole_second,
+            fractional_second,
+            *expected_tied,
+            same_end_later_start,
+        ]
+        assert [candidate.mean for candidate in history.candidates] == [
+            30.0,
+            40.0,
+            50.0 if expected_tied[0] == tied_first else 60.0,
+            60.0 if expected_tied[1] == tied_second else 50.0,
+            70.0,
+        ]
+        assert equal_cutoff not in candidate_ids
+        assert after_cutoff not in candidate_ids
+
+    run(scenario())
+
+
+def test_postgresql_history_reader_failure_propagates_without_terminal_artifact(
+    session_factory: async_sessionmaker[AsyncSession], monkeypatch
+) -> None:
+    """A real session History-query error aborts before any terminal write."""
+
+    async def scenario() -> None:
+        phase_trace: list[str] = []
+        execution_context = context()
+        repository = RuntimePersistenceRepository()
+        pipeline = MetricAnalysisPipeline(
+            provider=FakeProvider(),
+            agent=FakeAgent(),
+            history_reader=repository,
+            repository=repository,
+            result_builder=MetricResultBuilder(lambda: WINDOW_START + timedelta(minutes=5)),
+            record_phase=phase_trace.append,
+        )
+
+        async with session_factory() as session:
+            async with session.begin():
+                observation = ObservationModel(
+                    id=execution_context.identity.observation_id,
+                    name=f"Metric History query failure {uuid4()}",
+                    objective="Verify History infrastructure failure propagation.",
+                    schema_version=1,
+                )
+                session.add(observation)
+                await session.flush()
+                observation_run = await repository.create_observation_run(
+                    session,
+                    ObservationRunInput(
+                        id=execution_context.identity.observation_run_id,
+                        observation_id=observation.id,
+                    ),
+                )
+                await repository.advance_observation_run(
+                    session, observation_run, ObservationRunStatus.RUNNING
+                )
+                lens_run = await repository.create_lens_run(
+                    session,
+                    observation_run,
+                    LensRunInput(
+                        id=execution_context.identity.lens_run_id,
+                        lens_id=execution_context.identity.lens_id,
+                        lens_type=LensType.METRIC,
+                    ),
+                )
+                await repository.advance_lens_run(session, lens_run, LensRunStatus.RUNNING)
+
+            analysis = await pipeline.analyze(execution_context)
+
+            async def fail_history_query(*_args, **_kwargs) -> None:
+                raise RuntimeError("forced History query failure")
+
+            monkeypatch.setattr(session, "execute", fail_history_query)
+            phase_trace.append("caller_transaction_open")
+            with pytest.raises(RuntimeError, match="forced History query failure"):
+                async with session.begin():
+                    await pipeline.persist_terminal(session, lens_run, analysis)
+            phase_trace.append("caller_rollback")
+
+        async with session_factory() as session:
+            restored = await repository.get_observation_run(
+                session, execution_context.identity.observation_run_id
+            )
+            assert restored is not None
+            restored_lens_run = restored.lens_runs[0]
+            assert restored_lens_run.status == "running"
+            assert restored_lens_run.analysis_result is None
+
+        assert phase_trace == [
+            "provider_acquisition",
+            "current_preparation",
+            "mandatory_semanticization",
+            "agent_execution",
+            "caller_transaction_open",
+            "history_read",
+            "caller_rollback",
+        ]
+
+    run(scenario())
+
+
+@pytest.mark.parametrize("failure_stage", ["flush", "commit"])
+def test_postgresql_terminal_persistence_failures_rollback_lens_run_and_artifact(
+    session_factory: async_sessionmaker[AsyncSession],
+    failure_stage: str,
+    monkeypatch,
+) -> None:
+    """Caller-owned transaction failures leave no terminal state or Metric artifact."""
+
+    async def scenario() -> None:
+        execution_context = context()
+        repository = RuntimePersistenceRepository()
+        phase_trace: list[str] = []
+        pipeline = MetricAnalysisPipeline(
+            provider=FakeProvider(),
+            agent=FakeAgent(),
+            history_reader=repository,
+            repository=repository,
+            result_builder=MetricResultBuilder(lambda: WINDOW_START + timedelta(minutes=5)),
+            record_phase=phase_trace.append,
+        )
+        async with session_factory() as session:
+            async with session.begin():
+                session.add(
+                    ObservationModel(
+                        id=execution_context.identity.observation_id,
+                        name=f"Metric persistence rollback {uuid4()}",
+                        objective="Verify terminal persistence rollback.",
+                        schema_version=1,
+                    )
+                )
+                await session.flush()
+                observation_run = await repository.create_observation_run(
+                    session,
+                    ObservationRunInput(
+                        id=execution_context.identity.observation_run_id,
+                        observation_id=execution_context.identity.observation_id,
+                    ),
+                )
+                await repository.advance_observation_run(
+                    session, observation_run, ObservationRunStatus.RUNNING
+                )
+                lens_run = await repository.create_lens_run(
+                    session,
+                    observation_run,
+                    LensRunInput(
+                        id=execution_context.identity.lens_run_id,
+                        lens_id=execution_context.identity.lens_id,
+                        lens_type=LensType.METRIC,
+                    ),
+                )
+                await repository.advance_lens_run(session, lens_run, LensRunStatus.RUNNING)
+
+            analysis = await pipeline.analyze(execution_context)
+            if failure_stage == "flush":
+                original_flush = session.flush
+                flush_count = 0
+
+                async def fail_artifact_flush(*args, **kwargs):
+                    nonlocal flush_count
+                    flush_count += 1
+                    if flush_count == 2:
+                        raise RuntimeError("forced artifact flush failure")
+                    return await original_flush(*args, **kwargs)
+
+                monkeypatch.setattr(session, "flush", fail_artifact_flush)
+            else:
+                from sqlalchemy import event
+
+                def fail_commit(_session) -> None:
+                    raise RuntimeError("forced transaction commit failure")
+
+                event.listen(session.sync_session, "before_commit", fail_commit)
+
+            phase_trace.append("caller_transaction_open")
+            with pytest.raises(RuntimeError, match="forced .* failure"):
+                async with session.begin():
+                    await pipeline.persist_terminal(session, lens_run, analysis)
+            phase_trace.append("caller_rollback")
+            if failure_stage == "commit":
+                event.remove(session.sync_session, "before_commit", fail_commit)
+
+        async with session_factory() as session:
+            restored = await repository.get_observation_run(
+                session, execution_context.identity.observation_run_id
+            )
+            assert restored is not None
+            assert restored.lens_runs[0].status == "running"
+            assert restored.lens_runs[0].analysis_result is None
+
+        assert phase_trace == [
+            "provider_acquisition",
+            "current_preparation",
+            "mandatory_semanticization",
+            "agent_execution",
+            "caller_transaction_open",
+            "history_read",
+            "lens_run_transition",
+            "artifact_insertion_flush",
+            "caller_rollback",
+        ]
+
+    run(scenario())

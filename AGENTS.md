@@ -111,6 +111,24 @@ Do not begin production implementation before explicit approval.
 
 After approval, scope and behavioral semantics are frozen for that implementation pass. You may update task completion state and make implementation-level choices that stay inside the approved scope. If the implementation reveals that scope, behavior, specs, or design must materially change, stop, explain why, and wait for approval before changing the OpenSpec planning artifacts.
 
+### Autonomous execution continuity
+
+When the user instructs an agent to autonomously execute an approved implementation
+plan until completion or an escalation condition:
+
+- Do not return a final response while a delegated implementer, reviewer, verifier,
+  or correction task for that execution is active or awaits Coordinator disposition.
+- A progress or status update is not a terminal response; send it through the
+  commentary channel and continue coordination.
+- Before returning a final response, reconstruct execution state from the
+  implementation-plan execution table, Git status and recent commits, required
+  handoffs, and the status of any delegated agents.
+- Return a final response only after every plan slice and required final
+  verification/review step is accepted, or after a documented Coordinator
+  stop/escalation condition is reached.
+- When ending short of completion, record the exact stop/escalation reason in the
+  mutable execution metadata of the implementation plan before responding.
+
 ### Archive convention
 
 For this repository, archive the completed OpenSpec change inside its feature branch before opening or merging the pull request:

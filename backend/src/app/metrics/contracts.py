@@ -1,0 +1,775 @@
+"""Strict, framework-neutral contracts used by the first Metric pipeline slice."""
+
+from __future__ import annotations
+
+import math
+import re
+from datetime import UTC, datetime
+from typing import Annotated, Literal
+from uuid import UUID
+
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
+
+
+class StrictMetricModel(BaseModel):
+    model_config = ConfigDict(extra="forbid", frozen=True, strict=True)
+
+
+def _utc_datetime(value: datetime) -> datetime:
+    if value.tzinfo is None or value.utcoffset() is None:
+        raise ValueError("datetime must be timezone-aware")
+    return value.astimezone(UTC)
+
+
+FiniteFloat = Annotated[float, Field(allow_inf_nan=False)]
+_OFFSET_PATTERN = re.compile(r"^[1-9][0-9]*(m|h|d|w)$")
+
+
+class MetricIdentity(StrictMetricModel):
+    observation_id: UUID
+    observation_run_id: UUID
+    lens_id: str = Field(min_length=1)
+    lens_run_id: UUID
+    metric_ref: str = Field(min_length=1)
+    unit: str = Field(min_length=1)
+
+
+class MetricAnalysisWindow(StrictMetricModel):
+    from_: datetime = Field(alias="from")
+    to: datetime
+
+    @field_validator("from_", "to")
+    @classmethod
+    def normalize_utc(cls, value: datetime) -> datetime:
+        return _utc_datetime(value)
+
+    @model_validator(mode="after")
+    def ensure_forward_window(self) -> MetricAnalysisWindow:
+        if self.from_ >= self.to:
+            raise ValueError("analysis_window.from must be before analysis_window.to")
+        return self
+
+
+class MetricProviderScope(StrictMetricModel):
+    adapter_type: Literal["prometheus"]
+    source_id: str = Field(min_length=1)
+    query: str = Field(min_length=1)
+
+
+class MetricHistoryPolicy(StrictMetricModel):
+    lookback_runs: int = Field(default=5, gt=0)
+    level_change_tolerance: FiniteFloat = Field(default=0.05, ge=0)
+
+
+class MetricLensExecutionContext(StrictMetricModel):
+    """One already-resolved immutable Metric Lens execution scope."""
+
+    identity: MetricIdentity
+    provider_scope: MetricProviderScope
+    analysis_window: MetricAnalysisWindow
+    analysis_objectives: tuple[str, ...]
+    reference_periods: tuple[str, ...]
+    history_policy: MetricHistoryPolicy = Field(default_factory=MetricHistoryPolicy)
+
+    @field_validator("reference_periods")
+    @classmethod
+    def validate_reference_periods(cls, values: tuple[str, ...]) -> tuple[str, ...]:
+        if len(values) != len(set(values)):
+            raise ValueError("reference_periods must not contain duplicates")
+        if any(_OFFSET_PATTERN.fullmatch(offset) is None for offset in values):
+            raise ValueError("reference_periods must use positive m, h, d, or w offsets")
+        return values
+
+
+class MetricSample(StrictMetricModel):
+    timestamp: datetime
+    # Acquisition data deliberately admits non-finite values.  Preparation owns
+    # their deterministic removal; no public Metric evidence can contain them.
+    value: float
+
+    @field_validator("timestamp")
+    @classmethod
+    def normalize_utc(cls, value: datetime) -> datetime:
+        return _utc_datetime(value)
+
+
+class MetricSeriesAvailable(StrictMetricModel):
+    samples: tuple[MetricSample, ...]
+    source: Literal["prometheus"]
+
+
+class MetricSeriesUnavailable(StrictMetricModel):
+    """A provider port could not make the requested series available."""
+
+    state: Literal["unavailable"] = "unavailable"
+    diagnostic: str = Field(min_length=1, max_length=512)
+
+
+class MetricSeriesAcquisitionFailure(StrictMetricModel):
+    """A provider port failed while acquiring the requested series."""
+
+    state: Literal["failure"] = "failure"
+    diagnostic: str = Field(min_length=1, max_length=512)
+
+
+class MetricSeriesAcquisitionTimeout(StrictMetricModel):
+    """A provider port timed out while acquiring the requested series."""
+
+    state: Literal["timeout"] = "timeout"
+    diagnostic: str = Field(min_length=1, max_length=512)
+
+
+MetricSeriesAcquisitionOutcome = (
+    MetricSeriesAvailable
+    | MetricSeriesUnavailable
+    | MetricSeriesAcquisitionFailure
+    | MetricSeriesAcquisitionTimeout
+)
+
+
+class MetricCurrentSeriesMalformed(StrictMetricModel):
+    """Current series validation rejected duplicate or out-of-window samples."""
+
+    category: Literal["series_malformed"] = "series_malformed"
+    diagnostic: str = Field(min_length=1, max_length=512)
+
+
+class MetricMandatoryAnalysisFailure(StrictMetricModel):
+    """An unexpected mandatory calculation, semantic, or result-build failure."""
+
+    category: Literal["mandatory_analysis"] = "mandatory_analysis"
+    diagnostic: str = Field(min_length=1, max_length=512)
+
+
+class MetricCurrentAcquisitionFailed(StrictMetricModel):
+    """A current provider outcome could not produce usable data."""
+
+    category: Literal["acquisition"] = "acquisition"
+    diagnostic: str = Field(min_length=1, max_length=512)
+
+
+MetricCurrentFailure = (
+    MetricCurrentAcquisitionFailed | MetricCurrentSeriesMalformed | MetricMandatoryAnalysisFailure
+)
+
+
+class MetricEvidence(StrictMetricModel):
+    mean: FiniteFloat
+    std: FiniteFloat = Field(ge=0)
+    min: FiniteFloat
+    max: FiniteFloat
+    slope: FiniteFloat
+
+
+class MetricTrend(StrictMetricModel):
+    direction: Literal["increasing", "decreasing", "stable"]
+    rate: Literal["slow", "moderate", "fast", "not_classified"]
+
+    @model_validator(mode="after")
+    def correlate_direction_and_rate(self) -> MetricTrend:
+        stable = self.direction == "stable"
+        if stable != (self.rate == "not_classified"):
+            raise ValueError("stable trend must use not_classified rate")
+        return self
+
+
+class MetricVariability(StrictMetricModel):
+    state: Literal["low", "moderate", "high"]
+
+
+class MetricSemantics(StrictMetricModel):
+    trend: MetricTrend
+    variability: MetricVariability
+
+
+class PreparedGoodSeries(StrictMetricModel):
+    data_quality: Literal["good"]
+    samples: tuple[MetricSample, ...]
+    evidence: MetricEvidence
+    residuals: tuple[FiniteFloat, ...]
+
+
+class PreparedDegradedSeries(StrictMetricModel):
+    data_quality: Literal["degraded"]
+    samples: tuple[MetricSample, ...]
+    evidence: MetricEvidence
+    residuals: tuple[FiniteFloat, ...]
+
+
+class PreparedInsufficientSeries(StrictMetricModel):
+    """A successful quality determination with no mandatory analytical core."""
+
+    data_quality: Literal["insufficient"]
+    samples: tuple[MetricSample, ...]
+
+
+PreparedUsableSeries = PreparedGoodSeries | PreparedDegradedSeries
+PreparedSeries = PreparedUsableSeries | PreparedInsufficientSeries
+
+
+class SpikeToolDescriptor(StrictMetricModel):
+    name: Literal["spike"] = "spike"
+    capability: Literal["isolated_extreme_detection"] = "isolated_extreme_detection"
+    minimum_samples: Literal[5] = 5
+
+
+class OscillationToolDescriptor(StrictMetricModel):
+    name: Literal["oscillation"] = "oscillation"
+    capability: Literal["detrended_residual_alternation"] = "detrended_residual_alternation"
+    minimum_samples: Literal[8] = 8
+
+
+class StuckSignalToolDescriptor(StrictMetricModel):
+    name: Literal["stuck_signal"] = "stuck_signal"
+    capability: Literal["exact_repeated_value_run_detection"] = "exact_repeated_value_run_detection"
+    minimum_samples: Literal[5] = 5
+
+
+MetricToolDescriptors = tuple[
+    SpikeToolDescriptor,
+    OscillationToolDescriptor,
+    StuckSignalToolDescriptor,
+]
+FIXED_ALLOWED_TOOLS: MetricToolDescriptors = (
+    SpikeToolDescriptor(),
+    OscillationToolDescriptor(),
+    StuckSignalToolDescriptor(),
+)
+
+
+class MetricAgentUsableRequest(StrictMetricModel):
+    identity: MetricIdentity
+    analysis_window: MetricAnalysisWindow
+    analysis_objectives: tuple[str, ...]
+    data_quality: Literal["good", "degraded"]
+    evidence: MetricEvidence
+    semantics: MetricSemantics
+    allowed_tools: MetricToolDescriptors
+    dataset_ref: str = Field(min_length=1)
+
+    @field_validator("allowed_tools")
+    @classmethod
+    def require_fixed_descriptors(cls, value: MetricToolDescriptors) -> MetricToolDescriptors:
+        if value != FIXED_ALLOWED_TOOLS:
+            raise ValueError("allowed_tools must be the fixed ordered Metric registry")
+        return value
+
+
+class MetricAgentInsufficientRequest(StrictMetricModel):
+    identity: MetricIdentity
+    analysis_window: MetricAnalysisWindow
+    data_quality: Literal["insufficient"]
+
+
+class MetricAgentCompletion(StrictMetricModel):
+    state: Literal["completed"] = "completed"
+
+
+class MetricAgentOperationalFailure(StrictMetricModel):
+    """Transient insufficient-agent failure; it never becomes public result data."""
+
+    state: Literal["operational_failure"] = "operational_failure"
+
+
+MetricAgentRequest = MetricAgentUsableRequest | MetricAgentInsufficientRequest
+MetricAgentOutcome = MetricAgentCompletion | MetricAgentOperationalFailure
+
+
+MetricToolName = Literal["spike", "oscillation", "stuck_signal"]
+MetricToolRejectionReason = Literal["duplicate", "unregistered", "parallel", "over_budget"]
+
+
+class MetricOptionalProperty(StrictMetricModel):
+    state: Literal["present", "absent", "unknown"]
+
+
+class SpikeModifiedZEvidence(StrictMetricModel):
+    method: Literal["modified_z"] = "modified_z"
+    detected_sample_count: int = Field(ge=0)
+    detected_timestamps: tuple[datetime, ...]
+    max_abs_modified_z: FiniteFloat = Field(ge=0)
+
+    @field_validator("detected_timestamps")
+    @classmethod
+    def normalize_timestamps(cls, values: tuple[datetime, ...]) -> tuple[datetime, ...]:
+        return tuple(_utc_datetime(value) for value in values)
+
+    @model_validator(mode="after")
+    def require_matching_count(self) -> SpikeModifiedZEvidence:
+        if self.detected_sample_count != len(self.detected_timestamps):
+            raise ValueError("spike detected count must match timestamps")
+        return self
+
+
+class SpikeZeroMadEvidence(StrictMetricModel):
+    method: Literal["mad_zero_exact_deviation"] = "mad_zero_exact_deviation"
+    deviation_count: int = Field(ge=0)
+    detected_sample_count: int = Field(ge=0)
+    detected_timestamps: tuple[datetime, ...]
+
+    @field_validator("detected_timestamps")
+    @classmethod
+    def normalize_timestamps(cls, values: tuple[datetime, ...]) -> tuple[datetime, ...]:
+        return tuple(_utc_datetime(value) for value in values)
+
+    @model_validator(mode="after")
+    def require_matching_count(self) -> SpikeZeroMadEvidence:
+        if self.detected_sample_count != len(self.detected_timestamps):
+            raise ValueError("spike detected count must match timestamps")
+        return self
+
+
+class OscillationEvidence(StrictMetricModel):
+    deadband: FiniteFloat = Field(ge=0)
+    significant_residual_count: int = Field(ge=0)
+    sign_change_count: int = Field(ge=0)
+    sign_change_ratio: FiniteFloat = Field(ge=0, le=1)
+
+
+class StuckSignalEvidence(StrictMetricModel):
+    repeated_value: FiniteFloat
+    longest_run_sample_count: int = Field(gt=0)
+    longest_run_share: FiniteFloat = Field(gt=0, le=1)
+
+
+MetricToolEvidence = (
+    SpikeModifiedZEvidence | SpikeZeroMadEvidence | OscillationEvidence | StuckSignalEvidence
+)
+
+
+class SpikeToolSuccess(StrictMetricModel):
+    name: Literal["spike"] = "spike"
+    state: Literal["present", "absent", "unknown"]
+    evidence: SpikeModifiedZEvidence | SpikeZeroMadEvidence
+
+
+class OscillationToolSuccess(StrictMetricModel):
+    name: Literal["oscillation"] = "oscillation"
+    state: Literal["present", "absent", "unknown"]
+    evidence: OscillationEvidence
+
+
+class StuckSignalToolSuccess(StrictMetricModel):
+    name: Literal["stuck_signal"] = "stuck_signal"
+    state: Literal["present", "absent"]
+    evidence: StuckSignalEvidence
+
+
+MetricToolSuccess = SpikeToolSuccess | OscillationToolSuccess | StuckSignalToolSuccess
+
+
+class MetricToolNotApplicable(StrictMetricModel):
+    name: MetricToolName
+    outcome: Literal["not_applicable"] = "not_applicable"
+
+
+class MetricToolFailed(StrictMetricModel):
+    name: MetricToolName
+    outcome: Literal["failed"] = "failed"
+    diagnostic: str = Field(min_length=1, max_length=512)
+
+
+class MetricToolTimedOut(StrictMetricModel):
+    name: MetricToolName
+    outcome: Literal["timeout"] = "timeout"
+    diagnostic: str = Field(min_length=1, max_length=512)
+
+
+class MetricToolRejected(StrictMetricModel):
+    """An application-owned request rejection before deterministic evaluation."""
+
+    outcome: Literal["rejected"] = "rejected"
+    reason: MetricToolRejectionReason
+
+
+MetricToolExecutionOutcome = (
+    MetricToolSuccess | MetricToolNotApplicable | MetricToolFailed | MetricToolTimedOut
+)
+
+MetricToolOutcome = MetricToolExecutionOutcome | MetricToolRejected
+
+
+class MetricToolAttempt(StrictMetricModel):
+    ordinal: int = Field(gt=0)
+    requested_name: str = Field(min_length=1)
+    outcome: MetricToolOutcome
+    executed: bool
+    consumed_slot: bool
+
+    @model_validator(mode="after")
+    def require_correlated_outcome(self) -> MetricToolAttempt:
+        if isinstance(self.outcome, MetricToolRejected):
+            if self.executed:
+                raise ValueError("rejected tool attempts must not execute")
+            if self.consumed_slot != (self.outcome.reason != "over_budget"):
+                raise ValueError("rejection slot consumption must match its reason")
+            return self
+        if self.requested_name != self.outcome.name:
+            raise ValueError("tool attempt name must match outcome name")
+        if not self.executed:
+            raise ValueError("registered deterministic tool attempts must execute")
+        if not self.consumed_slot:
+            raise ValueError("executed tool attempts must consume a slot")
+        return self
+
+
+class MetricAgentProtocolFailure(StrictMetricModel):
+    """Transient signal that an agent-bound request violated the request policy."""
+
+    state: Literal["protocol_failure"] = "protocol_failure"
+
+
+class MetricOptionalProjections(StrictMetricModel):
+    spike: SpikeToolSuccess | None = None
+    oscillation: OscillationToolSuccess | None = None
+    stuck_signal: StuckSignalToolSuccess | None = None
+
+
+class MetricHistoryEmpty(StrictMetricModel):
+    """Successful History read with no eligible prior Metric results."""
+
+    state: Literal["empty"] = "empty"
+
+
+class MetricHistoryCandidate(StrictMetricModel):
+    """A minimal, framework-neutral projection of one persisted Metric result."""
+
+    lens_run_id: UUID
+    analysis_window: MetricAnalysisWindow
+    status: Literal["completed", "partial", "failed"]
+    data_quality: Literal["good", "degraded", "insufficient"] | None = None
+    mean: FiniteFloat | None = None
+
+    @model_validator(mode="after")
+    def validate_result_projection(self) -> MetricHistoryCandidate:
+        if self.status in {"completed", "partial"} and self.data_quality in {
+            "good",
+            "degraded",
+        }:
+            if self.mean is None:
+                raise ValueError("usable completed or partial candidates require a mean")
+            return self
+        if self.status == "completed" and self.data_quality == "insufficient":
+            if self.mean is not None:
+                raise ValueError("completed insufficient candidates must not carry a mean")
+            return self
+        if self.status == "failed" and self.data_quality is None:
+            if self.mean is not None:
+                raise ValueError("failed candidates must not carry a mean")
+            return self
+        raise ValueError(
+            "History candidates must match a completed, partial, or failed Metric result variant"
+        )
+
+
+class MetricHistoryCandidates(StrictMetricModel):
+    """Successful History read; individual projections remain domain-validated."""
+
+    state: Literal["candidates"] = "candidates"
+    candidates: tuple[MetricHistoryCandidate, ...] = Field(min_length=1)
+
+
+MetricHistoryRead = MetricHistoryEmpty | MetricHistoryCandidates
+
+
+class MetricCurrentState(StrictMetricModel):
+    trend: MetricTrend
+    variability: MetricVariability
+    spike: MetricOptionalProperty | None = None
+    oscillation: MetricOptionalProperty | None = None
+    stuck_signal: MetricOptionalProperty | None = None
+
+
+class MetricResultProvenance(StrictMetricModel):
+    source: Literal["prometheus"]
+    generated_at: datetime
+
+    @field_validator("generated_at")
+    @classmethod
+    def normalize_utc(cls, value: datetime) -> datetime:
+        return _utc_datetime(value)
+
+
+class MetricCompletedStatus(StrictMetricModel):
+    state: Literal["completed"] = "completed"
+
+
+class CurrentMetricAcquisitionFailedError(StrictMetricModel):
+    code: Literal["current_metric_acquisition_failed"] = "current_metric_acquisition_failed"
+    message: Literal["Current metric data acquisition failed."] = (
+        "Current metric data acquisition failed."
+    )
+
+
+class CurrentMetricSeriesMalformedError(StrictMetricModel):
+    code: Literal["current_metric_series_malformed"] = "current_metric_series_malformed"
+    message: Literal["Current metric series is malformed."] = "Current metric series is malformed."
+
+
+class MandatoryMetricAnalysisFailedError(StrictMetricModel):
+    code: Literal["mandatory_metric_analysis_failed"] = "mandatory_metric_analysis_failed"
+    message: Literal["Mandatory metric analysis failed."] = "Mandatory metric analysis failed."
+
+
+MetricFailedError = (
+    CurrentMetricAcquisitionFailedError
+    | CurrentMetricSeriesMalformedError
+    | MandatoryMetricAnalysisFailedError
+)
+
+
+class MetricFailedStatus(StrictMetricModel):
+    state: Literal["failed"] = "failed"
+    error: Annotated[MetricFailedError, Field(discriminator="code")]
+
+
+class MetricCurrentEvidence(StrictMetricModel):
+    mean: FiniteFloat
+    std: FiniteFloat = Field(ge=0)
+    min: FiniteFloat
+    max: FiniteFloat
+    slope: FiniteFloat
+    spike: SpikeModifiedZEvidence | SpikeZeroMadEvidence | None = None
+    oscillation: OscillationEvidence | None = None
+    stuck_signal: StuckSignalEvidence | None = None
+
+
+class MetricHistory(StrictMetricModel):
+    direction: Literal["increasing", "decreasing", "stable", "mixed", "unknown"]
+    pattern: Literal["sustained", "reversing", "oscillating", "mixed", "unknown"]
+    run_ids: tuple[UUID, ...] = Field(min_length=1)
+
+
+class MetricHistoryEvidence(StrictMetricModel):
+    level_change_tolerance: FiniteFloat = Field(ge=0)
+    classifiable_transitions: int = Field(ge=0)
+    unknown_transitions: int = Field(ge=0)
+    increasing_transitions: int = Field(ge=0)
+    decreasing_transitions: int = Field(ge=0)
+    stable_transitions: int = Field(ge=0)
+    direction_changes: int = Field(ge=0)
+
+
+class MetricEvidenceSection(StrictMetricModel):
+    current: MetricCurrentEvidence
+    reference_periods: tuple[MetricReferenceEvidence, ...] | None = Field(
+        default=None, min_length=1
+    )
+    history: MetricHistoryEvidence | None = None
+
+
+class MetricReferenceLevel(StrictMetricModel):
+    relation: Literal["higher", "lower", "similar"]
+
+
+class MetricReferenceTrend(StrictMetricModel):
+    direction: Literal["increasing", "decreasing", "stable", "unknown"]
+    rate: Literal["slow", "moderate", "fast", "not_classified", "unknown"]
+    direction_relation: Literal["same", "different", "not_comparable"]
+    rate_relation: Literal["faster", "slower", "same", "not_comparable"]
+
+
+class MetricReferenceVariability(StrictMetricModel):
+    state: Literal["low", "moderate", "high", "not_classified", "unknown"]
+    relation: Literal["higher", "lower", "similar", "not_comparable"]
+
+
+class MetricReferenceComparison(StrictMetricModel):
+    offset: str
+    analysis_window: MetricAnalysisWindow
+    level: MetricReferenceLevel
+    trend: MetricReferenceTrend
+    variability: MetricReferenceVariability
+
+    @field_validator("offset")
+    @classmethod
+    def validate_offset(cls, value: str) -> str:
+        if _OFFSET_PATTERN.fullmatch(value) is None:
+            raise ValueError("offset must use positive m, h, d, or w offsets")
+        return value
+
+
+class MetricReferenceEvidence(StrictMetricModel):
+    offset: str
+    analysis_window: MetricAnalysisWindow
+    mean: FiniteFloat
+    std: FiniteFloat = Field(ge=0)
+    min: FiniteFloat
+    max: FiniteFloat
+    slope: FiniteFloat
+    relative_level_change: FiniteFloat
+
+    @field_validator("offset")
+    @classmethod
+    def validate_offset(cls, value: str) -> str:
+        if _OFFSET_PATTERN.fullmatch(value) is None:
+            raise ValueError("offset must use positive m, h, d, or w offsets")
+        return value
+
+
+class MetricReferenceUnavailable(StrictMetricModel):
+    """Operational-only reason one configured comparison could not be formed."""
+
+    offset: str
+    category: Literal["acquisition", "malformed", "insufficient"]
+    diagnostic: str = Field(min_length=1, max_length=512)
+
+    @field_validator("offset")
+    @classmethod
+    def validate_offset(cls, value: str) -> str:
+        if _OFFSET_PATTERN.fullmatch(value) is None:
+            raise ValueError("offset must use positive m, h, d, or w offsets")
+        return value
+
+
+class MetricReferenceUnavailableReason(StrictMetricModel):
+    code: Literal["reference_unavailable"] = "reference_unavailable"
+    component: Literal["reference_periods"] = "reference_periods"
+
+
+class MetricHistoryAnalysisFailedReason(StrictMetricModel):
+    code: Literal["history_analysis_failed"] = "history_analysis_failed"
+    component: Literal["history"] = "history"
+
+
+class MetricOptionalAnalysisFailedReason(StrictMetricModel):
+    code: Literal["optional_analysis_failed"] = "optional_analysis_failed"
+    component: Literal["metrics_agent", "spike", "oscillation", "stuck_signal"]
+
+
+MetricPartialReason = Annotated[
+    (
+        MetricReferenceUnavailableReason
+        | MetricHistoryAnalysisFailedReason
+        | MetricOptionalAnalysisFailedReason
+    ),
+    Field(discriminator="code"),
+]
+
+
+def _validate_optional_pair(
+    current_state: MetricCurrentState, current: MetricCurrentEvidence
+) -> None:
+    for name in ("spike", "oscillation", "stuck_signal"):
+        property_ = getattr(current_state, name)
+        evidence = getattr(current, name)
+        if (property_ is None) != (evidence is None):
+            raise ValueError(f"optional {name} property and evidence must co-occur")
+
+
+def _validate_reference_pair(
+    comparisons: tuple[MetricReferenceComparison, ...] | None,
+    evidence: MetricEvidenceSection,
+) -> None:
+    reference_evidence = evidence.reference_periods
+    if (comparisons is None) != (reference_evidence is None):
+        raise ValueError("reference semantics and evidence must co-occur")
+    if comparisons is None or reference_evidence is None:
+        return
+    if len(comparisons) != len(reference_evidence):
+        raise ValueError("reference semantics and evidence must have equal length")
+    for comparison, item in zip(comparisons, reference_evidence, strict=True):
+        if comparison.offset != item.offset or comparison.analysis_window != item.analysis_window:
+            raise ValueError("reference semantics and evidence must share offset and window")
+
+
+def _validate_history_pair(
+    history: MetricHistory | None,
+    evidence: MetricEvidenceSection,
+) -> None:
+    if (history is None) != (evidence.history is None):
+        raise ValueError("history semantics and evidence must co-occur")
+    if history is None:
+        return
+    history_evidence = evidence.history
+    assert history_evidence is not None
+    if (
+        history_evidence.classifiable_transitions
+        != history_evidence.increasing_transitions
+        + history_evidence.decreasing_transitions
+        + history_evidence.stable_transitions
+    ):
+        raise ValueError("History classifiable transition count is inconsistent")
+    if history_evidence.classifiable_transitions + history_evidence.unknown_transitions != len(
+        history.run_ids
+    ):
+        raise ValueError("History transition count must match run_ids")
+
+
+class CompletedSufficientMetricResult(StrictMetricModel):
+    schema_version: Literal["1.0"] = "1.0"
+    lens_type: Literal["metric"] = "metric"
+    identity: MetricIdentity
+    status: MetricCompletedStatus = Field(default_factory=MetricCompletedStatus)
+    analysis_window: MetricAnalysisWindow
+    data_quality: Literal["good", "degraded"]
+    current_state: MetricCurrentState
+    reference_periods: tuple[MetricReferenceComparison, ...] | None = Field(
+        default=None, min_length=1
+    )
+    history: MetricHistory | None = None
+    evidence: MetricEvidenceSection
+    provenance: MetricResultProvenance
+
+    @model_validator(mode="after")
+    def validate_reference_pair(self) -> CompletedSufficientMetricResult:
+        _validate_reference_pair(self.reference_periods, self.evidence)
+        _validate_history_pair(self.history, self.evidence)
+        _validate_optional_pair(self.current_state, self.evidence.current)
+        return self
+
+
+class CompletedInsufficientMetricResult(StrictMetricModel):
+    schema_version: Literal["1.0"] = "1.0"
+    lens_type: Literal["metric"] = "metric"
+    identity: MetricIdentity
+    status: MetricCompletedStatus = Field(default_factory=MetricCompletedStatus)
+    analysis_window: MetricAnalysisWindow
+    data_quality: Literal["insufficient"]
+    provenance: MetricResultProvenance
+
+
+class MetricPartialStatus(StrictMetricModel):
+    state: Literal["partial"] = "partial"
+
+
+class PartialMetricResult(StrictMetricModel):
+    schema_version: Literal["1.0"] = "1.0"
+    lens_type: Literal["metric"] = "metric"
+    identity: MetricIdentity
+    status: MetricPartialStatus = Field(default_factory=MetricPartialStatus)
+    reason: MetricPartialReason
+    analysis_window: MetricAnalysisWindow
+    data_quality: Literal["good", "degraded"]
+    current_state: MetricCurrentState
+    reference_periods: tuple[MetricReferenceComparison, ...] | None = Field(
+        default=None, min_length=1
+    )
+    history: MetricHistory | None = None
+    evidence: MetricEvidenceSection
+    provenance: MetricResultProvenance
+
+    @model_validator(mode="after")
+    def validate_reference_pair(self) -> PartialMetricResult:
+        _validate_reference_pair(self.reference_periods, self.evidence)
+        _validate_history_pair(self.history, self.evidence)
+        _validate_optional_pair(self.current_state, self.evidence.current)
+        return self
+
+
+class FailedMetricResult(StrictMetricModel):
+    """Traceability-only result for an unproducible mandatory current core."""
+
+    schema_version: Literal["1.0"] = "1.0"
+    lens_type: Literal["metric"] = "metric"
+    identity: MetricIdentity
+    status: MetricFailedStatus
+    analysis_window: MetricAnalysisWindow
+    provenance: MetricResultProvenance
+
+
+def assert_finite_public_numbers(value: object) -> None:
+    """Defensive boundary for callers that pass native values into strict models."""
+
+    if isinstance(value, float) and not math.isfinite(value):
+        raise ValueError("Metric public numbers must be finite")

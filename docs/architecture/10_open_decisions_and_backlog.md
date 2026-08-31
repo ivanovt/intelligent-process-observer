@@ -1,8 +1,8 @@
 # Open decisions и архитектурен backlog
 
 **Статус:** Open / Deferred register  
-**Версия:** 5.0  
-**Актуализирано:** 2026-08-19
+**Версия:** 5.1
+**Актуализирано:** 2026-08-26
 
 Този файл съдържа **само нерешени или съзнателно deferred** въпроси. Нищо тук не трябва да се използва като implicit requirement.
 
@@ -14,13 +14,13 @@
 
 ## 2. Metrics pipeline
 
-- Exact allowed analytical tool registry за MVP.
-- Exact Metrics Analysis Agent tool-call/iteration budget (различно от фиксирания RAG `max_calls=2`).
-- Exact prompt/context serialization contract на Metrics Analysis Agent.
-- Дали raw/preprocessed series се държи само като internal `dataset_ref` или compact representation се подава към agent-а.
-- Exact thresholds/algorithms за trend rate и variability classification.
-- Exact serialized Metric `reference_periods` configuration schema и дали offsets имат system/Observation defaults или са изцяло Lens-defined.
-- Exact partial/failure policy при недостъпен отделен Metric reference period.
+- Exact prompt wording и implementation-private serialization на вече фиксирания
+  structured Metrics Agent context; agent-visible data boundary е фиксирана от ADR-156.
+- Production Metrics LLM model/provider и свързаните provider-specific dependencies.
+- Model-dependent request timeout, token и cost limits извън фиксирания domain tool
+  budget от ADR-155.
+- Production Prometheus Metric Provider transport mapping, authentication, retry и
+  timeout policy; analytical provider port остава source/framework-neutral.
 
 ## 3. Alerts и Logs pipelines
 

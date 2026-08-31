@@ -2,7 +2,7 @@
 
 **Проект:** „Интелигентна мулти-агентна система за откриване на аномалии и супервизия на технологични процеси“  
 **Статус на записите:** Accepted, освен ако изрично не е посочено друго  
-**Версия на регистъра:** 6.0
+**Версия на регистъра:** 6.1
 
 ---
 
@@ -2524,6 +2524,383 @@ occurred across both framework variants and is not framework-selection evidence.
 A future production Observation Reasoning/knowledge-retrieval change must make
 that behavior explicit without promoting the experiment-local convention to a
 production rule prematurely.
+
+---
+
+## ADR-153 — Metric trend and variability use fixed normalized deterministic MVP rules
+
+**Status:** Accepted
+
+**Context**
+Metric values have different units, scales, signs, and near-zero behavior. Absolute
+thresholds cannot provide a reusable mandatory Metric semantic vocabulary, while
+per-Lens threshold configuration would expand the definition contract and MVP setup
+cost.
+
+**Decision**
+For every analytically sufficient current or reference series, the deterministic
+Metric analyzer uses one system-fixed normalized policy.
+
+```text
+duration = analysis_window.to - analysis_window.from, in seconds
+scale = max(abs(mean), max - min)
+normalized_trend_change = abs(slope) * duration / scale
+normalized_variability = population_std(OLS residuals) / scale
+```
+
+If `scale == 0`, trend is `stable` with rate `not_classified`, and variability is
+`low`. Otherwise:
+
+```text
+normalized_trend_change < 0.05        -> stable / not_classified
+0.05 <= value < 0.15                  -> sign(slope) / slow
+0.15 <= value < 0.35                  -> sign(slope) / moderate
+value >= 0.35                         -> sign(slope) / fast
+
+normalized_variability < 0.05         -> low
+0.05 <= value < 0.15                  -> moderate
+value >= 0.15                         -> high
+```
+
+The policy is descriptive. It is not a safety threshold, baseline, definition of
+normal behavior, severity model, or confidence model.
+
+**Consequences**
+- mandatory semantics remain deterministic, unit-independent, and explainable;
+- signed and near-zero metrics do not require division by the mean alone;
+- Metric Lens configuration and the observation-definition API do not change;
+- domain-specific thresholds remain a possible future versioned policy.
+
+---
+
+## ADR-154 — Metrics MVP optional registry is spike, oscillation, and stuck_signal
+
+**Status:** Accepted
+
+**Context**
+The always-invoked Metrics Analysis Agent needs a small registry of deterministic
+capabilities that adds information beyond mandatory mean/std/min/max/slope,
+trend/variability, and persisted History.
+
+**Decision**
+The Metrics MVP optional analytical registry is:
+
+```text
+spike
+oscillation
+stuck_signal
+```
+
+- `spike` detects isolated extremes with a median/MAD modified-z rule and a
+  deterministic zero-MAD fallback.
+- `oscillation` detects repeated alternating detrended residual behavior.
+- `stuck_signal` detects long runs of exactly repeated provider values; it is not a
+  claim that a physical sensor is proven to be stuck.
+
+Successful optional evaluation produces a controlled optional current-state property
+and matching deterministic evidence. `not_applicable` produces neither public property
+nor public tool evidence. Failed/timeout execution produces no successful property or
+evidence projection.
+
+`drift` is not a separate optional tool: within-window direction/rate is mandatory
+trend, while operating-level evolution across runs is owned by History.
+`analysis_objectives` remain intent rather than a tool whitelist under ADR-049.
+
+**Consequences**
+- the optional surface is small, deterministic, and dependency-free;
+- optional properties preserve missing versus absent/present/unknown semantics;
+- transient datasets, tool request messages, and model trajectories are not result
+  fields.
+
+---
+
+## ADR-155 — Metrics optional tool budget is three attempts with each tool at most once
+
+**Status:** Accepted
+
+**Decision**
+The Metrics Analysis Agent tool loop uses:
+
+```text
+max_tool_attempts = 3
+max_attempts_per_tool = 1
+```
+
+Each of the first three requested tool actions consumes one available slot, including
+`success`, `not_applicable`, `failed`, `timeout`, and duplicate/unregistered/parallel
+rejection. A request after all three slots are consumed is recorded as an over-budget
+rejection but cannot consume or execute a fourth slot. A duplicate request never
+executes the deterministic tool again.
+
+`not_applicable` is not failure and does not change LensRun status. Tool `failed` or
+`timeout`, duplicate/unregistered/parallel requests, and a fourth-call request mark
+optional analysis incomplete. With a usable mandatory current core they contribute
+`optional_analysis_failed`; the agent may continue only within remaining budget.
+
+**Consequences**
+- cost and iteration count are predictably bounded;
+- repeating a fixed tool over one immutable dataset cannot manufacture new evidence;
+- the authoritative attempt ledger is application/domain-owned and framework-neutral.
+
+---
+
+## ADR-156 — Metrics Agent sees structured evidence plus opaque dataset_ref and cannot invalidate an insufficient-quality determination
+
+**Status:** Accepted
+
+**Decision**
+The Metrics Analysis Agent receives immutable identity/window/objective context,
+data quality, mandatory numerical evidence and mandatory semantics when available,
+the allowed tool descriptions, and an opaque run-scoped `dataset_ref`. Raw or compact
+series values are not serialized into agent context. Only deterministic registered
+tools can resolve the opaque reference, and tool requests cannot select a metric,
+query, window, source, or dataset.
+
+The framework-neutral final completion contract is only:
+
+```text
+MetricAgentCompletion.state = completed
+```
+
+It contains no summary, findings, severity, confidence, recommendations, or restated
+tool list.
+
+For `good|degraded` current quality, agent failure, timeout, or invalid/unacceptable
+structured completion yields a usable partial Metric result with:
+
+```text
+reason.code = optional_analysis_failed
+reason.component = metrics_agent
+```
+
+Valid deterministic optional results already produced may still be semanticized.
+
+For `data_quality=insufficient`, the agent is still invoked with narrow identity and
+quality context and no applicable analytical tools. Agent failure/timeout/invalid
+completion is recorded operationally but does not replace the successfully determined
+`completed + insufficient` result. If the mandatory current core or its quality
+determination cannot be produced technically, the Metric LensRun is failed under the
+existing Metric failure semantics.
+
+**Consequences**
+- the agent has a real adaptive tool-selection role without direct sample inspection;
+- LLM infrastructure failure cannot overwrite trustworthy mandatory evidence or an
+  insufficient-quality determination;
+- PydanticAI remains an infrastructure adapter under ADR-152.
+
+---
+
+## ADR-157 — Missing configured Metric reference analysis makes a usable result partial
+
+**Status:** Accepted
+
+**Decision**
+When the current mandatory Metric core is usable, any configured reference offset that
+cannot produce a comparison makes the Metric LensRun/result `partial`. Both acquisition
+unavailability and analytically insufficient acquired reference data use the public
+primary reason:
+
+```text
+reason.code = reference_unavailable
+reason.component = reference_periods
+```
+
+`reference_unavailable` describes result incompleteness and does not necessarily mean
+the provider failed. Operational diagnostics retain the internal cause. Successful
+offsets remain serialized; unsuccessful offsets are omitted without fake `unknown`
+comparison placeholders.
+
+Current `data_quality=insufficient` remains `completed + insufficient`; reference
+comparisons are not formable and their absence does not make that result partial.
+
+For simultaneous analytical incompleteness, one public primary reason is selected in
+this order:
+
+```text
+reference_unavailable
+> history_analysis_failed
+> optional_analysis_failed
+```
+
+Secondary causes remain operational diagnostics.
+
+**Consequences**
+- configured temporal context is not silently reported as complete;
+- usable current and successful reference evidence are preserved;
+- reference periods do not become baselines or normality classifications.
+
+---
+
+## ADR-158 — Metric History uses analysis-window event time and permits overlapping earlier windows
+
+**Status:** Accepted
+
+**Context**
+Sliding Observation executions may have overlapping windows, and persistence/completion
+order may differ from the analytical event-time order.
+
+**Decision**
+A persisted same-`observation_id + lens_id` Metric result can be an earlier History
+candidate when:
+
+```text
+historical.analysis_window.to < current.analysis_window.to
+```
+
+Overlapping earlier windows are eligible. Completion or persistence order does not
+define analytical chronology. Candidates are totally ordered by:
+
+```text
+analysis_window.to, analysis_window.from, lexical lens_run_id
+```
+
+The newest effective `lookback_runs` candidates are selected, then supplied to the
+History Analyzer oldest-to-newest before appending the current result. `history.run_ids`
+contains only the selected previous LensRun IDs in that order.
+
+No eligible previous results is normal absence and does not cause partial. Unknown
+transition classification is serialized as accepted unknown History state/evidence and
+does not cause partial. Unexpected deterministic History Analyzer failure with a usable
+current core yields `history_analysis_failed`; failure of the required persistence query
+is an infrastructure error and must not be reinterpreted as no History.
+
+**Consequences**
+- sliding-window run evolution remains observable;
+- History stays run-level analysis rather than raw-telemetry reanalysis;
+- persisted `run_ids` preserve traceability for late-visible candidates;
+- persistence transaction failure cannot fabricate a completed or partial artifact.
+
+---
+
+## ADR-159 — Metric History near-zero transitions use a pair-relative tolerance guard
+
+**Status:** Accepted
+
+**Clarifies:** ADR-021
+
+**Context**
+ADR-021 established that a near-zero previous mean produces an `unknown` History
+transition, but it did not define the near-zero predicate. An implementation-specific
+epsilon would make classification dependent on metric units or local choices.
+
+**Decision**
+For consecutive eligible Metric result means `previous=p` and `current=c`, use the
+effective `level_change_tolerance=t` selected by the already accepted
+Lens > Observation > System precedence, with system default `0.05`.
+
+```text
+if p == 0 and c == 0:
+    transition = stable
+else:
+    pair_scale = max(abs(p), abs(c))
+    near_zero_reference = abs(p) <= t * pair_scale
+
+    if near_zero_reference:
+        transition = unknown
+    else:
+        relative_change = (c - p) / abs(p)
+
+        if abs(relative_change) <= t:
+            transition = stable
+        elif relative_change > t:
+            transition = increasing
+        else:
+            transition = decreasing
+```
+
+The stable boundary is inclusive. Near-zero detection uses the same effective
+level-change tolerance; no absolute epsilon or metric-unit-specific threshold is
+introduced. `p=0,c=0` is stable, not unknown. Near-zero is only a guard against an
+unstable relative comparison and does not imply abnormality. Unknown transitions
+remain excluded from History direction and pattern denominators under ADR-022.
+
+**Consequences**
+- History transition classification is deterministic across units and implementations;
+- the existing tolerance configuration and override hierarchy are reused;
+- exact equality and tolerance boundaries require explicit tests;
+- ADR-021 remains the original decision and this ADR supplies its missing algorithm.
+
+---
+
+## ADR-160 — Metric History pattern uses directional runs with stable transitions neutral
+
+**Status:** Accepted
+
+**Clarifies:** ADR-025
+
+**Context**
+ADR-025 fixed the History pattern vocabulary and priority but left direction changes,
+stable transitions, unknown removal, consecutiveness, and a clear reversal
+underspecified.
+
+**Decision**
+Start from the chronological History transition sequence.
+
+1. Remove every `unknown` transition while preserving `increasing`, `decreasing`, and
+   `stable` in chronological order. The result is `classifiable_transitions`.
+2. If `len(classifiable_transitions) < 2`, classify `pattern=unknown`.
+3. For oscillation and reversal detection only, remove `stable` from
+   `classifiable_transitions` without reordering the remaining values. The result is
+   `directional_transitions`. Stable remains classifiable, participates in sustained
+   shares, and neither creates nor resets a directional change.
+4. Compress consecutive identical values in `directional_transitions` into
+   `directional_runs`.
+5. Define the public History evidence count exactly as:
+
+```text
+direction_changes = max(0, len(directional_runs) - 1)
+```
+
+Apply ADR-025 priority exactly:
+
+```text
+1. unknown:
+     len(classifiable_transitions) < 2
+
+2. oscillating:
+     len(directional_runs) >= 3
+
+3. reversing:
+     len(directional_runs) == 2
+
+4. sustained:
+     neither oscillating nor reversing matched, and at least one of
+     increasing_share, decreasing_share, stable_share is >= 0.70,
+     with every share calculated over all classifiable_transitions
+
+5. mixed:
+     otherwise
+```
+
+Unknown transitions are removed before all pattern calculations and do not contribute
+to any denominator. Stable transitions are excluded only from directional run
+detection. The separate `history.direction` algorithm from ADR-023 is unchanged.
+
+Normative examples use full transition names:
+
+```text
+[increasing, increasing]                         -> sustained
+[stable, stable]                                 -> sustained
+[increasing, decreasing]                         -> reversing
+[increasing, increasing, decreasing, decreasing] -> reversing
+[increasing, stable, decreasing]                 -> reversing
+[increasing, decreasing, increasing]             -> oscillating
+[decreasing, increasing, decreasing]             -> oscillating
+[increasing, increasing, decreasing, decreasing,
+ increasing]                                     -> oscillating
+[increasing, stable, increasing]                  -> mixed
+[increasing, unknown, decreasing]                 -> reversing
+[stable, unknown, stable]                         -> sustained
+```
+
+**Consequences**
+- pattern classification and `direction_changes` are mechanically testable;
+- stable transitions remain evidence for sustained behavior without hiding an
+  increasing/decreasing switch;
+- removing unknown transitions may bring otherwise separated directional transitions
+  together, consistently with ADR-022;
+- the accepted vocabulary and priority remain unchanged;
+- ADR-025 remains the original decision and this ADR supplies its missing mechanics.
 
 ---
 
