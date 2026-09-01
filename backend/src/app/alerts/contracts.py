@@ -241,7 +241,7 @@ class AlertFinding(StrictAlertModel):
 
     id: str = Field(min_length=1)
     statement: str = Field(min_length=1)
-    evidence_refs: tuple[str, ...]
+    evidence_refs: tuple[str, ...] = Field(min_length=1)
 
 
 class AlertAgentRequest(StrictAlertModel):

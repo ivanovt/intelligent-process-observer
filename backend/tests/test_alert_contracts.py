@@ -175,10 +175,12 @@ def test_agent_request_and_completion_contracts_are_strict() -> None:
     with pytest.raises(ValidationError):
         AlertAgentCompletion.model_validate({"findings": []})
     with pytest.raises(ValidationError):
+        AlertFinding(id="ungrounded", statement="x", evidence_refs=())
+    with pytest.raises(ValidationError):
         AlertAgentCompletion(
             findings=(
-                AlertFinding(id="same", statement="x", evidence_refs=()),
-                AlertFinding(id="same", statement="y", evidence_refs=()),
+                AlertFinding(id="same", statement="x", evidence_refs=("alert://current/ALERT-1",)),
+                AlertFinding(id="same", statement="y", evidence_refs=("alert://current/ALERT-1",)),
             ),
             overall_importance="high",
         )

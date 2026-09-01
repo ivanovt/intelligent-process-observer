@@ -156,6 +156,20 @@ def test_evidence_refs_reject_every_noncanonical_grammar_case() -> None:
             _build((reference,))
 
 
+def test_builder_rejects_constructed_finding_without_evidence_references() -> None:
+    context, records, evidence = _assembled()
+    completion = AlertAgentCompletion.model_construct(
+        findings=(
+            AlertFinding.model_construct(
+                id="ungrounded", statement="missing support", evidence_refs=()
+            ),
+        ),
+        overall_importance="high",
+    )
+    with pytest.raises(ValueError, match="at least one evidence reference"):
+        AlertResultBuilder().completed(context, records, evidence, completion)
+
+
 def test_builder_rejects_unavailable_unresolved_transient_or_ambiguous_targets() -> None:
     for reference, kwargs in (
         ("alert://current/missing", {}),
@@ -293,7 +307,7 @@ def test_builder_enforces_exact_activity_status_lifecycle_duration_and_importanc
     None
 ):
     context, records, evidence = _assembled()
-    result = _build(())
+    result = _build(("alert://aggregate/alert_activity/record_count",))
     assert CompletedAlertAnalysisResult.model_validate(_payload(result)) == result
     invalid_updates = (
         {"alert_activity": evidence.alert_activity.model_copy(update={"record_count": 2})},

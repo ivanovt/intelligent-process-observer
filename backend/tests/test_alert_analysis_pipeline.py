@@ -433,6 +433,10 @@ def test_required_agent_failures_are_rejected_before_builder() -> None:
 
     async def scenario() -> None:
         malformed_finding = {"findings": [{"id": "f"}], "overall_importance": "high"}
+        empty_evidence_finding = {
+            "findings": [{"id": "f", "statement": "ungrounded", "evidence_refs": []}],
+            "overall_importance": "high",
+        }
         cases = (
             (RuntimeError("agent error"), "agent_failed"),
             (TimeoutError("agent timeout"), "agent_timeout"),
@@ -441,6 +445,7 @@ def test_required_agent_failures_are_rejected_before_builder() -> None:
             ({"findings": [], "overall_importance": "high", "unexpected": True}, "agent_failed"),
             ({"findings": []}, "agent_failed"),
             (malformed_finding, "agent_failed"),
+            (empty_evidence_finding, "agent_failed"),
         )
         provider = RecordsProvider(
             (_record("valid", started=datetime(2026, 9, 1, tzinfo=UTC), ended=None, occurrences=1),)
@@ -981,6 +986,39 @@ def test_pydantic_ai_invalid_completion_error_and_timeout_map_to_agent_failures(
             ).analyze(_context())
             _assert_failed(outcome, code)
             assert outcome.artifact is None
+
+    asyncio.run(scenario())
+
+
+def test_mutated_agent_completion_with_empty_evidence_refs_fails_before_builder() -> None:
+    class Agent:
+        async def complete(self, request: object) -> AlertAgentCompletion:
+            return AlertAgentCompletion.model_construct(
+                findings=(
+                    AlertFinding.model_construct(
+                        id="ungrounded", statement="no supporting evidence", evidence_refs=()
+                    ),
+                ),
+                overall_importance="high",
+            )
+
+    async def scenario() -> None:
+        outcome = await AlertAnalysisPipeline(
+            provider=RecordsProvider(
+                (
+                    _record(
+                        "valid",
+                        started=datetime(2026, 9, 1, tzinfo=UTC),
+                        ended=None,
+                        occurrences=1,
+                    ),
+                )
+            ),
+            agent=Agent(),
+            result_builder=FailOnUseBuilder(),
+        ).analyze(_context())
+        _assert_failed(outcome, "agent_failed")
+        assert outcome.artifact is None
 
     asyncio.run(scenario())
 

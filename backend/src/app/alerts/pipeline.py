@@ -122,7 +122,11 @@ class AlertAnalysisPipeline:
         except Exception:
             return self._failed("agent_failed")
         try:
-            completion = AlertAgentCompletion.model_validate(completion)
+            completion = AlertAgentCompletion.model_validate(
+                completion.model_dump(mode="python")
+                if isinstance(completion, AlertAgentCompletion)
+                else completion
+            )
         except ValidationError:
             return self._failed("agent_failed")
         self._record_phase("result_build")

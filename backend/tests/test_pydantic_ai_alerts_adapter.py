@@ -171,6 +171,32 @@ def test_invalid_completion_failure_counts_have_no_corrective_retry() -> None:
         assert len(calls) == 1
 
 
+def test_empty_finding_evidence_references_are_rejected_by_adapter() -> None:
+    def invalid(_: AgentInfo) -> ModelResponse:
+        return ModelResponse(
+            parts=[
+                ToolCallPart(
+                    "final_result",
+                    {
+                        "findings": [
+                            {
+                                "id": "ungrounded",
+                                "statement": "missing support",
+                                "evidence_refs": [],
+                            }
+                        ],
+                        "overall_importance": "high",
+                    },
+                )
+            ]
+        )
+
+    injected, calls = model([invalid])
+    with pytest.raises(UnexpectedModelBehavior):
+        run(PydanticAIAlertAnalysisAgent(injected).complete(request(), registry()))
+    assert len(calls) == 1
+
+
 def test_invalid_completion_error_and_timeout_map_exactly() -> None:
     invalid, invalid_calls = model(
         [

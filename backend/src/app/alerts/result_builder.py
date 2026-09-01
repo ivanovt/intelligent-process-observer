@@ -179,6 +179,8 @@ class AlertResultBuilder:
     ) -> None:
         """Validate every agent finding against final persisted Alert evidence."""
         for finding in completion.findings:
+            if not finding.evidence_refs:
+                raise ValueError("every Alert finding requires at least one evidence reference")
             resolve_evidence_references(finding.evidence_refs, records, evidence)
 
     @staticmethod
