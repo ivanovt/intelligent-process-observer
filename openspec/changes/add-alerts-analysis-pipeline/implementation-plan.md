@@ -1148,6 +1148,8 @@ here.
 - 2026-09-01 — VS-05 candidate `e7c4bec`; Coordinator independently ran required
   PostgreSQL proof (`1 passed`). Change-map deviation disposition: `N/A`; candidate
   awaits high-risk review.
+- 2026-09-01 — VS-05 review requires correction: enforce the closed three-tool registry
+  and add the frozen strict tool-contract proof. VS-05 remains `IN_PROGRESS`.
 - 2026-09-01 — VS-03 accepted after corrected proof verification and `SLICE REVIEW PASS`.
   VS-04 and VS-05 are dependency-ready; VS-04 is next in the requested sequence.
 - 2026-09-01 — VS-04 assigned to fresh Slice Implementer `/root/vs04_implementer`.
