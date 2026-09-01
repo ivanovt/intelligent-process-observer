@@ -100,8 +100,8 @@ parallel implementation.
 | Slice | Goal | Depends on | Risk | Status | Commit | Handoff |
 |---|---|---|---|---|---|---|
 | VS-01 | Persist a zero-record completed Alert walking skeleton | none | high-risk | COMPLETE | d1dc5b3, 5933bb5, af65a93 | `implementation/VS-01-handoff.md` |
-| VS-02 | Persist representative non-zero deterministic evidence and fake-agent findings | VS-01 | high-risk | IN_PROGRESS | - | - |
-| VS-03 | Add independent references, invalid subsets, partial precedence, and partial persistence | VS-02 | high-risk | PLANNED | - | - |
+| VS-02 | Persist representative non-zero deterministic evidence and fake-agent findings | VS-01 | high-risk | COMPLETE | b0c322d | `implementation/VS-02-handoff.md` |
+| VS-03 | Add independent references, invalid subsets, partial precedence, and partial persistence | VS-02 | high-risk | READY | - | - |
 | VS-04 | Persist every mandatory failure with no Alert artifact | VS-03 | high-risk | PLANNED | - | - |
 | VS-05 | Execute the bounded optional registry and retain only allowed failure traces | VS-03 | high-risk | PLANNED | - | - |
 | VS-06 | Enforce canonical evidence references through persisted results | VS-04, VS-05 | high-risk | PLANNED | - | - |
@@ -1123,3 +1123,7 @@ here.
 - 2026-09-01 — VS-02 candidate `b0c322d`; handoff `implementation/VS-02-handoff.md`.
   Coordinator independently ran both required PostgreSQL proofs (`2 passed`). Change-map
   deviation disposition: `N/A`; ready for high-risk review.
+- 2026-09-01 — VS-02 accepted: all VS02-AC obligations, PostgreSQL evidence, and the
+  independent high-risk review passed with `SLICE REVIEW PASS`; no deviations or
+  knowledge candidates. VS-03 is `READY`; shared tasks remain unchecked pending their
+  later assigned portions.
