@@ -1135,3 +1135,5 @@ here.
 - 2026-09-01 — VS-03 correction `f26b582` adds AC06/AC07 PostgreSQL proofs; Coordinator
   independently ran both (`2 passed`). Change-map deviation disposition: `N/A`; ready
   for high-risk review.
+- 2026-09-01 — VS-03 high-risk review requires focused proof correction for VS03-AC01,
+  VS03-AC02, and VS03-AC04; VS-03 remains `IN_PROGRESS`.
