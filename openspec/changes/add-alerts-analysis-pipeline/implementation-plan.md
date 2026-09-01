@@ -1154,3 +1154,6 @@ here.
 - 2026-09-01 — VS-04 review requires focused correction: add the AC01 analyzer-bypass
   guard and remove the out-of-map shared runtime serializer change. VS-04 remains
   `IN_PROGRESS`.
+- 2026-09-01 — Correction `c56901a` restores the repository boundary and tightens AC01;
+  Coordinator reran all five PostgreSQL nodes (`5 passed`). Deviation disposition:
+  `N/A`; candidate awaits bounded re-review.
