@@ -16,7 +16,16 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 from sqlalchemy.orm import selectinload
 
+from app.alerts.contracts import (
+    AlertAnalysisWindow,
+    AlertIdentity,
+    AlertLensExecutionContext,
+    AlertProviderScope,
+    AlertRecordsAvailable,
+)
+from app.alerts.pipeline import AlertAnalysisPipeline
 from app.core.settings import get_settings
+from app.infrastructure.persistence.alert_runtime import persist_alert_terminal
 from app.infrastructure.persistence.models import (
     AlertLensModel,
     LensRunModel,
@@ -193,6 +202,85 @@ async def _seed_observation(session: AsyncSession) -> ObservationModel:
     session.add(observation)
     await session.flush()
     return observation
+
+
+def test_alert_zero_record_walking_skeleton_persists_completed_result(
+    session_factory: async_sessionmaker[AsyncSession],
+) -> None:
+    class EmptyProvider:
+        async def acquire(
+            self, scope: AlertProviderScope, window: AlertAnalysisWindow
+        ) -> AlertRecordsAvailable:
+            assert scope.query == "project = RELEASE"
+            assert window.to > window.from_
+            return AlertRecordsAvailable(source=scope.source)
+
+    class FailOnCallAgent:
+        async def complete(self, *args: object) -> object:
+            raise AssertionError("zero record path must not invoke the Alert agent")
+
+    async def scenario() -> None:
+        repository = RuntimePersistenceRepository()
+        phases: list[str] = []
+        async with session_factory() as session:
+            observation = await _seed_observation(session)
+            run = await repository.create_observation_run(
+                session, ObservationRunInput(observation_id=observation.id)
+            )
+            await repository.advance_observation_run(session, run, ObservationRunStatus.RUNNING)
+            lens_run = await repository.create_lens_run(
+                session,
+                run,
+                LensRunInput(lens_id="release-alerts", lens_type=LensType.ALERT),
+            )
+            await repository.advance_lens_run(session, lens_run, LensRunStatus.RUNNING)
+            context = AlertLensExecutionContext(
+                identity=AlertIdentity(
+                    observation_id=observation.id,
+                    observation_run_id=run.id,
+                    lens_id=lens_run.lens_id,
+                    lens_run_id=lens_run.id,
+                ),
+                provider_scope=AlertProviderScope(
+                    source="fake-alert-provider", query="project = RELEASE"
+                ),
+                analysis_window=AlertAnalysisWindow(
+                    **{
+                        "from": datetime(2026, 9, 1, tzinfo=UTC),
+                        "to": datetime(2026, 9, 1, 1, tzinfo=UTC),
+                    }
+                ),
+                lens_name="Release alerts",
+            )
+            outcome = await AlertAnalysisPipeline(
+                provider=EmptyProvider(), agent=FailOnCallAgent(), record_phase=phases.append
+            ).analyze(context)
+            phases.append("transaction_open")
+            await persist_alert_terminal(session, lens_run, outcome, repository)
+            run_id = run.id
+            await session.commit()
+
+        assert phases == [
+            "provider_acquisition",
+            "current_normalization",
+            "mandatory_analysis",
+            "zero_record_gate",
+            "result_build",
+            "transaction_open",
+        ]
+        async with session_factory() as session:
+            restored = await repository.get_observation_run(session, run_id)
+            assert restored is not None
+            persisted_run = next(run for run in restored.lens_runs if run.id == lens_run.id)
+            assert persisted_run.status == "completed" and persisted_run.reason is None
+            assert persisted_run.analysis_result is not None
+            artifact = persisted_run.analysis_result
+            assert artifact.result_type == "alert" and artifact.status == "completed"
+            assert artifact.schema_version == "1.0"
+            assert artifact.payload["identity"]["lens_run_id"] == str(lens_run.id)
+            assert artifact.payload["activity"]["record_count"] == 0
+
+    asyncio.run(scenario())
 
 
 def test_runtime_persistence_round_trip_and_artifact_absence(
