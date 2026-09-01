@@ -14,9 +14,11 @@ from app.alerts.contracts import (
     AlertIdentity,
     AlertLensExecutionContext,
     AlertMandatoryEvidence,
+    AlertOptionalToolExecution,
     AlertProviderImportance,
     AlertProviderRecord,
     AlertProviderScope,
+    AlertUnsuccessfulToolCall,
     CompletedAlertAnalysisResult,
     PartialAlertAnalysisResult,
 )
@@ -190,8 +192,19 @@ def test_builder_enforces_exact_envelope_identity_time_provenance_and_strict_fie
         True,
         False,
     )
+    reference_partial, _ = builder.usable(
+        context,
+        records,
+        evidence,
+        AlertAgentCompletion(findings=(), overall_importance="high"),
+        False,
+        True,
+    )
     assert CompletedAlertAnalysisResult.model_validate(_payload(completed)) == completed
     assert PartialAlertAnalysisResult.model_validate(_payload(partial)) == partial
+    assert (
+        PartialAlertAnalysisResult.model_validate(_payload(reference_partial)) == reference_partial
+    )
     for field, value in (
         ("schema_version", "2.0"),
         ("lens_type", "metric"),
@@ -202,23 +215,72 @@ def test_builder_enforces_exact_envelope_identity_time_provenance_and_strict_fie
         payload[field] = value
         with pytest.raises(ValidationError):
             CompletedAlertAnalysisResult.model_validate(payload)
+    for identity_field, value in (
+        ("observation_id", uuid4()),
+        ("observation_run_id", uuid4()),
+        ("lens_id", "other"),
+        ("lens_run_id", uuid4()),
+    ):
+        with pytest.raises(ValueError):
+            builder._validate_context_correlation(
+                completed.model_copy(
+                    update={
+                        "identity": completed.identity.model_copy(update={identity_field: value})
+                    }
+                ),
+                context,
+            )
     for mutation in (
-        {"identity": context.identity.model_copy(update={"lens_id": "other"})},
         {"analysis_timestamp": context.analysis_window.to + timedelta(seconds=1)},
+        {"analysis_timestamp": context.analysis_window.to.astimezone(timezone(timedelta(hours=2)))},
+        {
+            "analysis_window": context.analysis_window.model_copy(
+                update={"from_": context.analysis_window.from_ + timedelta(seconds=1)}
+            )
+        },
         {
             "analysis_window": context.analysis_window.model_copy(
                 update={"to": context.analysis_window.to + timedelta(seconds=1)}
             )
         },
+        {
+            "analysis_window": context.analysis_window.model_copy(
+                update={"to": context.analysis_window.to.astimezone(timezone(timedelta(hours=2)))}
+            )
+        },
         {"provenance": completed.provenance.model_copy(update={"source_provider": "other"})},
+        {
+            "provenance": completed.provenance.model_copy(
+                update={
+                    "generated_at": completed.provenance.generated_at.astimezone(
+                        timezone(timedelta(hours=2))
+                    )
+                }
+            )
+        },
     ):
         mutated = completed.model_copy(update=mutation)
         with pytest.raises(ValueError):
             builder._validate_context_correlation(mutated, context)
+    completed_with_reason = _payload(completed)
+    completed_with_reason["reason"] = {
+        "code": "invalid_records",
+        "component": "current_normalization",
+    }
+    with pytest.raises(ValidationError):
+        CompletedAlertAnalysisResult.model_validate(completed_with_reason)
     payload = _payload(partial)
     payload.pop("reason")
     with pytest.raises(ValidationError):
         PartialAlertAnalysisResult.model_validate(payload)
+    for reason in (
+        {"code": "result_validation_failed", "component": "alert_result_builder"},
+        {"code": "invalid_records", "component": "reference_periods"},
+    ):
+        payload = _payload(partial)
+        payload["reason"] = reason
+        with pytest.raises(ValidationError):
+            PartialAlertAnalysisResult.model_validate(payload)
     with pytest.raises(ValueError, match="generated_at must use UTC"):
         AlertResultBuilder(
             clock=lambda: datetime(2026, 9, 1, 2, tzinfo=timezone(timedelta(hours=2)))
@@ -241,10 +303,49 @@ def test_builder_enforces_exact_activity_status_lifecycle_duration_and_importanc
                 update={"resolved": 1, "active": 0}
             )
         },
+        {
+            "status_distribution": evidence.status_distribution.model_copy(
+                update={"active": 2, "resolved": 0, "unknown": 0}
+            )
+        },
+        {
+            "status_distribution": evidence.status_distribution.model_copy(
+                update={"active": 0, "resolved": 0, "unknown": 1}
+            )
+        },
+        {"alerts": (records[0].model_copy(update={"duration_seconds": -1.0}),)},
+        {"alerts": (records[0].model_copy(update={"duration_seconds": float("inf")}),)},
         {"alerts": (records[0].model_copy(update={"duration_seconds": 1.0}),)},
+        {
+            "alerts": (
+                records[0].model_copy(
+                    update={"ended_at": context.analysis_window.to, "duration_seconds": 3600.0}
+                ),
+            )
+        },
+        {
+            "duration_statistics": evidence.duration_statistics.model_copy(
+                update={"min_seconds": 1.0}
+            )
+        },
         {
             "duration_statistics": evidence.duration_statistics.model_copy(
                 update={"max_seconds": 1.0}
+            )
+        },
+        {
+            "duration_statistics": evidence.duration_statistics.model_copy(
+                update={"average_seconds": 1.0}
+            )
+        },
+        {
+            "duration_statistics": evidence.duration_statistics.model_copy(
+                update={"min_seconds": -1.0}
+            )
+        },
+        {
+            "duration_statistics": evidence.duration_statistics.model_copy(
+                update={"max_seconds": float("inf")}
             )
         },
         {
@@ -254,11 +355,36 @@ def test_builder_enforces_exact_activity_status_lifecycle_duration_and_importanc
                 )
             )
         },
+        {
+            "provider_importance_distribution": (
+                evidence.provider_importance_distribution.model_copy(update={"type": "wrong"})
+            )
+        },
     )
     for update in invalid_updates:
         payload = _payload(result.model_copy(update=update))
         with pytest.raises(ValidationError):
             CompletedAlertAnalysisResult.model_validate(payload)
+    for mutate in (
+        lambda payload: payload["alerts"][0].update({"ended_at": "not-a-datetime"}),
+        lambda payload: payload["alerts"][0].update(
+            {"ended_at": context.analysis_window.from_ - timedelta(seconds=1)}
+        ),
+        lambda payload: payload["alerts"][0].update({"ended_at": context.analysis_window.to}),
+        lambda payload: payload["alerts"][0]["status"].update({"normalized": "resolved"}),
+    ):
+        payload = _payload(result)
+        mutate(payload)
+        with pytest.raises(ValidationError):
+            CompletedAlertAnalysisResult.model_validate(payload)
+    missing_importance = _payload(result)
+    missing_importance["provider_importance_distribution"] = None
+    with pytest.raises(ValidationError):
+        CompletedAlertAnalysisResult.model_validate(missing_importance)
+    unexpected_importance = _payload(result)
+    unexpected_importance["alerts"][0]["provider_importance"] = None
+    with pytest.raises(ValidationError):
+        CompletedAlertAnalysisResult.model_validate(unexpected_importance)
     zero_context = _context()
     zero, _ = AlertResultBuilder().completed_zero(zero_context, AlertMandatoryEvidence())
     assert zero.overall_importance == "none"
@@ -270,6 +396,24 @@ def test_builder_enforces_exact_activity_status_lifecycle_duration_and_importanc
     }
     with pytest.raises(ValidationError):
         CompletedAlertAnalysisResult.model_validate(malformed_zero)
+    for field, value in (
+        ("provider_importance_distribution", {"type": "x", "values": {"y": 1}}),
+        ("overall_importance", "high"),
+    ):
+        malformed_zero = _payload(zero)
+        malformed_zero[field] = value
+        with pytest.raises(ValidationError):
+            CompletedAlertAnalysisResult.model_validate(malformed_zero)
+    nonzero_none = _payload(result)
+    nonzero_none["overall_importance"] = "none"
+    with pytest.raises(ValidationError):
+        CompletedAlertAnalysisResult.model_validate(nonzero_none)
+
+    unknown = _payload(result)
+    unknown["alerts"][0]["status"]["normalized"] = "unknown"
+    unknown["status_distribution"] = {"active": 0, "resolved": 0, "unknown": 1}
+    controlled_unknown = CompletedAlertAnalysisResult.model_validate(unknown)
+    assert controlled_unknown.status_distribution.unknown == 1
 
 
 def test_builder_enforces_exact_comparison_optional_trace_and_status_sections() -> None:
@@ -287,12 +431,50 @@ def test_builder_enforces_exact_comparison_optional_trace_and_status_sections() 
         builder._validate_context_correlation(
             result.model_copy(update={"comparisons": (seven_days, one_day)}), context
         )
-    bad_comparison = one_day.model_copy(
+    unexpected = compare_occurrences("14d", evidence, evidence)
+    with pytest.raises(ValueError):
+        builder._validate_context_correlation(
+            result.model_copy(update={"comparisons": (one_day, seven_days, unexpected)}), context
+        )
+    for field, value in (
+        ("current", 2),
+        ("reference", 2),
+        ("delta", 1),
+        ("direction", "decreased"),
+    ):
+        bad_comparison = one_day.model_copy(
+            update={
+                "occurrence_comparison": one_day.occurrence_comparison.model_copy(
+                    update={field: value}
+                )
+            }
+        )
+        with pytest.raises(ValidationError):
+            CompletedAlertAnalysisResult.model_validate(
+                _payload(result.model_copy(update={"comparisons": (bad_comparison, seven_days)}))
+            )
+    with_tools = result.model_copy(
         update={
-            "occurrence_comparison": one_day.occurrence_comparison.model_copy(update={"delta": 1})
+            "optional_tool_execution": AlertOptionalToolExecution(
+                unsuccessful_calls=(
+                    AlertUnsuccessfulToolCall(
+                        tool="recurrence_concentration_analysis", status="failed"
+                    ),
+                )
+            )
         }
     )
+    assert CompletedAlertAnalysisResult.model_validate(_payload(with_tools)) == with_tools
+    for call in (
+        {"tool": "recurrence_concentration_analysis", "status": "success"},
+        {"tool": "recurrence_concentration_analysis", "status": "not_applicable"},
+        {"tool": "recurrence_concentration_analysis", "status": "failed", "extra": "no"},
+    ):
+        payload = _payload(with_tools)
+        payload["optional_tool_execution"] = {"unsuccessful_calls": [call]}
+        with pytest.raises(ValidationError):
+            CompletedAlertAnalysisResult.model_validate(payload)
+    missing_findings = _payload(result)
+    missing_findings.pop("findings")
     with pytest.raises(ValidationError):
-        CompletedAlertAnalysisResult.model_validate(
-            _payload(result.model_copy(update={"comparisons": (bad_comparison, seven_days)}))
-        )
+        CompletedAlertAnalysisResult.model_validate(missing_findings)

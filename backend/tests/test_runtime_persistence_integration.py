@@ -947,12 +947,13 @@ def test_representative_builder_invariant_failures_persist_failed_run_without_ar
     session_factory: async_sessionmaker[AsyncSession],
 ) -> None:
     class Provider:
+        def __init__(self, records: tuple[AlertProviderRecord, ...]) -> None:
+            self.records = records
+
         async def acquire(
             self, scope: AlertProviderScope, window: AlertAnalysisWindow
         ) -> AlertRecordsAvailable:
-            return AlertRecordsAvailable(
-                source=scope.source, records=(_nonzero_alert_record(occurrences=1),)
-            )
+            return AlertRecordsAvailable(source=scope.source, records=self.records)
 
     class Agent:
         async def complete(self, request: object) -> AlertAgentCompletion:
@@ -964,6 +965,8 @@ def test_representative_builder_invariant_failures_persist_failed_run_without_ar
             self.failure = failure
 
         def _validate_completed_result(self, result: object, context: object) -> object:
+            if self.failure == "zero":
+                raise ValueError("zero result invariant rejected")
             if self.failure == "identity":
                 result = result.model_copy(
                     update={"identity": result.identity.model_copy(update={"lens_id": "wrong"})}
@@ -986,7 +989,7 @@ def test_representative_builder_invariant_failures_persist_failed_run_without_ar
                 session, ObservationRunInput(observation_id=observation.id)
             )
             await repository.advance_observation_run(session, run, ObservationRunStatus.RUNNING)
-            for failure in ("identity", "activity"):
+            for failure in ("identity", "activity", "zero"):
                 lens_run = await repository.create_lens_run(
                     session, run, LensRunInput(lens_id=f"bad-{failure}", lens_type=LensType.ALERT)
                 )
@@ -1008,7 +1011,11 @@ def test_representative_builder_invariant_failures_persist_failed_run_without_ar
                     lens_name="builder invariant",
                 )
                 outcome = await AlertAnalysisPipeline(
-                    provider=Provider(), agent=Agent(), result_builder=CorruptingBuilder(failure)
+                    provider=Provider(
+                        () if failure == "zero" else (_nonzero_alert_record(occurrences=1),)
+                    ),
+                    agent=Agent(),
+                    result_builder=CorruptingBuilder(failure),
                 ).analyze(context)
                 assert outcome == AlertTerminalOutcome(
                     status=LensRunStatus.FAILED,
@@ -1023,7 +1030,7 @@ def test_representative_builder_invariant_failures_persist_failed_run_without_ar
             restored = await repository.get_observation_run(session, run_id)
             assert restored is not None
             failures = [item for item in restored.lens_runs if item.lens_id.startswith("bad-")]
-            assert len(failures) == 2
+            assert len(failures) == 3
             assert all(
                 item.status == "failed" and item.analysis_result is None for item in failures
             )

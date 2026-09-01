@@ -932,3 +932,21 @@ def test_representative_builder_failures_map_exact_reason() -> None:
         _assert_failed(outcome, "agent_failed")
 
     asyncio.run(scenario())
+
+
+def test_zero_record_builder_failure_maps_to_artifact_free_builder_failure() -> None:
+    class ZeroRejectingBuilder(AlertResultBuilder):
+        def _validate_completed_result(self, result: object, context: object) -> object:
+            raise ValueError("zero result invariant rejected")
+
+    async def scenario() -> None:
+        outcome = await AlertAnalysisPipeline(
+            provider=RecordsProvider(()),
+            agent=FailOnCallAgent(),
+            result_builder=ZeroRejectingBuilder(),
+        ).analyze(_context())
+        _assert_failed(outcome, "result_validation_failed")
+        assert outcome.reason.component == "alert_result_builder"
+        assert outcome.artifact is None
+
+    asyncio.run(scenario())

@@ -95,9 +95,12 @@ class AlertAnalysisPipeline:
         self._record_phase("zero_record_gate")
         if not evidence.record_count:
             self._record_phase("result_build")
-            return self._result_builder.usable(
-                context, (), evidence, None, current_rejected, reference_unavailable, zero=True
-            )[1]
+            try:
+                return self._result_builder.usable(
+                    context, (), evidence, None, current_rejected, reference_unavailable, zero=True
+                )[1]
+            except ValueError:
+                return self._failed("result_validation_failed", "alert_result_builder")
         self._record_phase("agent_completion")
         request = AlertAgentRequest(
             lens_name=context.lens_name,
