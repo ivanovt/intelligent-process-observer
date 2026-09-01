@@ -2287,6 +2287,315 @@ def test_lens_runs_allow_same_id_across_types_and_reject_same_type_duplicates(
     asyncio.run(scenario())
 
 
+async def _seed_running_alert_for_terminal_proof(
+    session_factory: async_sessionmaker[AsyncSession], lens_id: str
+) -> tuple[UUID, UUID, AlertLensExecutionContext]:
+    """Create and commit one running Alert LensRun for terminal-write proofs."""
+
+    repository = RuntimePersistenceRepository()
+    async with session_factory() as session:
+        observation = await _seed_observation(session)
+        run = await repository.create_observation_run(
+            session, ObservationRunInput(observation_id=observation.id)
+        )
+        await repository.advance_observation_run(session, run, ObservationRunStatus.RUNNING)
+        lens_run = await repository.create_lens_run(
+            session, run, LensRunInput(lens_id=lens_id, lens_type=LensType.ALERT)
+        )
+        await repository.advance_lens_run(session, lens_run, LensRunStatus.RUNNING)
+        context = AlertLensExecutionContext(
+            identity=AlertIdentity(
+                observation_id=observation.id,
+                observation_run_id=run.id,
+                lens_id=lens_run.lens_id,
+                lens_run_id=lens_run.id,
+            ),
+            provider_scope=AlertProviderScope(source="terminal-proof", query="opaque"),
+            analysis_window=AlertAnalysisWindow(
+                **{
+                    "from": datetime(2026, 9, 1, tzinfo=UTC),
+                    "to": datetime(2026, 9, 1, 1, tzinfo=UTC),
+                }
+            ),
+            lens_name="Terminal proof",
+        )
+        await session.commit()
+        return run.id, lens_run.id, context
+
+
+async def _zero_alert_outcome(context: AlertLensExecutionContext) -> AlertTerminalOutcome:
+    """Build a valid completed outcome without a provider integration."""
+
+    class EmptyProvider:
+        async def acquire(self, scope: object, window: object) -> AlertRecordsAvailable:
+            return AlertRecordsAvailable(source="terminal-proof")
+
+    class UnusedAgent:
+        async def complete(self, *args: object) -> object:
+            raise AssertionError("zero-record proof must not invoke the agent")
+
+    return await AlertAnalysisPipeline(provider=EmptyProvider(), agent=UnusedAgent()).analyze(
+        context
+    )
+
+
+def test_alert_transition_flush_artifact_flush_and_commit_failures_roll_back_all_writes(
+    session_factory: async_sessionmaker[AsyncSession], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Each terminal-write failure leaves the committed Alert run unchanged."""
+
+    async def scenario() -> None:
+        for failure_stage in ("transition_flush", "artifact_flush", "commit"):
+            run_id, lens_run_id, context = await _seed_running_alert_for_terminal_proof(
+                session_factory, f"rollback-{failure_stage}-{uuid4()}"
+            )
+            outcome = await _zero_alert_outcome(context)
+            repository = RuntimePersistenceRepository()
+            async with session_factory() as session:
+                if failure_stage.endswith("flush"):
+                    original_flush = session.flush
+                    flushes = 0
+
+                    async def fail_selected_flush(
+                        *args: object,
+                        selected_stage: str = failure_stage,
+                        flush=original_flush,
+                        **kwargs: object,
+                    ) -> object:
+                        nonlocal flushes
+                        flushes += 1
+                        if flushes == (1 if selected_stage == "transition_flush" else 2):
+                            raise RuntimeError(f"forced {selected_stage}")
+                        return await flush(*args, **kwargs)
+
+                    monkeypatch.setattr(session, "flush", fail_selected_flush)
+                else:
+                    from sqlalchemy import event
+
+                    def fail_commit(_: object) -> None:
+                        raise RuntimeError("forced commit")
+
+                    event.listen(session.sync_session, "before_commit", fail_commit)
+                with pytest.raises(
+                    RuntimeError, match=failure_stage if failure_stage != "commit" else "commit"
+                ):
+                    async with session.begin():
+                        restored = await repository.get_observation_run(session, run_id)
+                        assert restored is not None
+                        lens_run = next(
+                            item for item in restored.lens_runs if item.id == lens_run_id
+                        )
+                        await persist_alert_terminal(session, lens_run, outcome, repository)
+                if failure_stage == "commit":
+                    event.remove(session.sync_session, "before_commit", fail_commit)
+            async with session_factory() as session:
+                restored = await repository.get_observation_run(session, run_id)
+                assert restored is not None
+                lens_run = next(item for item in restored.lens_runs if item.id == lens_run_id)
+                assert lens_run.status == "running"
+                assert lens_run.analysis_result is None
+
+    asyncio.run(scenario())
+
+
+def test_alert_persistence_composer_rejects_every_mismatched_artifact_atomically(
+    session_factory: async_sessionmaker[AsyncSession],
+) -> None:
+    """Composer/repository mismatch rejections cannot durably advance an Alert run."""
+
+    async def scenario() -> None:
+        for mismatch in ("type", "status", "identity", "partial_reason"):
+            run_id, lens_run_id, context = await _seed_running_alert_for_terminal_proof(
+                session_factory, f"mismatch-{mismatch}-{uuid4()}"
+            )
+            outcome = await _zero_alert_outcome(context)
+            assert outcome.artifact is not None
+            artifact = outcome.artifact
+            if mismatch == "type":
+                artifact = artifact.model_copy(update={"result_type": LensType.METRIC})
+            elif mismatch == "status":
+                artifact = artifact.model_copy(update={"status": LensRunStatus.PARTIAL})
+            elif mismatch == "identity":
+                artifact = artifact.model_copy(
+                    update={
+                        "identity": artifact.identity.model_copy(update={"lens_run_id": uuid4()})
+                    }
+                )
+            else:
+                artifact = artifact.model_copy(
+                    update={
+                        "status": LensRunStatus.PARTIAL,
+                        "payload": {
+                            **artifact.payload,
+                            "status": "partial",
+                            "reason": {
+                                "code": "invalid_records",
+                                "component": "current_normalization",
+                            },
+                        },
+                    }
+                )
+                outcome = outcome.model_copy(
+                    update={
+                        "status": LensRunStatus.PARTIAL,
+                        "reason": StructuredReason(
+                            code="reference_unavailable", component="reference_periods"
+                        ),
+                    }
+                )
+            outcome = outcome.model_copy(update={"artifact": artifact})
+            repository = RuntimePersistenceRepository()
+            async with session_factory() as session:
+                with pytest.raises(ValueError):
+                    async with session.begin():
+                        restored = await repository.get_observation_run(session, run_id)
+                        assert restored is not None
+                        lens_run = next(
+                            item for item in restored.lens_runs if item.id == lens_run_id
+                        )
+                        await persist_alert_terminal(session, lens_run, outcome, repository)
+            async with session_factory() as session:
+                restored = await repository.get_observation_run(session, run_id)
+                assert restored is not None
+                lens_run = next(item for item in restored.lens_runs if item.id == lens_run_id)
+                assert lens_run.status == "running" and lens_run.analysis_result is None
+
+    asyncio.run(scenario())
+
+
+def test_alert_terminal_outcome_correlation_matrix(
+    session_factory: async_sessionmaker[AsyncSession],
+) -> None:
+    """Reload completed, both partial causes, and failed Alert terminal outcomes."""
+
+    async def scenario() -> None:
+        repository = RuntimePersistenceRepository()
+        cases = (
+            ("completed", LensRunStatus.COMPLETED, None),
+            (
+                "current-partial",
+                LensRunStatus.PARTIAL,
+                StructuredReason(code="invalid_records", component="current_normalization"),
+            ),
+            (
+                "reference-partial",
+                LensRunStatus.PARTIAL,
+                StructuredReason(code="reference_unavailable", component="reference_periods"),
+            ),
+            ("failed", LensRunStatus.FAILED, StructuredReason(code="agent_failed")),
+        )
+        persisted: list[tuple[UUID, LensRunStatus, StructuredReason | None]] = []
+        async with session_factory() as session:
+            observation = await _seed_observation(session)
+            run = await repository.create_observation_run(
+                session, ObservationRunInput(observation_id=observation.id)
+            )
+            await repository.advance_observation_run(session, run, ObservationRunStatus.RUNNING)
+            for label, status, reason in cases:
+                lens_run = await repository.create_lens_run(
+                    session, run, LensRunInput(lens_id=f"matrix-{label}", lens_type=LensType.ALERT)
+                )
+                await repository.advance_lens_run(session, lens_run, LensRunStatus.RUNNING)
+                context = AlertLensExecutionContext(
+                    identity=AlertIdentity(
+                        observation_id=observation.id,
+                        observation_run_id=run.id,
+                        lens_id=lens_run.lens_id,
+                        lens_run_id=lens_run.id,
+                    ),
+                    provider_scope=AlertProviderScope(source="matrix", query="opaque"),
+                    analysis_window=AlertAnalysisWindow(
+                        **{
+                            "from": datetime(2026, 9, 1, tzinfo=UTC),
+                            "to": datetime(2026, 9, 1, 1, tzinfo=UTC),
+                        }
+                    ),
+                    lens_name="Correlation matrix",
+                )
+                outcome = await _zero_alert_outcome(context)
+                if status is LensRunStatus.FAILED:
+                    outcome = AlertTerminalOutcome(status=status, reason=reason)
+                elif status is LensRunStatus.PARTIAL:
+                    assert reason is not None and outcome.artifact is not None
+                    artifact = outcome.artifact.model_copy(
+                        update={
+                            "status": status,
+                            "payload": {
+                                **outcome.artifact.payload,
+                                "status": status.value,
+                                "reason": reason.model_dump(mode="json"),
+                            },
+                        }
+                    )
+                    outcome = AlertTerminalOutcome(status=status, reason=reason, artifact=artifact)
+                await persist_alert_terminal(session, lens_run, outcome, repository)
+                persisted.append((lens_run.id, status, reason))
+            run_id = run.id
+            await session.commit()
+        async with session_factory() as session:
+            restored = await repository.get_observation_run(session, run_id)
+            assert restored is not None
+            by_id = {item.id: item for item in restored.lens_runs}
+            for lens_run_id, status, reason in persisted:
+                lens_run = by_id[lens_run_id]
+                assert lens_run.status == status.value
+                assert lens_run.reason == (reason.model_dump(mode="json") if reason else None)
+                if status is LensRunStatus.FAILED:
+                    assert lens_run.analysis_result is None
+                else:
+                    assert lens_run.analysis_result is not None
+                    assert lens_run.analysis_result.status == status.value
+
+    asyncio.run(scenario())
+
+
+def test_alert_pipeline_phase_order_keeps_long_work_outside_transaction(
+    session_factory: async_sessionmaker[AsyncSession],
+) -> None:
+    """The caller opens its transaction only after the usable outcome is fully built."""
+
+    async def scenario() -> None:
+        run_id, lens_run_id, context = await _seed_running_alert_for_terminal_proof(
+            session_factory, f"phase-order-{uuid4()}"
+        )
+        phases: list[str] = []
+
+        class EmptyProvider:
+            async def acquire(self, scope: object, window: object) -> AlertRecordsAvailable:
+                return AlertRecordsAvailable(source="terminal-proof")
+
+        class UnusedAgent:
+            async def complete(self, *args: object) -> object:
+                raise AssertionError("zero record path must not invoke agent")
+
+        outcome = await AlertAnalysisPipeline(
+            provider=EmptyProvider(), agent=UnusedAgent(), record_phase=phases.append
+        ).analyze(context)
+        repository = RuntimePersistenceRepository()
+        async with session_factory() as session:
+            phases.append("transaction_open")
+            async with session.begin():
+                restored = await repository.get_observation_run(session, run_id)
+                assert restored is not None
+                lens_run = next(item for item in restored.lens_runs if item.id == lens_run_id)
+                await persist_alert_terminal(session, lens_run, outcome, repository)
+                phases.append("terminal_write")
+            phases.append("transaction_commit")
+        assert phases == [
+            "provider_acquisition",
+            "current_normalization",
+            "mandatory_analysis",
+            "reference_acquisition",
+            "zero_record_gate",
+            "result_build",
+            "transaction_open",
+            "terminal_write",
+            "transaction_commit",
+        ]
+
+    asyncio.run(scenario())
+
+
 def test_final_migration_upgrades_and_guards_unsafe_downgrade(
     postgres_url: str,
     session_factory: async_sessionmaker[AsyncSession],

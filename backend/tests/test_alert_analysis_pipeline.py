@@ -1001,3 +1001,59 @@ def test_zero_record_builder_failure_maps_to_artifact_free_builder_failure() -> 
         assert outcome.artifact is None
 
     asyncio.run(scenario())
+
+
+def test_pre_transaction_work_finishes_before_persistence_composition() -> None:
+    """Record a representative usable path before the caller opens its transaction."""
+
+    async def scenario() -> None:
+        phases: list[str] = []
+
+        class ToolUsingAgent:
+            async def complete(self, request: object, tools: object) -> AlertAgentCompletion:
+                await tools.execute("recurrence_concentration_analysis", {})
+                phases.append("optional_tool_execution")
+                return AlertAgentCompletion(
+                    findings=(
+                        AlertFinding(
+                            id="phase-order",
+                            statement="grounded",
+                            evidence_refs=("alert://current/phase-order",),
+                        ),
+                    ),
+                    overall_importance="high",
+                )
+
+        outcome = await AlertAnalysisPipeline(
+            provider=RecordsProvider(
+                (
+                    _record(
+                        "phase-order",
+                        started=datetime(2026, 8, 31, 23, tzinfo=UTC),
+                        ended=None,
+                        occurrences=1,
+                    ),
+                )
+            ),
+            agent=ToolUsingAgent(),
+            record_phase=phases.append,
+        ).analyze(_context())
+        assert outcome.artifact is not None
+        phases.append("caller_transaction_open")
+        phases.append("terminal_persistence")
+        phases.append("caller_commit")
+        assert phases == [
+            "provider_acquisition",
+            "current_normalization",
+            "mandatory_analysis",
+            "reference_acquisition",
+            "zero_record_gate",
+            "agent_completion",
+            "optional_tool_execution",
+            "result_build",
+            "caller_transaction_open",
+            "terminal_persistence",
+            "caller_commit",
+        ]
+
+    asyncio.run(scenario())

@@ -17,6 +17,8 @@ from app.infrastructure.persistence.runtime_contracts import (
 
 
 class StrictAlertModel(BaseModel):
+    """Base model that rejects unknown Alert contract fields."""
+
     """Reject undeclared fields on immutable Alert pipeline values."""
 
     model_config = ConfigDict(extra="forbid", frozen=True, strict=True)
@@ -29,6 +31,8 @@ def _utc(value: datetime) -> datetime:
 
 
 class AlertIdentity(StrictAlertModel):
+    """Immutable runtime identity of one Alert analysis."""
+
     """Runtime identity inherited from one existing LensRun."""
 
     observation_id: UUID
@@ -38,6 +42,8 @@ class AlertIdentity(StrictAlertModel):
 
 
 class AlertAnalysisWindow(StrictAlertModel):
+    """UTC interval selected by the existing LensRun."""
+
     """The fixed time boundary for one Alert acquisition."""
 
     from_: datetime = Field(
@@ -58,6 +64,8 @@ class AlertAnalysisWindow(StrictAlertModel):
 
 
 class AlertProviderScope(StrictAlertModel):
+    """Opaque frozen provider source and selector scope."""
+
     """Opaque, frozen provider inputs derived from an Alert Lens definition."""
 
     source: str = Field(min_length=1)
@@ -65,6 +73,8 @@ class AlertProviderScope(StrictAlertModel):
 
 
 class AlertLensExecutionContext(StrictAlertModel):
+    """All immutable inputs permitted to one Alert pipeline execution."""
+
     """Immutable scope for analyzing one already-running Alert LensRun."""
 
     identity: AlertIdentity
@@ -90,6 +100,8 @@ class AlertLensExecutionContext(StrictAlertModel):
 
 
 class AlertProviderImportance(StrictAlertModel):
+    """Provider-native importance value retained without interpretation."""
+
     """Provider-native importance retained without cross-provider mapping."""
 
     type: str = Field(min_length=1)
@@ -97,6 +109,8 @@ class AlertProviderImportance(StrictAlertModel):
 
 
 class AlertProviderRecord(StrictAlertModel):
+    """Transport-neutral raw Alert record accepted from a provider port."""
+
     """Provider-mapped record awaiting canonical lifecycle normalization."""
 
     id: str = Field(min_length=1)
@@ -122,6 +136,8 @@ class AlertProviderRecord(StrictAlertModel):
 
 
 class AlertRecordsAvailable(StrictAlertModel):
+    """Successful provider acquisition containing raw Alert records."""
+
     """Successful provider response with mapped records only."""
 
     # Provider mapping can leave malformed values for application-owned normalization.
@@ -130,6 +146,8 @@ class AlertRecordsAvailable(StrictAlertModel):
 
 
 class AlertProviderUnavailable(StrictAlertModel):
+    """Typed unavailable outcome for a non-current provider request."""
+
     """Typed unavailable provider outcome reserved for a later failure slice."""
 
     state: Literal["unavailable"] = "unavailable"
@@ -137,6 +155,8 @@ class AlertProviderUnavailable(StrictAlertModel):
 
 
 class AlertProviderFailure(StrictAlertModel):
+    """Typed provider failure outcome with transient diagnostics."""
+
     """Typed non-timeout failure from a provider acquisition attempt."""
 
     state: Literal["failed"] = "failed"
@@ -144,6 +164,8 @@ class AlertProviderFailure(StrictAlertModel):
 
 
 class AlertProviderTimeout(StrictAlertModel):
+    """Typed provider timeout outcome with transient diagnostics."""
+
     """Typed timeout from a provider acquisition attempt."""
 
     state: Literal["timeout"] = "timeout"
@@ -156,6 +178,8 @@ AlertProviderOutcome = (
 
 
 class AlertStatus(StrictAlertModel):
+    """Canonical Alert lifecycle status derived from provider fields."""
+
     """Canonical and source lifecycle status for one normalized Alert."""
 
     normalized: Literal["active", "resolved", "unknown"]
@@ -163,6 +187,8 @@ class AlertStatus(StrictAlertModel):
 
 
 class CanonicalAlertRecord(StrictAlertModel):
+    """Validated Alert record used by deterministic and agent stages."""
+
     """Validated current Alert record used for evidence and result projection."""
 
     id: str = Field(min_length=1)
@@ -183,6 +209,8 @@ class CanonicalAlertRecord(StrictAlertModel):
 
 
 class AlertActivity(StrictAlertModel):
+    """Deterministic current-record and occurrence totals."""
+
     """Top-level count evidence for current normalized alerts."""
 
     record_count: int = Field(ge=0)
@@ -190,6 +218,8 @@ class AlertActivity(StrictAlertModel):
 
 
 class AlertStatusDistribution(StrictAlertModel):
+    """Deterministic distribution of canonical lifecycle statuses."""
+
     """Top-level record-based status counts for current alerts."""
 
     active: int = Field(ge=0)
@@ -198,6 +228,8 @@ class AlertStatusDistribution(StrictAlertModel):
 
 
 class AlertDurationStatistics(StrictAlertModel):
+    """Finite duration aggregates for non-empty Alert evidence."""
+
     """Finite full-lifecycle duration statistics in seconds."""
 
     min_seconds: float = Field(ge=0, allow_inf_nan=False)
@@ -206,6 +238,8 @@ class AlertDurationStatistics(StrictAlertModel):
 
 
 class AlertProviderImportanceDistribution(StrictAlertModel):
+    """Grouped native provider importance values for current records."""
+
     """Grouped native provider importance values of one declared type."""
 
     type: str = Field(min_length=1)
@@ -213,6 +247,8 @@ class AlertProviderImportanceDistribution(StrictAlertModel):
 
 
 class AlertMandatoryEvidence(StrictAlertModel):
+    """Deterministic evidence required before Alert agent completion."""
+
     """Deterministic mandatory evidence formed before the Alert agent gate."""
 
     alert_activity: AlertActivity = Field(
@@ -237,6 +273,8 @@ class AlertMandatoryEvidence(StrictAlertModel):
 
 
 class AlertFinding(StrictAlertModel):
+    """One agent finding grounded in canonical Alert evidence references."""
+
     """A Lens-local agent finding grounded in persisted Alert evidence."""
 
     id: str = Field(min_length=1)
@@ -245,6 +283,8 @@ class AlertFinding(StrictAlertModel):
 
 
 class AlertAgentRequest(StrictAlertModel):
+    """Strict bounded projection delivered to the Alert analysis agent."""
+
     """Exact bounded source-agnostic projection supplied to the Alert agent."""
 
     lens_name: str = Field(min_length=1)
@@ -262,18 +302,24 @@ AlertOptionalToolName = Literal[
 
 
 class RecurrenceConcentrationToolDescriptor(StrictAlertModel):
+    """Descriptor for the admitted recurrence optional tool."""
+
     """Describe the bounded recurrence concentration capability."""
 
     name: Literal["recurrence_concentration_analysis"] = "recurrence_concentration_analysis"
 
 
 class DurationOutlierToolDescriptor(StrictAlertModel):
+    """Descriptor for the admitted duration-outlier optional tool."""
+
     """Describe the bounded high-side duration outlier capability."""
 
     name: Literal["duration_outlier_analysis"] = "duration_outlier_analysis"
 
 
 class ReferencePatternToolDescriptor(StrictAlertModel):
+    """Descriptor for the admitted reference-pattern optional tool."""
+
     """Describe the bounded reference comparison pattern capability."""
 
     name: Literal["reference_pattern_analysis"] = "reference_pattern_analysis"
@@ -292,6 +338,8 @@ FIXED_ALERT_OPTIONAL_TOOLS: AlertOptionalToolDescriptors = (
 
 
 class AlertOptionalToolSuccess(StrictAlertModel):
+    """Successful optional-tool execution outcome."""
+
     """A transient successful optional-tool result."""
 
     name: AlertOptionalToolName
@@ -300,6 +348,8 @@ class AlertOptionalToolSuccess(StrictAlertModel):
 
 
 class AlertOptionalToolNotApplicable(StrictAlertModel):
+    """Optional-tool outcome for valid but inapplicable evidence."""
+
     """A normal transient non-applicability optional-tool result."""
 
     name: AlertOptionalToolName
@@ -308,6 +358,8 @@ class AlertOptionalToolNotApplicable(StrictAlertModel):
 
 
 class AlertOptionalToolFailed(StrictAlertModel):
+    """Best-effort optional-tool failure outcome."""
+
     """A transient failed optional-tool result."""
 
     name: AlertOptionalToolName
@@ -316,6 +368,8 @@ class AlertOptionalToolFailed(StrictAlertModel):
 
 
 class AlertOptionalToolTimedOut(StrictAlertModel):
+    """Best-effort optional-tool timeout outcome."""
+
     """A transient timed-out optional-tool result."""
 
     name: AlertOptionalToolName
@@ -324,6 +378,8 @@ class AlertOptionalToolTimedOut(StrictAlertModel):
 
 
 class AlertOptionalToolRejected(StrictAlertModel):
+    """Rejected optional-tool request that never executes an evaluator."""
+
     """A request rejected before optional-tool evaluation."""
 
     outcome: Literal["rejected"] = "rejected"
@@ -340,6 +396,8 @@ AlertOptionalToolOutcome = AlertOptionalToolExecutionOutcome | AlertOptionalTool
 
 
 class AlertOptionalToolAttempt(StrictAlertModel):
+    """One budgeted optional-tool request and its outcome."""
+
     """One internal ordered optional-tool admission and execution record."""
 
     ordinal: int = Field(gt=0)
@@ -349,6 +407,8 @@ class AlertOptionalToolAttempt(StrictAlertModel):
 
 
 class AlertUnsuccessfulToolCall(StrictAlertModel):
+    """Persistable minimal trace of an unsuccessful optional-tool call."""
+
     """The minimal public trace for one failed or timed-out optional call."""
 
     tool: AlertOptionalToolName
@@ -356,12 +416,16 @@ class AlertUnsuccessfulToolCall(StrictAlertModel):
 
 
 class AlertOptionalToolExecution(StrictAlertModel):
+    """Optional-tool trace section included only when unsuccessful calls exist."""
+
     """Minimal public projection of unsuccessful optional calls only."""
 
     unsuccessful_calls: tuple[AlertUnsuccessfulToolCall, ...] = Field(min_length=1)
 
 
 class AlertOccurrenceComparison(StrictAlertModel):
+    """Arithmetic comparison between current and one reference occurrence total."""
+
     """Current occurrence activity relative to one successful reference period."""
 
     current: int = Field(ge=0)
@@ -371,6 +435,8 @@ class AlertOccurrenceComparison(StrictAlertModel):
 
 
 class AlertReferenceComparison(StrictAlertModel):
+    """Configured reference offset and its successful occurrence comparison."""
+
     """Compact evidence retained for one successful configured reference offset."""
 
     offset: str = Field(min_length=2)
@@ -378,6 +444,8 @@ class AlertReferenceComparison(StrictAlertModel):
 
 
 class AlertAgentCompletion(StrictAlertModel):
+    """Strict final finding and importance output from the Alert agent."""
+
     """Strict bounded reasoning output returned before result construction."""
 
     findings: tuple[AlertFinding, ...]
@@ -391,6 +459,8 @@ class AlertAgentCompletion(StrictAlertModel):
 
 
 class AlertResultProvenance(StrictAlertModel):
+    """Source and generation metadata for an Alert result artifact."""
+
     """Stable source provenance for a generated Alert artifact."""
 
     source_provider: str = Field(
@@ -407,6 +477,8 @@ class AlertResultProvenance(StrictAlertModel):
 
 
 class CompletedAlertAnalysisResult(StrictAlertModel):
+    """Strict completed AlertAnalysisResult payload."""
+
     """Strict completed Alert 1.0 artifact for current valid records."""
 
     schema_version: Literal["1.0"] = "1.0"
@@ -522,6 +594,8 @@ CompletedZeroAlertAnalysisResult = CompletedAlertAnalysisResult
 
 
 class PartialAlertAnalysisResult(CompletedAlertAnalysisResult):
+    """Usable Alert result carrying its single structured partial reason."""
+
     """Strict usable Alert artifact with one approved incompleteness reason."""
 
     status: Literal["partial"] = "partial"
@@ -538,6 +612,8 @@ class PartialAlertAnalysisResult(CompletedAlertAnalysisResult):
 
 
 class AlertTerminalOutcome(StrictAlertModel):
+    """ORM-neutral terminal status, reason, and optional artifact envelope."""
+
     """ORM-neutral terminal outcome ready for caller-owned transaction persistence."""
 
     status: Literal[LensRunStatus.COMPLETED, LensRunStatus.PARTIAL, LensRunStatus.FAILED] = (
