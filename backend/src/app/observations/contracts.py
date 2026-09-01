@@ -90,6 +90,25 @@ class MetricLensCreate(ApiModel):
         return self
 
 
+class AlertApiModel(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+
+
+class AlertSelectorCreate(AlertApiModel):
+    query: str = Field(min_length=1)
+
+
+class AlertLensCreate(AlertApiModel):
+    id: str = Field(pattern=IDENTIFIER_PATTERN)
+    name: str = Field(min_length=1)
+    description: str | None = None
+    type: Literal["alert"]
+    source: Literal["jira_track_and_release"]
+    selector: AlertSelectorCreate
+    analysis_objectives: list[str] = Field(default_factory=list)
+    reference_periods: list[str] = Field(default_factory=list)
+
+
 class RelationshipCreate(ApiModel):
     id: str = Field(pattern=IDENTIFIER_PATTERN)
     name: str = Field(min_length=1)
@@ -115,11 +134,14 @@ class ObservationCreate(ApiModel):
     name: str = Field(min_length=1)
     description: str | None = None
     objective: str = Field(min_length=1)
-    lenses: list[MetricLensCreate]
-    relationships: list[RelationshipCreate]
+    lenses: list[MetricLensCreate] = Field(default_factory=list)
+    alert_lenses: list[AlertLensCreate] = Field(default_factory=list)
+    relationships: list[RelationshipCreate] = Field(default_factory=list)
 
     @model_validator(mode="after")
     def validate_topology(self) -> ObservationCreate:
+        if not self.lenses and not self.alert_lenses:
+            raise ValueError("Observation definition must contain at least one Lens")
         lens_ids = [lens.id for lens in self.lenses]
         if len(set(lens_ids)) != len(lens_ids):
             raise ValueError("lens IDs must be unique")
@@ -143,6 +165,13 @@ class LensReference(ApiModel):
     href: str
 
 
+class AlertLensReference(ApiModel):
+    id: str
+    name: str
+    type: Literal["alert"]
+    href: str
+
+
 class RelationshipReference(ApiModel):
     id: str
     name: str
@@ -156,11 +185,17 @@ class ObservationSummary(ApiModel):
     objective: str
     schema_version: int
     lenses: list[LensReference]
+    alert_lenses: list[AlertLensReference] = Field(default_factory=list)
     relationships: list[RelationshipReference]
     href: str
 
 
 class MetricLensResponse(MetricLensCreate):
+    href: str
+    observation_href: str
+
+
+class AlertLensResponse(AlertLensCreate):
     href: str
     observation_href: str
 
@@ -172,6 +207,7 @@ class RelationshipResponse(RelationshipCreate):
 
 class ObservationResponse(ObservationSummary):
     lenses: list[MetricLensResponse]
+    alert_lenses: list[AlertLensResponse] = Field(default_factory=list)
     relationships: list[RelationshipResponse]
 
 

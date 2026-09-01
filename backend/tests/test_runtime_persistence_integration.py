@@ -9,17 +9,24 @@ from uuid import UUID, uuid4
 import pytest
 from alembic import command
 from alembic.config import Config
+from sqlalchemy import func, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
 from app.core.settings import get_settings
 from app.infrastructure.persistence.models import (
+    AlertLensModel,
+    MetricLensModel,
     ObservationAnalysisResultModel,
     ObservationModel,
+    ObservationRelationshipModel,
     ObservationReportModel,
     RelationshipEvaluationModel,
 )
-from app.infrastructure.persistence.repository import RuntimePersistenceRepository
+from app.infrastructure.persistence.repository import (
+    ObservationRepository,
+    RuntimePersistenceRepository,
+)
 from app.infrastructure.persistence.runtime_contracts import (
     LensAnalysisResultInput,
     LensResultIdentity,
@@ -34,6 +41,8 @@ from app.infrastructure.persistence.runtime_contracts import (
     RelationshipEvaluationInput,
     StructuredReason,
 )
+from app.observations.contracts import ObservationCreate
+from app.observations.service import ObservationDefinitionService
 
 _BACKEND_ROOT = Path(__file__).resolve().parents[1]
 
@@ -344,6 +353,68 @@ def test_runtime_persistence_round_trip_and_artifact_absence(
             assert restored.observation_analysis_result is not None
             assert restored.observation_analysis_result.report is not None
             assert len(restored.relationship_evaluations) == 1
+
+    asyncio.run(scenario())
+
+
+def test_postgresql_alert_definition_walking_skeleton_and_empty_rejection(
+    session_factory: async_sessionmaker[AsyncSession],
+) -> None:
+    async def scenario() -> None:
+        service = ObservationDefinitionService(ObservationRepository())
+        definition = ObservationCreate.model_validate(
+            {
+                "name": f"Release health {uuid4()}",
+                "objective": "Observe release alerts.",
+                "alert_lenses": [
+                    {
+                        "id": "release-alerts",
+                        "type": "alert",
+                        "name": "Release alerts",
+                        "source": "jira_track_and_release",
+                        "selector": {"query": "project = REL", "future_field": "ignored"},
+                        "future_field": "ignored",
+                    }
+                ],
+            }
+        )
+        async with session_factory() as session:
+            created = await service.create(session, definition)
+            assert created.schema_version == 1
+            assert created.lenses == []
+            assert created.relationships == []
+            assert created.alert_lenses[0].analysis_objectives == []
+            assert created.alert_lenses[0].reference_periods == []
+            assert created.alert_lenses[0].href == (f"{created.href}/alert-lenses/release-alerts")
+
+            detail = await service.get(session, created.id)
+            nested = await service.get_alert_lens(session, created.id, "release-alerts")
+            assert detail.alert_lenses[0] == nested
+            assert "future_field" not in nested.model_dump_json()
+
+            rows_before = [
+                await session.scalar(select(func.count()).select_from(model))
+                for model in (
+                    ObservationModel,
+                    MetricLensModel,
+                    AlertLensModel,
+                    ObservationRelationshipModel,
+                )
+            ]
+            with pytest.raises(ValueError, match="at least one Lens"):
+                ObservationCreate.model_validate(
+                    {"name": "No lenses", "objective": "Must be rejected.", "lenses": []}
+                )
+            rows_after = [
+                await session.scalar(select(func.count()).select_from(model))
+                for model in (
+                    ObservationModel,
+                    MetricLensModel,
+                    AlertLensModel,
+                    ObservationRelationshipModel,
+                )
+            ]
+            assert rows_before == rows_after
 
     asyncio.run(scenario())
 

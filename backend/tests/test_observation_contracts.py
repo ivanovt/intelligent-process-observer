@@ -159,10 +159,81 @@ def test_capabilities_and_relative_hrefs_do_not_expose_connection_details(monkey
         objective="Detect instability.",
         schema_version=1,
         lenses=[],
+        alert_lenses=[],
         relationships=[],
     )
     summary = service.observation_summary(observation)
     assert summary.href == f"/api/v1/observations/{observation.id}"
+
+
+def test_alert_contract_defaults_and_ignores_unknown_fields() -> None:
+    definition = ObservationCreate.model_validate(
+        {
+            "name": "Release health",
+            "objective": "Observe release alerts.",
+            "alert_lenses": [
+                {
+                    "id": "release-alerts",
+                    "type": "alert",
+                    "name": "Release alerts",
+                    "source": "jira_track_and_release",
+                    "selector": {"query": "project = REL", "future_selector": "ignored"},
+                    "future_alert_field": {"ignored": True},
+                }
+            ],
+        }
+    )
+
+    alert = definition.alert_lenses[0]
+    assert definition.lenses == []
+    assert definition.relationships == []
+    assert alert.description is None
+    assert alert.analysis_objectives == []
+    assert alert.reference_periods == []
+    assert alert.model_dump() == {
+        "id": "release-alerts",
+        "name": "Release alerts",
+        "description": None,
+        "type": "alert",
+        "source": "jira_track_and_release",
+        "selector": {"query": "project = REL"},
+        "analysis_objectives": [],
+        "reference_periods": [],
+    }
+
+
+@pytest.mark.parametrize("payload", [{}, {"lenses": [], "alert_lenses": []}])
+def test_definition_contract_requires_one_lens_across_type_specific_collections(payload) -> None:
+    with pytest.raises(ValidationError):
+        ObservationCreate.model_validate(
+            {"name": "No lenses", "objective": "Must be rejected.", **payload}
+        )
+
+
+def test_repository_builds_alert_child_with_defaulted_values() -> None:
+    session = RecordingSession()
+    definition = ObservationCreate.model_validate(
+        {
+            "name": "Release health",
+            "objective": "Observe release alerts.",
+            "alert_lenses": [
+                {
+                    "id": "release-alerts",
+                    "type": "alert",
+                    "name": "Release alerts",
+                    "source": "jira_track_and_release",
+                    "selector": {"query": "project = REL"},
+                }
+            ],
+        }
+    )
+
+    aggregate = asyncio.run(ObservationRepository().create(session, definition))
+
+    assert aggregate.lenses == []
+    assert aggregate.alert_lenses[0].selector_query == "project = REL"
+    assert aggregate.alert_lenses[0].analysis_objectives == []
+    assert aggregate.alert_lenses[0].reference_periods == []
 
 
 class StubAdapter:

@@ -41,6 +41,9 @@ class ObservationModel(Base):
         cascade="all, delete-orphan",
         order_by="MetricLensModel.position",
     )
+    alert_lenses: Mapped[list[AlertLensModel]] = relationship(
+        back_populates="observation", order_by="AlertLensModel.position"
+    )
     relationships: Mapped[list[ObservationRelationshipModel]] = relationship(
         back_populates="observation",
         cascade="all, delete-orphan",
@@ -69,6 +72,27 @@ class MetricLensModel(Base):
     position: Mapped[int] = mapped_column(Integer)
 
     observation: Mapped[ObservationModel] = relationship(back_populates="lenses")
+
+
+class AlertLensModel(Base):
+    __tablename__ = "alert_lens_definitions"
+    __table_args__ = (UniqueConstraint("observation_id", "lens_id"),)
+
+    id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), primary_key=True, default=uuid4)
+    observation_id: Mapped[UUID] = mapped_column(
+        ForeignKey("observation_definitions.id"), nullable=False
+    )
+    lens_id: Mapped[str] = mapped_column(String(255))
+    lens_type: Mapped[str] = mapped_column(String(16))
+    name: Mapped[str] = mapped_column(String(255))
+    description: Mapped[str | None] = mapped_column(Text, nullable=True)
+    source: Mapped[str] = mapped_column(String(64))
+    selector_query: Mapped[str] = mapped_column(Text)
+    analysis_objectives: Mapped[list[str]] = mapped_column(JSONType)
+    reference_periods: Mapped[list[str]] = mapped_column(JSONType)
+    position: Mapped[int] = mapped_column(Integer)
+
+    observation: Mapped[ObservationModel] = relationship(back_populates="alert_lenses")
 
 
 class ObservationRelationshipModel(Base):
