@@ -170,7 +170,7 @@ class ObservationDefinitionService:
     def observation_response(self, model: ObservationModel) -> ObservationResponse:
         summary = self.observation_summary(model)
         return ObservationResponse(
-            **summary.model_dump(),
+            **summary.model_dump(exclude={"lenses", "alert_lenses", "relationships"}),
             lenses=[self.lens_response(model, lens) for lens in model.lenses],
             alert_lenses=[self.alert_lens_response(model, lens) for lens in model.alert_lenses],
             relationships=[

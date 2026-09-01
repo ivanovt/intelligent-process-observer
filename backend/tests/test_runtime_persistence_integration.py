@@ -383,6 +383,8 @@ def test_postgresql_alert_definition_walking_skeleton_and_empty_rejection(
             assert created.schema_version == 1
             assert created.lenses == []
             assert created.relationships == []
+            assert created.alert_lenses[0].id == "release-alerts"
+            assert created.alert_lenses[0].type == "alert"
             assert created.alert_lenses[0].analysis_objectives == []
             assert created.alert_lenses[0].reference_periods == []
             assert created.alert_lenses[0].href == (f"{created.href}/alert-lenses/release-alerts")
