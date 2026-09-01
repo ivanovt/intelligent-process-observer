@@ -527,12 +527,12 @@ def test_mandatory_analysis_failure_is_terminal_without_artifact(
             return AlertRecordsAvailable(
                 source="fake",
                 records=(
-                    {
-                        "id": "valid",
-                        "title": "Valid",
-                        "started_at": "2026-09-01T00:30:00Z",
-                        "source_status": "open",
-                    },
+                    AlertProviderRecord(
+                        id="valid",
+                        title="Valid",
+                        started_at=datetime(2026, 9, 1, 0, 30, tzinfo=UTC),
+                        source_status="Open",
+                    ),
                 ),
             )
 
