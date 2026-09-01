@@ -20,6 +20,12 @@ json_type = sa.JSON().with_variant(postgresql.JSONB(astext_type=sa.Text()), "pos
 
 
 def upgrade() -> None:
+    op.drop_constraint("lens_runs_observation_run_id_lens_id_key", "lens_runs", type_="unique")
+    op.create_unique_constraint(
+        "uq_lens_runs_observation_run_id_lens_type_lens_id",
+        "lens_runs",
+        ["observation_run_id", "lens_type", "lens_id"],
+    )
     op.create_table(
         "alert_lens_definitions",
         sa.Column("id", sa.Uuid(), nullable=False),
@@ -42,4 +48,34 @@ def upgrade() -> None:
 
 
 def downgrade() -> None:
+    duplicate_identity_exists = (
+        op.get_bind()
+        .execute(
+            sa.text(
+                """
+            SELECT EXISTS (
+                SELECT 1
+                FROM lens_runs
+                GROUP BY observation_run_id, lens_id
+                HAVING COUNT(DISTINCT lens_type) > 1
+            )
+            """
+            )
+        )
+        .scalar()
+    )
+    if duplicate_identity_exists:
+        raise RuntimeError(
+            "Cannot downgrade: lens_runs contains same-ID executions across Lens types. "
+            "Remove or preserve those runs before restoring the legacy unique key."
+        )
+
+    op.drop_constraint(
+        "uq_lens_runs_observation_run_id_lens_type_lens_id", "lens_runs", type_="unique"
+    )
+    op.create_unique_constraint(
+        "lens_runs_observation_run_id_lens_id_key",
+        "lens_runs",
+        ["observation_run_id", "lens_id"],
+    )
     op.drop_table("alert_lens_definitions")

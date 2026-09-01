@@ -11,7 +11,7 @@ import httpx
 import pytest
 from alembic import command
 from alembic.config import Config
-from sqlalchemy import delete, func, inspect, select
+from sqlalchemy import delete, func, inspect, select, text
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 from sqlalchemy.orm import selectinload
@@ -19,6 +19,7 @@ from sqlalchemy.orm import selectinload
 from app.core.settings import get_settings
 from app.infrastructure.persistence.models import (
     AlertLensModel,
+    LensRunModel,
     MetricLensModel,
     ObservationAnalysisResultModel,
     ObservationModel,
@@ -835,3 +836,212 @@ def test_runtime_cardinality_constraints_reject_duplicate_writes(
             await session.rollback()
 
     asyncio.run(scenario())
+
+
+def test_lens_runs_allow_same_id_across_types_and_reject_same_type_duplicates(
+    session_factory: async_sessionmaker[AsyncSession],
+) -> None:
+    async def scenario() -> None:
+        repository = RuntimePersistenceRepository()
+        lens_id = f"shared-lens-{uuid4()}"
+        async with session_factory() as session:
+            observation = await _seed_observation(session)
+            observation_run = await repository.create_observation_run(
+                session, ObservationRunInput(observation_id=observation.id)
+            )
+            metric_lens_run = await repository.create_lens_run(
+                session,
+                observation_run,
+                LensRunInput(lens_id=lens_id, lens_type=LensType.METRIC),
+            )
+            alert_lens_run = await repository.create_lens_run(
+                session,
+                observation_run,
+                LensRunInput(lens_id=lens_id, lens_type=LensType.ALERT),
+            )
+            await repository.advance_lens_run(session, metric_lens_run, LensRunStatus.RUNNING)
+            await repository.advance_lens_run(session, metric_lens_run, LensRunStatus.COMPLETED)
+            await repository.advance_lens_run(session, alert_lens_run, LensRunStatus.RUNNING)
+            await repository.advance_lens_run(
+                session,
+                alert_lens_run,
+                LensRunStatus.FAILED,
+                reason=StructuredReason(code="data_source_unavailable"),
+            )
+            observation_run_id = observation_run.id
+            await session.commit()
+
+        async with session_factory() as session:
+            restored = await repository.get_observation_run(session, observation_run_id)
+            assert restored is not None
+            restored_by_type = {lens_run.lens_type: lens_run for lens_run in restored.lens_runs}
+            assert set(restored_by_type) == {LensType.METRIC.value, LensType.ALERT.value}
+            assert restored_by_type[LensType.METRIC.value].status == LensRunStatus.COMPLETED.value
+            assert restored_by_type[LensType.ALERT.value].status == LensRunStatus.FAILED.value
+            assert restored_by_type[LensType.ALERT.value].reason == {
+                "code": "data_source_unavailable",
+                "component": None,
+            }
+
+            session.add(
+                LensRunModel(
+                    observation_run_id=observation_run_id,
+                    lens_id=lens_id,
+                    lens_type=LensType.METRIC.value,
+                    status=LensRunStatus.PENDING.value,
+                    provenance={},
+                    execution_context={},
+                )
+            )
+            with pytest.raises(IntegrityError):
+                await session.flush()
+            await session.rollback()
+
+        async with session_factory() as session:
+            restored = await repository.get_observation_run(session, observation_run_id)
+            assert restored is not None
+            assert {(lens_run.lens_type, lens_run.lens_id) for lens_run in restored.lens_runs} == {
+                (LensType.METRIC.value, lens_id),
+                (LensType.ALERT.value, lens_id),
+            }
+
+    asyncio.run(scenario())
+
+
+def test_final_migration_upgrades_and_guards_unsafe_downgrade(
+    postgres_url: str,
+    session_factory: async_sessionmaker[AsyncSession],
+) -> None:
+    config = Config(str(_BACKEND_ROOT / "alembic.ini"))
+    config.set_main_option("script_location", str(_BACKEND_ROOT / "migrations"))
+    config.set_main_option("sqlalchemy.url", postgres_url)
+
+    async def assert_constraint_and_alert_table(
+        *, expected_constraint: tuple[str, list[str]], alert_table_exists: bool
+    ) -> None:
+        async with session_factory() as session:
+            connection = await session.connection()
+            constraints = await connection.run_sync(
+                lambda connection: inspect(connection).get_unique_constraints("lens_runs")
+            )
+            table_names = await connection.run_sync(
+                lambda connection: inspect(connection).get_table_names()
+            )
+        assert expected_constraint in [
+            (constraint["name"], constraint["column_names"]) for constraint in constraints
+        ]
+        assert ("alert_lens_definitions" in table_names) is alert_table_exists
+
+    async def create_unsafe_same_id_rows() -> tuple[UUID, UUID, UUID]:
+        repository = RuntimePersistenceRepository()
+        async with session_factory() as session:
+            observation = await _seed_observation(session)
+            observation_run = await repository.create_observation_run(
+                session, ObservationRunInput(observation_id=observation.id)
+            )
+            for lens_type in (LensType.METRIC, LensType.ALERT):
+                await repository.create_lens_run(
+                    session,
+                    observation_run,
+                    LensRunInput(lens_id="unsafe-downgrade-id", lens_type=lens_type),
+                )
+            alert = AlertLensModel(
+                observation_id=observation.id,
+                lens_id="unsafe-alert-definition",
+                lens_type="alert",
+                name="Unsafe downgrade alert",
+                source="jira_track_and_release",
+                selector_query="project = UNSAFE",
+                analysis_objectives=[],
+                reference_periods=[],
+                position=0,
+            )
+            session.add(alert)
+            await session.commit()
+            return observation.id, observation_run.id, alert.id
+
+    async def remove_cross_type_duplicate_rows() -> None:
+        async with session_factory() as session:
+            await session.execute(
+                text(
+                    """
+                    DELETE FROM lens_runs
+                    WHERE (observation_run_id, lens_id) IN (
+                        SELECT observation_run_id, lens_id
+                        FROM lens_runs
+                        GROUP BY observation_run_id, lens_id
+                        HAVING COUNT(DISTINCT lens_type) > 1
+                    )
+                    """
+                )
+            )
+            await session.commit()
+
+    async def assert_unsafe_rows_preserved(
+        observation_id: UUID, observation_run_id: UUID, alert_id: UUID
+    ) -> None:
+        async with session_factory() as session:
+            alert = await session.get(AlertLensModel, alert_id)
+            assert alert is not None and alert.observation_id == observation_id
+            assert (
+                await session.scalar(
+                    select(func.count())
+                    .select_from(ObservationRunModel)
+                    .where(ObservationRunModel.id == observation_run_id)
+                )
+                == 1
+            )
+            assert (
+                await session.scalar(
+                    text(
+                        "SELECT count(*) FROM lens_runs "
+                        "WHERE observation_run_id = :observation_run_id"
+                    ).bindparams(observation_run_id=observation_run_id)
+                )
+                == 2
+            )
+
+    asyncio.run(
+        assert_constraint_and_alert_table(
+            expected_constraint=(
+                "uq_lens_runs_observation_run_id_lens_type_lens_id",
+                ["observation_run_id", "lens_type", "lens_id"],
+            ),
+            alert_table_exists=True,
+        )
+    )
+    unsafe_identity = asyncio.run(create_unsafe_same_id_rows())
+    with pytest.raises(RuntimeError, match="Cannot downgrade"):
+        command.downgrade(config, "20260823_01")
+    asyncio.run(assert_unsafe_rows_preserved(*unsafe_identity))
+    asyncio.run(
+        assert_constraint_and_alert_table(
+            expected_constraint=(
+                "uq_lens_runs_observation_run_id_lens_type_lens_id",
+                ["observation_run_id", "lens_type", "lens_id"],
+            ),
+            alert_table_exists=True,
+        )
+    )
+
+    asyncio.run(remove_cross_type_duplicate_rows())
+    command.downgrade(config, "20260823_01")
+    asyncio.run(
+        assert_constraint_and_alert_table(
+            expected_constraint=(
+                "lens_runs_observation_run_id_lens_id_key",
+                ["observation_run_id", "lens_id"],
+            ),
+            alert_table_exists=False,
+        )
+    )
+    command.upgrade(config, "head")
+    asyncio.run(
+        assert_constraint_and_alert_table(
+            expected_constraint=(
+                "uq_lens_runs_observation_run_id_lens_type_lens_id",
+                ["observation_run_id", "lens_type", "lens_id"],
+            ),
+            alert_table_exists=True,
+        )
+    )

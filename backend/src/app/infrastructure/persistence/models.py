@@ -147,12 +147,20 @@ class ObservationRunModel(Base):
 class LensRunModel(Base):
     """One Lens execution within an ObservationRun.
 
-    The unique `(observation_run_id, lens_id)` constraint prevents duplicate execution
-    records while the parent foreign key supplies the authoritative Observation identity.
+    The unique `(observation_run_id, lens_type, lens_id)` constraint permits one
+    execution per Lens type-aware identity while the parent foreign key supplies the
+    authoritative Observation identity.
     """
 
     __tablename__ = "lens_runs"
-    __table_args__ = (UniqueConstraint("observation_run_id", "lens_id"),)
+    __table_args__ = (
+        UniqueConstraint(
+            "observation_run_id",
+            "lens_type",
+            "lens_id",
+            name="uq_lens_runs_observation_run_id_lens_type_lens_id",
+        ),
+    )
 
     id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), primary_key=True, default=uuid4)
     observation_run_id: Mapped[UUID] = mapped_column(
