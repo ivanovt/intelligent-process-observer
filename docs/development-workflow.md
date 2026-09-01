@@ -159,6 +159,12 @@ During implementation:
 - keep code documentation aligned with the rules in `AGENTS.md`;
 - add tests that prove behavior, not only happy-path execution.
 
+When an implementation plan decomposes OpenSpec tasks across vertical slices, keep
+`tasks.md` completion state reconciled with accepted slice outcomes. Mark a task complete
+only after every slice portion that owns it has passed its completion gate; this updates
+execution metadata and does not alter the approved task scope. Before archive, reconcile
+all task checkboxes with the implementation plan and accepted handoffs.
+
 Before review:
 
 ```bash
