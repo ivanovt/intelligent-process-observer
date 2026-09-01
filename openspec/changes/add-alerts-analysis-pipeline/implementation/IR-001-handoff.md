@@ -40,4 +40,4 @@ Plan change requested: none.
 
 Shared knowledge candidates: none.
 
-Commit SHA: `HEAD` (atomic IR-001 correction commit).
+Commit SHA: `a81ff7d` (atomic IR-001 correction commit).
