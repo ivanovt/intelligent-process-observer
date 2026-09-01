@@ -441,6 +441,139 @@ def test_postgresql_alert_definition_walking_skeleton_and_empty_rejection(
     asyncio.run(scenario())
 
 
+def test_postgresql_mixed_definition_order_navigation_and_late_failure_are_atomic(
+    session_factory: async_sessionmaker[AsyncSession],
+) -> None:
+    async def count_definition_rows() -> list[int]:
+        async with session_factory() as session:
+            return [
+                await session.scalar(select(func.count()).select_from(model))
+                for model in (
+                    ObservationModel,
+                    MetricLensModel,
+                    AlertLensModel,
+                    ObservationRelationshipModel,
+                )
+            ]
+
+    async def scenario() -> None:
+        repository = ObservationRepository()
+        service = ObservationDefinitionService(repository)
+        definition = ObservationCreate.model_validate(
+            {
+                "name": f"Mixed definition {uuid4()}",
+                "objective": "Prove type-local navigation and order.",
+                "lenses": [
+                    {
+                        "id": "shared",
+                        "name": "Shared metric",
+                        "type": "metric",
+                        "metric_id": "shared_metric",
+                        "adapter_type": "prometheus",
+                        "source_id": "production-prometheus",
+                        "query": "avg(shared_metric)",
+                        "unit": "count",
+                        "analysis_objectives": ["spike"],
+                        "reference_periods": ["1d"],
+                    },
+                    {
+                        "id": "pressure",
+                        "name": "Pressure",
+                        "type": "metric",
+                        "metric_id": "pressure",
+                        "adapter_type": "prometheus",
+                        "source_id": "production-prometheus",
+                        "query": "avg(pressure)",
+                        "unit": "bar",
+                        "analysis_objectives": ["drift"],
+                        "reference_periods": [],
+                    },
+                ],
+                "alert_lenses": [
+                    {
+                        "id": "alert-second",
+                        "name": "Second alert",
+                        "type": "alert",
+                        "source": "jira_track_and_release",
+                        "selector": {"query": " project = REL-2 "},
+                        "analysis_objectives": ["Second", "First"],
+                        "reference_periods": ["7d", "1d"],
+                    },
+                    {
+                        "id": "shared",
+                        "name": "Shared alert",
+                        "type": "alert",
+                        "source": "jira_track_and_release",
+                        "selector": {"query": "project = REL-1"},
+                    },
+                ],
+                "relationships": [
+                    {
+                        "id": "shared-pressure",
+                        "name": "Shared metric and pressure",
+                        "participants": ["shared", "pressure"],
+                        "conditions": {},
+                        "expected": {
+                            "shared": {"trend": {"direction": "increasing"}},
+                            "pressure": {"variability": {"state": "low"}},
+                        },
+                    }
+                ],
+            }
+        )
+        async with session_factory() as session:
+            async with session.begin():
+                model = await repository.create(session, definition)
+            created = service.observation_response(model)
+            observation_id = created.id
+
+        async with session_factory() as session:
+            restored = await service.get(session, observation_id)
+            summaries = await service.list(session)
+            metric = await service.get_lens(session, observation_id, "shared")
+            alert = await service.get_alert_lens(session, observation_id, "shared")
+            assert [lens.id for lens in restored.lenses] == ["shared", "pressure"]
+            assert [lens.id for lens in restored.alert_lenses] == ["alert-second", "shared"]
+            assert restored.alert_lenses[0].selector.query == " project = REL-2 "
+            assert restored.alert_lenses[0].analysis_objectives == ["Second", "First"]
+            assert restored.alert_lenses[0].reference_periods == ["7d", "1d"]
+            assert summaries[-1].lenses[0].href == metric.href
+            assert summaries[-1].alert_lenses[1].href == alert.href
+            assert metric.type == "metric"
+            assert alert.type == "alert"
+            assert metric.href != alert.href
+
+        before_failure = await count_definition_rows()
+
+        class FailingAfterFlushRepository(ObservationRepository):
+            async def create(self, session, definition):
+                await super().create(session, definition)
+                raise RuntimeError("deliberate late persistence failure")
+
+        failing_service = ObservationDefinitionService(FailingAfterFlushRepository())
+        failing_definition = ObservationCreate.model_validate(
+            {
+                "name": f"Late failure {uuid4()}",
+                "objective": "Prove rollback.",
+                "alert_lenses": [
+                    {
+                        "id": "rollback-alert",
+                        "name": "Rollback alert",
+                        "type": "alert",
+                        "source": "jira_track_and_release",
+                        "selector": {"query": "project = ROLLBACK"},
+                    }
+                ],
+            }
+        )
+        async with session_factory() as session:
+            with pytest.raises(RuntimeError, match="deliberate late persistence failure"):
+                await failing_service.create(session, failing_definition)
+        assert await count_definition_rows() == before_failure
+
+    asyncio.run(scenario())
+
+
 def test_runtime_cardinality_constraints_reject_duplicate_writes(
     session_factory: async_sessionmaker[AsyncSession],
 ) -> None:

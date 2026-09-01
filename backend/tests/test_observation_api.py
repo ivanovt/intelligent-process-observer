@@ -227,6 +227,45 @@ def test_alert_only_create_and_follow_alert_link_ignores_unknown_input() -> None
     assert "ignored" not in alert.json()
 
 
+@pytest.mark.parametrize(
+    "alert_patch",
+    [
+        {"name": "  "},
+        {"description": "\t"},
+        {"selector": {"query": "\n"}},
+        {"analysis_objectives": ["same", "same"]},
+        {"reference_periods": ["1d", "1d"]},
+    ],
+)
+def test_invalid_alert_member_is_rejected_before_service_invocation(alert_patch) -> None:
+    service = StubObservationService()
+    app.dependency_overrides[get_service] = service_override(service)
+    app.dependency_overrides[get_session] = no_database_session
+    alert = {
+        "id": "release-alerts",
+        "type": "alert",
+        "name": "Release alerts",
+        "source": "jira_track_and_release",
+        "selector": {"query": "project = REL"},
+    }
+    alert.update(alert_patch)
+    try:
+        response = request(
+            "POST",
+            "/api/v1/observations",
+            json={
+                "name": "Release health",
+                "objective": "Observe release alerts.",
+                "alert_lenses": [alert],
+            },
+        )
+    finally:
+        app.dependency_overrides.clear()
+
+    assert response.status_code == 422
+    assert service.created_definition is None
+
+
 @pytest.mark.parametrize("payload", [{}, {"lenses": [], "alert_lenses": []}])
 def test_empty_aggregate_is_rejected_before_repository_invocation(payload) -> None:
     service = StubObservationService()

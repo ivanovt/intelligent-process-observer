@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+from copy import deepcopy
 from datetime import UTC, datetime, timedelta
 from types import SimpleNamespace
 from uuid import uuid4
@@ -234,6 +235,102 @@ def test_repository_builds_alert_child_with_defaulted_values() -> None:
     assert aggregate.alert_lenses[0].selector_query == "project = REL"
     assert aggregate.alert_lenses[0].analysis_objectives == []
     assert aggregate.alert_lenses[0].reference_periods == []
+
+
+def valid_alert_lens() -> dict:
+    return {
+        "id": "release-alerts",
+        "type": "alert",
+        "name": "Release alerts",
+        "description": "Release signal",
+        "source": "jira_track_and_release",
+        "selector": {"query": " project = REL AND status != Done "},
+        "analysis_objectives": ["Assess recurrence", "Assess impact"],
+        "reference_periods": ["1d", "7d"],
+    }
+
+
+@pytest.mark.parametrize(
+    "mutate",
+    [
+        lambda alert: alert.update(id="not valid"),
+        lambda alert: alert.update(type="metric"),
+        lambda alert: alert.update(name=" \t"),
+        lambda alert: alert.update(description="\n"),
+        lambda alert: alert.update(source="jira"),
+        lambda alert: alert.update(selector={}),
+        lambda alert: alert.update(selector={"query": "  "}),
+        lambda alert: alert.update(analysis_objectives=["useful", "useful"]),
+        lambda alert: alert.update(analysis_objectives=["useful", " \t"]),
+        lambda alert: alert.update(reference_periods=["0m"]),
+        lambda alert: alert.update(reference_periods=["1d", "1d"]),
+    ],
+)
+def test_alert_contract_rejects_each_invalid_recognized_member(mutate) -> None:
+    alert = valid_alert_lens()
+    mutate(alert)
+
+    with pytest.raises(ValidationError):
+        ObservationCreate.model_validate(
+            {"name": "Release health", "objective": "Observe alerts.", "alert_lenses": [alert]}
+        )
+
+
+def test_alert_contract_preserves_exact_opaque_strings_and_order() -> None:
+    alert = valid_alert_lens()
+    definition = ObservationCreate.model_validate(
+        {"name": "Release health", "objective": "Observe alerts.", "alert_lenses": [alert]}
+    )
+
+    accepted = definition.alert_lenses[0]
+    assert accepted.selector.query == " project = REL AND status != Done "
+    assert accepted.analysis_objectives == ["Assess recurrence", "Assess impact"]
+    assert accepted.reference_periods == ["1d", "7d"]
+
+
+def test_type_local_ids_and_metric_only_relationship_resolution() -> None:
+    definition = valid_definition()
+    metric = definition["lenses"][0]
+    metric["id"] = "shared"
+    definition["lenses"] = [metric, definition["lenses"][1]]
+    definition["alert_lenses"] = [dict(valid_alert_lens(), id="shared")]
+    definition["relationships"][0]["participants"] = ["shared", "coolant-pressure"]
+    definition["relationships"][0]["expected"] = {
+        "shared": {"trend": {"direction": "increasing"}},
+        "coolant-pressure": {"variability": {"state": "low"}},
+    }
+
+    accepted = ObservationCreate.model_validate(definition)
+    assert [lens.id for lens in accepted.lenses] == ["shared", "coolant-pressure"]
+    assert [lens.id for lens in accepted.alert_lenses] == ["shared"]
+
+    alert_only_participant = deepcopy(definition)
+    alert_only_participant["relationships"][0]["participants"] = ["shared", "release-alerts"]
+    alert_only_participant["relationships"][0]["expected"] = {
+        "shared": {"trend": {"direction": "increasing"}},
+        "release-alerts": {"variability": {"state": "low"}},
+    }
+    alert_only_participant["alert_lenses"].append(dict(valid_alert_lens(), id="release-alerts"))
+    with pytest.raises(ValidationError):
+        ObservationCreate.model_validate(alert_only_participant)
+
+
+@pytest.mark.parametrize(
+    "collection",
+    [
+        "lenses",
+        "alert_lenses",
+    ],
+)
+def test_duplicate_ids_are_rejected_only_within_their_type(collection) -> None:
+    definition = valid_definition()
+    if collection == "lenses":
+        definition["lenses"].append(deepcopy(definition["lenses"][0]))
+    else:
+        definition["alert_lenses"] = [valid_alert_lens(), valid_alert_lens()]
+
+    with pytest.raises(ValidationError):
+        ObservationCreate.model_validate(definition)
 
 
 class StubAdapter:

@@ -97,6 +97,12 @@ class AlertApiModel(BaseModel):
 class AlertSelectorCreate(AlertApiModel):
     query: str = Field(min_length=1)
 
+    @model_validator(mode="after")
+    def validate_query(self) -> AlertSelectorCreate:
+        if not self.query.strip():
+            raise ValueError("selector query must contain non-whitespace content")
+        return self
+
 
 class AlertLensCreate(AlertApiModel):
     id: str = Field(pattern=IDENTIFIER_PATTERN)
@@ -107,6 +113,23 @@ class AlertLensCreate(AlertApiModel):
     selector: AlertSelectorCreate
     analysis_objectives: list[str] = Field(default_factory=list)
     reference_periods: list[str] = Field(default_factory=list)
+
+    @model_validator(mode="after")
+    def validate_alert_configuration(self) -> AlertLensCreate:
+        if not self.name.strip():
+            raise ValueError("name must contain non-whitespace content")
+        if self.description is not None and not self.description.strip():
+            raise ValueError("description must contain non-whitespace content")
+        if any(not objective.strip() for objective in self.analysis_objectives):
+            raise ValueError("analysis_objectives must contain non-whitespace content")
+        if len(set(self.analysis_objectives)) != len(self.analysis_objectives):
+            raise ValueError("analysis_objectives must not contain duplicates")
+        if len(set(self.reference_periods)) != len(self.reference_periods):
+            raise ValueError("reference_periods must not contain duplicates")
+        for offset in self.reference_periods:
+            if not re.fullmatch(OFFSET_PATTERN, offset):
+                raise ValueError("reference_periods must use positive m, h, d, or w offsets")
+        return self
 
 
 class RelationshipCreate(ApiModel):
@@ -142,13 +165,16 @@ class ObservationCreate(ApiModel):
     def validate_topology(self) -> ObservationCreate:
         if not self.lenses and not self.alert_lenses:
             raise ValueError("Observation definition must contain at least one Lens")
-        lens_ids = [lens.id for lens in self.lenses]
-        if len(set(lens_ids)) != len(lens_ids):
-            raise ValueError("lens IDs must be unique")
+        metric_lens_ids = [lens.id for lens in self.lenses]
+        if len(set(metric_lens_ids)) != len(metric_lens_ids):
+            raise ValueError("Metric Lens IDs must be unique")
+        alert_lens_ids = [lens.id for lens in self.alert_lenses]
+        if len(set(alert_lens_ids)) != len(alert_lens_ids):
+            raise ValueError("Alert Lens IDs must be unique")
         relationship_ids = [relationship.id for relationship in self.relationships]
         if len(set(relationship_ids)) != len(relationship_ids):
             raise ValueError("relationship IDs must be unique")
-        known_lenses = set(lens_ids)
+        known_lenses = set(metric_lens_ids)
         for relationship in self.relationships:
             unknown = set(relationship.participants) - known_lenses
             if unknown:
