@@ -1129,3 +1129,6 @@ here.
   later assigned portions.
 - 2026-09-01 — VS-03 assigned to fresh Slice Implementer `/root/vs03_implementer`;
   baseline `3ad4d26`.
+- 2026-09-01 — VS-03 candidate `fa2ae78` requires focused correction: the required
+  PostgreSQL proof cases for VS03-AC06 and VS03-AC07 are absent. VS-03 remains
+  `IN_PROGRESS`.
