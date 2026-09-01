@@ -3,8 +3,9 @@
 from __future__ import annotations
 
 from collections import Counter
-from collections.abc import Awaitable, Callable
+from collections.abc import Awaitable, Callable, Mapping
 from inspect import isawaitable
+from types import MappingProxyType
 
 from app.alerts.contracts import (
     FIXED_ALERT_OPTIONAL_TOOLS,
@@ -112,7 +113,7 @@ class AlertOptionalToolRegistry:
     ) -> None:
         self._records, self._evidence = records, evidence
         self._attempts: list[AlertOptionalToolAttempt] = []
-        self._evaluators: dict[AlertOptionalToolName, ToolEvaluator] = {
+        default_evaluators: dict[AlertOptionalToolName, ToolEvaluator] = {
             "recurrence_concentration_analysis": lambda: recurrence_concentration(
                 records, evidence
             ),
@@ -120,9 +121,12 @@ class AlertOptionalToolRegistry:
             "reference_pattern_analysis": lambda: reference_pattern(evidence),
         }
         if evaluators is not None:
-            if set(evaluators) != set(self._evaluators):
+            if set(evaluators) != set(default_evaluators):
                 raise ValueError("optional-tool evaluators must cover exactly the approved names")
-            self._evaluators = evaluators
+            default_evaluators = dict(evaluators)
+        self._evaluators: Mapping[AlertOptionalToolName, ToolEvaluator] = MappingProxyType(
+            default_evaluators
+        )
 
     @property
     def ledger(self) -> tuple[AlertOptionalToolAttempt, ...]:

@@ -90,7 +90,10 @@ def test_optional_registry_enforces_scope_repeats_and_ten_attempt_budget() -> No
             "reference_pattern_analysis": lambda: evaluator("reference_pattern_analysis"),
         }
         injected = AlertOptionalToolRegistry(records, _evidence(records), evaluators=approved)
+        approved["unregistered"] = lambda: evaluator("unregistered")  # type: ignore[dict-item]
+        unregistered = await injected.execute("unregistered", {})
         await injected.execute("recurrence_concentration_analysis", {})
+        assert unregistered.outcome == "rejected" and unregistered.reason == "unregistered"
         assert evaluated == ["recurrence_concentration_analysis"]
         with pytest.raises(ValueError, match="exactly the approved names"):
             AlertOptionalToolRegistry(
