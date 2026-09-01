@@ -99,7 +99,7 @@ parallel implementation.
 
 | Slice | Goal | Depends on | Risk | Status | Commit | Handoff |
 |---|---|---|---|---|---|---|
-| VS-01 | Persist a zero-record completed Alert walking skeleton | none | high-risk | BLOCKED | - | - |
+| VS-01 | Persist a zero-record completed Alert walking skeleton | none | high-risk | READY | - | - |
 | VS-02 | Persist representative non-zero deterministic evidence and fake-agent findings | VS-01 | high-risk | PLANNED | - | - |
 | VS-03 | Add independent references, invalid subsets, partial precedence, and partial persistence | VS-02 | high-risk | PLANNED | - | - |
 | VS-04 | Persist every mandatory failure with no Alert artifact | VS-03 | high-risk | PLANNED | - | - |
@@ -1092,3 +1092,5 @@ here.
   files are present and the approved change artifacts, including this plan, are untracked.
   The Coordinator clean-boundary protocol prohibits dispatching VS-01 until the user
   reconciles or explicitly directs handling of that pre-existing working-tree state.
+- 2026-09-01 — Stop condition resolved: the approved change and prior working-tree
+  updates are committed, and the clean-boundary check passes. VS-01 is `READY`.
