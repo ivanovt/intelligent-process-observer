@@ -509,7 +509,7 @@ def test_postgresql_mixed_definition_order_navigation_and_late_failure_are_atomi
                 ],
                 "relationships": [
                     {
-                        "id": "pressure-shared",
+                        "id": "zeta-first",
                         "name": "Pressure and shared metric",
                         "participants": ["pressure", "shared"],
                         "conditions": {},
@@ -519,7 +519,7 @@ def test_postgresql_mixed_definition_order_navigation_and_late_failure_are_atomi
                         },
                     },
                     {
-                        "id": "shared-pressure",
+                        "id": "alpha-second",
                         "name": "Shared metric and pressure",
                         "participants": ["shared", "pressure"],
                         "conditions": {},
@@ -545,8 +545,8 @@ def test_postgresql_mixed_definition_order_navigation_and_late_failure_are_atomi
             assert [lens.id for lens in restored.lenses] == ["shared", "pressure"]
             assert [lens.id for lens in restored.alert_lenses] == ["alert-second", "shared"]
             assert [relationship.id for relationship in restored.relationships] == [
-                "pressure-shared",
-                "shared-pressure",
+                "zeta-first",
+                "alpha-second",
             ]
             assert restored.alert_lenses[0].selector.query == " project = REL-2 "
             assert restored.alert_lenses[0].analysis_objectives == ["Second", "First"]
@@ -556,6 +556,36 @@ def test_postgresql_mixed_definition_order_navigation_and_late_failure_are_atomi
             assert metric.type == "metric"
             assert alert.type == "alert"
             assert metric.href != alert.href
+
+        definition_before = restored.model_dump()
+        rows_before_unknown_alert = await count_definition_rows()
+
+        async def postgres_session() -> AsyncIterator[AsyncSession]:
+            async with session_factory() as request_session:
+                yield request_session
+
+        async def postgres_service() -> ObservationDefinitionService:
+            return service
+
+        app.dependency_overrides[get_session] = postgres_session
+        app.dependency_overrides[get_service] = postgres_service
+        try:
+            transport = httpx.ASGITransport(app=app)
+            async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+                response = await client.get(
+                    f"/api/v1/observations/{observation_id}/alert-lenses/unknown-alert"
+                )
+        finally:
+            app.dependency_overrides.clear()
+
+        assert response.status_code == 404
+        assert response.json() == {
+            "code": "alert_lens_not_found",
+            "message": "Alert Lens definition was not found",
+        }
+        assert await count_definition_rows() == rows_before_unknown_alert
+        async with session_factory() as session:
+            assert (await service.get(session, observation_id)).model_dump() == definition_before
 
         before_failure = await count_definition_rows()
 
