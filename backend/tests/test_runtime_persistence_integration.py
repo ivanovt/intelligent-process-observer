@@ -622,7 +622,21 @@ def test_invalid_current_subset_persists_correlated_partial(
                     AlertProviderRecord(
                         id="usable", title="Usable", started_at=window.from_, source_status="open"
                     ),
-                    {"id": "bad", "title": "Bad", "started_at": "invalid"},
+                    {"title": "Missing ID", "started_at": "2026-09-01T00:00:00Z"},
+                    {"id": "missing-title", "started_at": "2026-09-01T00:00:00Z"},
+                    {"id": "bad-start", "title": "Bad start", "started_at": "invalid"},
+                    {
+                        "id": "bad-end",
+                        "title": "Bad end",
+                        "started_at": "2026-09-01T00:00:00Z",
+                        "ended_at": "invalid",
+                    },
+                    {
+                        "id": "reversed",
+                        "title": "Reversed",
+                        "started_at": "2026-09-01T00:30:00Z",
+                        "ended_at": "2026-09-01T00:00:00Z",
+                    },
                 ),
             )
 

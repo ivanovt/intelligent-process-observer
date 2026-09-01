@@ -341,14 +341,26 @@ class OffsetProvider(FakeProvider):
 def test_references_are_independent_ordered_and_precede_zero_gate() -> None:
     async def scenario() -> None:
         context = _context().model_copy(update={"reference_periods": ("7d", "1d", "14d")})
-        empty = AlertRecordsAvailable(source="fixture-source")
         responses = {
-            context.analysis_window.from_: empty,
+            context.analysis_window.from_: AlertRecordsAvailable(
+                source="fixture-source",
+                records=(
+                    _record(
+                        "current",
+                        started=datetime(2026, 9, 1, tzinfo=UTC),
+                        ended=None,
+                        occurrences=3,
+                    ),
+                ),
+            ),
             datetime(2026, 8, 25, tzinfo=UTC): AlertRecordsAvailable(
                 source="fixture-source",
                 records=(
                     _record(
-                        "low", started=datetime(2026, 8, 25, tzinfo=UTC), ended=None, occurrences=1
+                        "higher",
+                        started=datetime(2026, 8, 25, tzinfo=UTC),
+                        ended=None,
+                        occurrences=5,
                     ),
                 ),
             ),
@@ -357,12 +369,15 @@ def test_references_are_independent_ordered_and_precede_zero_gate() -> None:
                 source="fixture-source",
                 records=(
                     _record(
-                        "high", started=datetime(2026, 8, 18, tzinfo=UTC), ended=None, occurrences=2
+                        "lower",
+                        started=datetime(2026, 8, 18, tzinfo=UTC),
+                        ended=None,
+                        occurrences=1,
                     ),
                 ),
             ),
         }
-        provider, agent = OffsetProvider(responses), FailOnCallAgent()
+        provider, agent = OffsetProvider(responses), CapturingAgent()
         outcome = await AlertAnalysisPipeline(provider=provider, agent=agent).analyze(context)
         assert [call[1].from_ for call in provider.calls] == [
             context.analysis_window.from_,
@@ -374,8 +389,21 @@ def test_references_are_independent_ordered_and_precede_zero_gate() -> None:
         assert [
             item["occurrence_comparison"]["direction"]
             for item in outcome.artifact.payload["comparisons"]
-        ] == ["decreased", "decreased"]
-        assert outcome.status.value == "partial" and agent.calls == 0
+        ] == ["decreased", "increased"]
+        assert outcome.status.value == "partial" and len(agent.calls) == 1
+
+        zero_responses = responses | {
+            context.analysis_window.from_: AlertRecordsAvailable(source="fixture-source")
+        }
+        zero_provider, zero_agent = OffsetProvider(zero_responses), FailOnCallAgent()
+        zero_outcome = await AlertAnalysisPipeline(
+            provider=zero_provider, agent=zero_agent
+        ).analyze(context)
+        assert [item["offset"] for item in zero_outcome.artifact.payload["comparisons"]] == [
+            "7d",
+            "14d",
+        ]
+        assert zero_outcome.status.value == "partial" and zero_agent.calls == 0
 
     asyncio.run(scenario())
 
@@ -386,9 +414,25 @@ def test_invalid_current_subset_selects_current_normalization_partial() -> None:
         valid = _record(
             "valid", started=datetime(2026, 9, 1, tzinfo=UTC), ended=None, occurrences=1
         )
-        malformed = {"id": "bad", "title": "Bad", "started_at": "not-a-time"}
+        invalid_records = (
+            {"title": "Missing ID", "started_at": "2026-09-01T00:00:00Z"},
+            {"id": "missing-title", "started_at": "2026-09-01T00:00:00Z"},
+            {"id": "bad-start", "title": "Bad start", "started_at": "not-a-time"},
+            {
+                "id": "bad-end",
+                "title": "Bad end",
+                "started_at": "2026-09-01T00:00:00Z",
+                "ended_at": "not-a-time",
+            },
+            {
+                "id": "reversed",
+                "title": "Reversed",
+                "started_at": "2026-09-01T00:30:00Z",
+                "ended_at": "2026-09-01T00:00:00Z",
+            },
+        )
         outcome = await AlertAnalysisPipeline(
-            provider=RecordsProvider((valid, malformed)), agent=CapturingAgent()
+            provider=RecordsProvider((valid, *invalid_records)), agent=CapturingAgent()
         ).analyze(context)
         assert outcome.status.value == "partial"
         assert outcome.reason is not None and outcome.reason.model_dump() == {
@@ -396,6 +440,102 @@ def test_invalid_current_subset_selects_current_normalization_partial() -> None:
             "component": "current_normalization",
         }
         assert [item["id"] for item in outcome.artifact.payload["alerts"]] == ["valid"]
+        assert outcome.artifact.payload["alert_activity"] == {
+            "record_count": 1,
+            "occurrence_count": 1,
+        }
+
+    asyncio.run(scenario())
+
+
+def test_unavailable_and_duplicate_reference_sets_omit_only_their_offsets() -> None:
+    async def scenario() -> None:
+        context = _context().model_copy(
+            update={"reference_periods": ("7d", "1d", "14d", "2d", "3d")}
+        )
+        current = AlertRecordsAvailable(
+            source="fixture-source",
+            records=(
+                _record(
+                    "current", started=datetime(2026, 9, 1, tzinfo=UTC), ended=None, occurrences=3
+                ),
+            ),
+        )
+        provider = OffsetProvider(
+            {
+                context.analysis_window.from_: current,
+                datetime(2026, 8, 25, tzinfo=UTC): RuntimeError("reference error"),
+                datetime(2026, 8, 31, tzinfo=UTC): TimeoutError("reference timeout"),
+                datetime(2026, 8, 18, tzinfo=UTC): AlertRecordsAvailable(
+                    source="fixture-source", records=({"id": "malformed", "started_at": "bad"},)
+                ),
+                datetime(2026, 8, 30, tzinfo=UTC): AlertRecordsAvailable(
+                    source="fixture-source",
+                    records=(
+                        _record(
+                            "duplicate",
+                            started=datetime(2026, 8, 30, tzinfo=UTC),
+                            ended=None,
+                            occurrences=99,
+                        ),
+                        _record(
+                            "reference-unique",
+                            started=datetime(2026, 8, 30, tzinfo=UTC),
+                            ended=None,
+                            occurrences=1,
+                        ),
+                        _record(
+                            "duplicate",
+                            started=datetime(2026, 8, 30, tzinfo=UTC),
+                            ended=None,
+                            occurrences=99,
+                        ),
+                    ),
+                ),
+                datetime(2026, 8, 29, tzinfo=UTC): AlertRecordsAvailable(
+                    source="fixture-source",
+                    records=(
+                        _record(
+                            "successful-reference",
+                            started=datetime(2026, 8, 29, tzinfo=UTC),
+                            ended=None,
+                            occurrences=1,
+                        ),
+                    ),
+                ),
+            }
+        )
+        outcome = await AlertAnalysisPipeline(provider=provider, agent=CapturingAgent()).analyze(
+            context
+        )
+        assert [call[1].from_ for call in provider.calls] == [
+            context.analysis_window.from_,
+            datetime(2026, 8, 25, tzinfo=UTC),
+            datetime(2026, 8, 31, tzinfo=UTC),
+            datetime(2026, 8, 18, tzinfo=UTC),
+            datetime(2026, 8, 30, tzinfo=UTC),
+            datetime(2026, 8, 29, tzinfo=UTC),
+        ]
+        assert outcome.status.value == "partial"
+        assert outcome.reason is not None and outcome.reason.model_dump() == {
+            "code": "reference_unavailable",
+            "component": "reference_periods",
+        }
+        assert outcome.artifact.payload["comparisons"] == [
+            {
+                "offset": "3d",
+                "occurrence_comparison": {
+                    "current": 3,
+                    "reference": 1,
+                    "delta": 2,
+                    "direction": "increased",
+                },
+            }
+        ]
+        assert [item["id"] for item in outcome.artifact.payload["alerts"]] == ["current"]
+        assert "duplicate" not in str(outcome.artifact.payload)
+        assert "reference-unique" not in str(outcome.artifact.payload)
+        assert "successful-reference" not in str(outcome.artifact.payload)
 
     asyncio.run(scenario())
 
