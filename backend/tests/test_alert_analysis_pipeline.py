@@ -4,6 +4,8 @@ from uuid import uuid4
 
 import pytest
 from pydantic import ValidationError
+from pydantic_ai.messages import ModelResponse, ToolCallPart
+from pydantic_ai.models.function import AgentInfo, FunctionModel
 
 from app.alerts.contracts import (
     AlertAgentCompletion,
@@ -21,6 +23,7 @@ from app.alerts.contracts import (
 from app.alerts.pipeline import AlertAnalysisPipeline
 from app.alerts.result_builder import AlertResultBuilder
 from app.alerts.tools import AlertOptionalToolRegistry, duration_outliers
+from app.infrastructure.agents.pydantic_ai_alerts import PydanticAIAlertAnalysisAgent
 
 
 class FakeProvider:
@@ -930,6 +933,54 @@ def test_representative_builder_failures_map_exact_reason() -> None:
             _context()
         )
         _assert_failed(outcome, "agent_failed")
+
+    asyncio.run(scenario())
+
+
+def test_pydantic_ai_invalid_completion_error_and_timeout_map_to_agent_failures() -> None:
+    class Provider:
+        async def acquire(
+            self, scope: AlertProviderScope, window: AlertAnalysisWindow
+        ) -> AlertRecordsAvailable:
+            return AlertRecordsAvailable(
+                source=scope.source,
+                records=(
+                    _record(
+                        "valid",
+                        started=datetime(2026, 9, 1, tzinfo=UTC),
+                        ended=None,
+                        occurrences=1,
+                    ),
+                ),
+            )
+
+    def invalid(_: object, info: AgentInfo) -> ModelResponse:
+        return ModelResponse(
+            parts=[
+                ToolCallPart(
+                    info.output_tools[0].name,
+                    {"findings": (), "overall_importance": "none"},
+                )
+            ]
+        )
+
+    def failed(_: object, __: AgentInfo) -> ModelResponse:
+        raise RuntimeError("model failed")
+
+    def timed_out(_: object, __: AgentInfo) -> ModelResponse:
+        raise TimeoutError("model timed out")
+
+    async def scenario() -> None:
+        for model, code in (
+            (FunctionModel(invalid), "agent_failed"),
+            (FunctionModel(failed), "agent_failed"),
+            (FunctionModel(timed_out), "agent_timeout"),
+        ):
+            outcome = await AlertAnalysisPipeline(
+                provider=Provider(), agent=PydanticAIAlertAnalysisAgent(model)
+            ).analyze(_context())
+            _assert_failed(outcome, code)
+            assert outcome.artifact is None
 
     asyncio.run(scenario())
 

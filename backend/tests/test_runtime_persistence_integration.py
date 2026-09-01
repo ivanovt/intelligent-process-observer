@@ -12,6 +12,8 @@ import httpx
 import pytest
 from alembic import command
 from alembic.config import Config
+from pydantic_ai.messages import ModelResponse, ToolCallPart
+from pydantic_ai.models.function import AgentInfo, FunctionModel
 from sqlalchemy import delete, func, inspect, select, text
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
@@ -38,6 +40,7 @@ from app.alerts.pipeline import AlertAnalysisPipeline
 from app.alerts.result_builder import AlertResultBuilder
 from app.alerts.tools import AlertOptionalToolRegistry, duration_outliers
 from app.core.settings import get_settings
+from app.infrastructure.agents.pydantic_ai_alerts import PydanticAIAlertAnalysisAgent
 from app.infrastructure.persistence.alert_runtime import persist_alert_terminal
 from app.infrastructure.persistence.models import (
     AlertLensModel,
@@ -102,6 +105,88 @@ def session_factory(postgres_url: str) -> async_sessionmaker[AsyncSession]:
     factory = async_sessionmaker(engine, expire_on_commit=False)
     yield factory
     asyncio.run(engine.dispose())
+
+
+def test_pydantic_ai_alerts_invalid_completion_error_and_timeout_are_terminal(
+    session_factory: async_sessionmaker[AsyncSession],
+) -> None:
+    class Provider:
+        async def acquire(
+            self, scope: AlertProviderScope, window: AlertAnalysisWindow
+        ) -> AlertRecordsAvailable:
+            return AlertRecordsAvailable(
+                source=scope.source, records=(_nonzero_alert_record(occurrences=1),)
+            )
+
+    def invalid(_: object, info: AgentInfo) -> ModelResponse:
+        return ModelResponse(
+            parts=[
+                ToolCallPart(
+                    info.output_tools[0].name,
+                    {"findings": (), "overall_importance": "none"},
+                )
+            ]
+        )
+
+    def model_error(_: object, __: AgentInfo) -> ModelResponse:
+        raise RuntimeError("model error")
+
+    def model_timeout(_: object, __: AgentInfo) -> ModelResponse:
+        raise TimeoutError("model timeout")
+
+    async def scenario() -> None:
+        repository = RuntimePersistenceRepository()
+        for model, code in (
+            (FunctionModel(invalid), "agent_failed"),
+            (FunctionModel(model_error), "agent_failed"),
+            (FunctionModel(model_timeout), "agent_timeout"),
+        ):
+            async with session_factory() as session:
+                observation = await _seed_observation(session)
+                run = await repository.create_observation_run(
+                    session, ObservationRunInput(observation_id=observation.id)
+                )
+                await repository.advance_observation_run(session, run, ObservationRunStatus.RUNNING)
+                lens_run = await repository.create_lens_run(
+                    session,
+                    run,
+                    LensRunInput(lens_id=f"adapter-{uuid4()}", lens_type=LensType.ALERT),
+                )
+                await repository.advance_lens_run(session, lens_run, LensRunStatus.RUNNING)
+                context = AlertLensExecutionContext(
+                    identity=AlertIdentity(
+                        observation_id=observation.id,
+                        observation_run_id=run.id,
+                        lens_id=lens_run.lens_id,
+                        lens_run_id=lens_run.id,
+                    ),
+                    provider_scope=AlertProviderScope(source="fixture", query="opaque"),
+                    analysis_window=AlertAnalysisWindow(
+                        **{
+                            "from": datetime(2026, 9, 1, tzinfo=UTC),
+                            "to": datetime(2026, 9, 1, 1, tzinfo=UTC),
+                        }
+                    ),
+                    lens_name="Adapter terminal fixture",
+                )
+                outcome = await AlertAnalysisPipeline(
+                    provider=Provider(), agent=PydanticAIAlertAnalysisAgent(model)
+                ).analyze(context)
+                assert outcome.status is LensRunStatus.FAILED
+                assert outcome.reason == StructuredReason(code=code)
+                assert outcome.artifact is None
+                await persist_alert_terminal(session, lens_run, outcome, repository)
+                run_id, lens_run_id = run.id, lens_run.id
+                await session.commit()
+            async with session_factory() as session:
+                restored = await repository.get_observation_run(session, run_id)
+                assert restored is not None
+                persisted = next(item for item in restored.lens_runs if item.id == lens_run_id)
+                assert persisted.status == "failed"
+                assert persisted.reason == {"code": code, "component": None}
+                assert persisted.analysis_result is None
+
+    asyncio.run(scenario())
 
 
 def _result_input(
