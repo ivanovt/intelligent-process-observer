@@ -107,7 +107,7 @@ parallel implementation.
 | VS-06 | Enforce canonical evidence references through persisted results | VS-04, VS-05 | high-risk | COMPLETE | 51a61b1 | `implementation/VS-06-handoff.md` |
 | VS-07 | Enforce exhaustive result invariants and builder failure | VS-06 | high-risk | COMPLETE | 9e634a6, a884623 | `implementation/VS-07-handoff.md` |
 | VS-08 | Translate the accepted boundary through injected PydanticAI | VS-05, VS-07 | high-risk | COMPLETE | 8eab18f, 4cbe450, f3b5344 | `implementation/VS-08-handoff.md` |
-| VS-09 | Prove transaction rollback, whole-change conformance, and documentation | VS-03, VS-04, VS-07, VS-08 | high-risk | READY | - | - |
+| VS-09 | Prove transaction rollback, whole-change conformance, and documentation | VS-03, VS-04, VS-07, VS-08 | high-risk | IN_PROGRESS | - | - |
 
 ## Slice definitions
 
@@ -1192,6 +1192,7 @@ here.
   error, and timeout terminal paths. Deviation disposition: `N/A`; candidate awaits
   bounded re-review.
 - 2026-09-01 — VS-08 accepted after `SLICE REVIEW PASS`; VS-09 is dependency-ready.
+- 2026-09-01 — VS-09 assigned to fresh Slice Implementer `/root/vs09_implementer`.
 - 2026-09-01 — VS-03 accepted after corrected proof verification and `SLICE REVIEW PASS`.
   VS-04 and VS-05 are dependency-ready; VS-04 is next in the requested sequence.
 - 2026-09-01 — VS-04 assigned to fresh Slice Implementer `/root/vs04_implementer`.
