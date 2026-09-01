@@ -11,9 +11,11 @@ from app.alerts.contracts import (
     AlertFinding,
     AlertIdentity,
     AlertLensExecutionContext,
+    AlertProviderFailure,
     AlertProviderImportance,
     AlertProviderRecord,
     AlertProviderScope,
+    AlertProviderTimeout,
     AlertRecordsAvailable,
 )
 from app.alerts.pipeline import AlertAnalysisPipeline
@@ -299,7 +301,7 @@ def test_lifecycle_overlap_uses_strict_window_boundaries() -> None:
     asyncio.run(scenario())
 
 
-def test_scope_exclusions_do_not_make_result_partial() -> None:
+def test_nonempty_all_out_of_scope_differs_from_empty_success() -> None:
     async def scenario() -> None:
         context = _context()
         outcome = await AlertAnalysisPipeline(
@@ -308,10 +310,132 @@ def test_scope_exclusions_do_not_make_result_partial() -> None:
             ),
             agent=FailOnCallAgent(),
         ).analyze(context)
-        assert (
-            outcome.status.value == "completed"
-            and "invalid_records" not in outcome.artifact.payload
+        assert outcome.status.value == "failed"
+        assert outcome.reason is not None and outcome.reason.model_dump() == {
+            "code": "invalid_records",
+            "component": "current_normalization",
+        }
+        assert outcome.artifact is None
+        empty_pipeline = AlertAnalysisPipeline(provider=FakeProvider(), agent=FailOnCallAgent())
+        empty = await empty_pipeline.analyze(context)
+        assert empty.status.value == "completed" and empty.artifact is not None
+
+    asyncio.run(scenario())
+
+
+class FailOnUseBuilder:
+    def usable(self, *args: object, **kwargs: object) -> object:
+        raise AssertionError("failed Alert paths must not invoke the result builder")
+
+
+def _assert_failed(outcome: object, code: str) -> None:
+    assert outcome.status.value == "failed"
+    assert outcome.reason is not None and outcome.reason.code == code
+    assert outcome.artifact is None
+
+
+def test_current_acquisition_failures_map_exact_reason_and_stop() -> None:
+    class Provider:
+        def __init__(self, response: object) -> None:
+            self.response = response
+
+        async def acquire(self, *args: object) -> object:
+            if isinstance(self.response, Exception):
+                raise self.response
+            return self.response
+
+    async def scenario() -> None:
+        cases = (
+            (AlertProviderFailure(diagnostic="typed error"), "current_query_failed"),
+            (AlertProviderTimeout(diagnostic="typed timeout"), "current_query_timeout"),
+            (RuntimeError("thrown error"), "current_query_failed"),
+            (TimeoutError("thrown timeout"), "current_query_timeout"),
         )
+        for response, expected in cases:
+            outcome = await AlertAnalysisPipeline(
+                provider=Provider(response),
+                agent=FailOnCallAgent(),
+                result_builder=FailOnUseBuilder(),
+            ).analyze(_context())
+            _assert_failed(outcome, expected)
+
+    asyncio.run(scenario())
+
+
+def test_all_invalid_current_stops_before_analysis() -> None:
+    async def scenario() -> None:
+        response = AlertRecordsAvailable(
+            source="fixture-source",
+            records=(
+                {"id": "missing-title", "started_at": "2026-09-01T00:00:00Z"},
+                {"id": "bad-start", "title": "Bad", "started_at": "nope"},
+                _record(
+                    "duplicate", started=datetime(2026, 9, 1, tzinfo=UTC), ended=None, occurrences=1
+                ),
+                _record(
+                    "duplicate", started=datetime(2026, 9, 1, tzinfo=UTC), ended=None, occurrences=1
+                ),
+            ),
+        )
+        outcome = await AlertAnalysisPipeline(
+            provider=RecordsProvider(response.records),
+            agent=FailOnCallAgent(),
+            result_builder=FailOnUseBuilder(),
+            analyzer=lambda _: (_ for _ in ()).throw(AssertionError("analyzer must not run")),
+        ).analyze(_context())
+        _assert_failed(outcome, "invalid_records")
+
+    asyncio.run(scenario())
+
+
+def test_mandatory_analysis_failure_stops_agent_and_builder() -> None:
+    async def scenario() -> None:
+        outcome = await AlertAnalysisPipeline(
+            provider=RecordsProvider(
+                (
+                    _record(
+                        "valid", started=datetime(2026, 9, 1, tzinfo=UTC), ended=None, occurrences=1
+                    ),
+                )
+            ),
+            agent=FailOnCallAgent(),
+            result_builder=FailOnUseBuilder(),
+            analyzer=lambda _: (_ for _ in ()).throw(RuntimeError("mandatory failure")),
+        ).analyze(_context())
+        _assert_failed(outcome, "deterministic_analysis_failed")
+
+    asyncio.run(scenario())
+
+
+def test_required_agent_failures_are_rejected_before_builder() -> None:
+    class Agent:
+        def __init__(self, response: object) -> None:
+            self.response = response
+
+        async def complete(self, request: object) -> object:
+            if isinstance(self.response, Exception):
+                raise self.response
+            return self.response
+
+    async def scenario() -> None:
+        malformed_finding = {"findings": [{"id": "f"}], "overall_importance": "high"}
+        cases = (
+            (RuntimeError("agent error"), "agent_failed"),
+            (TimeoutError("agent timeout"), "agent_timeout"),
+            ({"findings": [], "overall_importance": "none"}, "agent_failed"),
+            ({"findings": [], "overall_importance": "invalid"}, "agent_failed"),
+            ({"findings": [], "overall_importance": "high", "unexpected": True}, "agent_failed"),
+            ({"findings": []}, "agent_failed"),
+            (malformed_finding, "agent_failed"),
+        )
+        provider = RecordsProvider(
+            (_record("valid", started=datetime(2026, 9, 1, tzinfo=UTC), ended=None, occurrences=1),)
+        )
+        for response, expected in cases:
+            outcome = await AlertAnalysisPipeline(
+                provider=provider, agent=Agent(response), result_builder=FailOnUseBuilder()
+            ).analyze(_context())
+            _assert_failed(outcome, expected)
 
     asyncio.run(scenario())
 

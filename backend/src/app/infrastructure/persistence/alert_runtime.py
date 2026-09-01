@@ -14,8 +14,10 @@ async def persist_alert_terminal(
     lens_run: LensRunModel,
     outcome: AlertTerminalOutcome,
     repository: RuntimePersistenceRepository,
-) -> LensAnalysisResultModel:
-    """Transition and persist one usable Alert result, flushing but never committing."""
+) -> LensAnalysisResultModel | None:
+    """Transition an Alert run and persist an artifact only for a usable outcome."""
 
     await repository.advance_lens_run(session, lens_run, outcome.status, reason=outcome.reason)
+    if outcome.artifact is None:
+        return None
     return await repository.persist_lens_analysis_result(session, lens_run, outcome.artifact)

@@ -135,7 +135,23 @@ class AlertProviderUnavailable(StrictAlertModel):
     diagnostic: str = Field(min_length=1, max_length=512)
 
 
-AlertProviderOutcome = AlertRecordsAvailable | AlertProviderUnavailable
+class AlertProviderFailure(StrictAlertModel):
+    """Typed non-timeout failure from a provider acquisition attempt."""
+
+    state: Literal["failed"] = "failed"
+    diagnostic: str = Field(min_length=1, max_length=512)
+
+
+class AlertProviderTimeout(StrictAlertModel):
+    """Typed timeout from a provider acquisition attempt."""
+
+    state: Literal["timeout"] = "timeout"
+    diagnostic: str = Field(min_length=1, max_length=512)
+
+
+AlertProviderOutcome = (
+    AlertRecordsAvailable | AlertProviderUnavailable | AlertProviderFailure | AlertProviderTimeout
+)
 
 
 class AlertStatus(StrictAlertModel):
@@ -353,12 +369,22 @@ class PartialAlertAnalysisResult(CompletedAlertAnalysisResult):
 class AlertTerminalOutcome(StrictAlertModel):
     """ORM-neutral terminal outcome ready for caller-owned transaction persistence."""
 
-    status: Literal[LensRunStatus.COMPLETED, LensRunStatus.PARTIAL] = LensRunStatus.COMPLETED
+    status: Literal[LensRunStatus.COMPLETED, LensRunStatus.PARTIAL, LensRunStatus.FAILED] = (
+        LensRunStatus.COMPLETED
+    )
     reason: StructuredReason | None = None
-    artifact: LensAnalysisResultInput
+    artifact: LensAnalysisResultInput | None = None
 
     @model_validator(mode="after")
     def correlate_partial_reason(self) -> AlertTerminalOutcome:
-        if (self.status is LensRunStatus.PARTIAL) != (self.reason is not None):
-            raise ValueError("partial Alert outcome requires exactly one reason")
+        if self.status is LensRunStatus.PARTIAL:
+            if self.reason is None or self.artifact is None:
+                raise ValueError(
+                    "partial Alert outcome requires exactly one reason and an artifact"
+                )
+        elif self.status is LensRunStatus.COMPLETED:
+            if self.reason is not None or self.artifact is None:
+                raise ValueError("completed Alert outcome requires an artifact and no reason")
+        elif self.reason is None or self.artifact is not None:
+            raise ValueError("failed Alert outcome requires a reason and no artifact")
         return self

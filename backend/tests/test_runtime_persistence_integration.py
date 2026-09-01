@@ -23,10 +23,13 @@ from app.alerts.contracts import (
     AlertFinding,
     AlertIdentity,
     AlertLensExecutionContext,
+    AlertProviderFailure,
     AlertProviderImportance,
     AlertProviderRecord,
     AlertProviderScope,
+    AlertProviderTimeout,
     AlertRecordsAvailable,
+    AlertTerminalOutcome,
 )
 from app.alerts.pipeline import AlertAnalysisPipeline
 from app.core.settings import get_settings
@@ -310,6 +313,269 @@ def test_alert_zero_record_walking_skeleton_persists_completed_result(
             assert "provider_importance_distribution" not in artifact.payload
 
     asyncio.run(scenario())
+
+
+def test_every_mandatory_alert_failure_has_no_result_artifact(
+    session_factory: async_sessionmaker[AsyncSession],
+) -> None:
+    async def scenario() -> None:
+        repository = RuntimePersistenceRepository()
+        reasons = (
+            StructuredReason(code="current_query_failed"),
+            StructuredReason(code="current_query_timeout"),
+            StructuredReason(code="invalid_records", component="current_normalization"),
+            StructuredReason(code="deterministic_analysis_failed"),
+            StructuredReason(code="agent_failed"),
+            StructuredReason(code="agent_timeout"),
+        )
+        async with session_factory() as session:
+            observation = await _seed_observation(session)
+            run = await repository.create_observation_run(
+                session, ObservationRunInput(observation_id=observation.id)
+            )
+            await repository.advance_observation_run(session, run, ObservationRunStatus.RUNNING)
+            lens_runs: list[tuple[UUID, StructuredReason]] = []
+            for index, reason in enumerate(reasons):
+                lens_run = await repository.create_lens_run(
+                    session,
+                    run,
+                    LensRunInput(lens_id=f"failure-{index}", lens_type=LensType.ALERT),
+                )
+                await repository.advance_lens_run(session, lens_run, LensRunStatus.RUNNING)
+                await persist_alert_terminal(
+                    session,
+                    lens_run,
+                    AlertTerminalOutcome(status=LensRunStatus.FAILED, reason=reason),
+                    repository,
+                )
+                lens_runs.append((lens_run.id, reason))
+            run_id = run.id
+            await session.commit()
+        async with session_factory() as session:
+            restored = await repository.get_observation_run(session, run_id)
+            assert restored is not None
+            by_id = {item.id: item for item in restored.lens_runs}
+            for lens_run_id, reason in lens_runs:
+                persisted = by_id[lens_run_id]
+                assert persisted.status == "failed" and persisted.analysis_result is None
+                assert persisted.reason == reason.model_dump(mode="json", exclude_none=True)
+
+    asyncio.run(scenario())
+
+
+def test_current_acquisition_failures_persist_exact_reason_without_artifact(
+    session_factory: async_sessionmaker[AsyncSession],
+) -> None:
+    class Provider:
+        def __init__(self, response: object) -> None:
+            self.response = response
+
+        async def acquire(self, *args: object) -> object:
+            if isinstance(self.response, Exception):
+                raise self.response
+            return self.response
+
+    class Agent:
+        async def complete(self, request: object) -> object:
+            raise AssertionError("agent must not run")
+
+    async def scenario() -> None:
+        repository = RuntimePersistenceRepository()
+        cases = (
+            (AlertProviderFailure(diagnostic="typed"), "current_query_failed"),
+            (AlertProviderTimeout(diagnostic="typed"), "current_query_timeout"),
+            (RuntimeError("thrown"), "current_query_failed"),
+            (TimeoutError("thrown"), "current_query_timeout"),
+        )
+        async with session_factory() as session:
+            observation = await _seed_observation(session)
+            run = await repository.create_observation_run(
+                session, ObservationRunInput(observation_id=observation.id)
+            )
+            await repository.advance_observation_run(session, run, ObservationRunStatus.RUNNING)
+            persisted: list[tuple[UUID, str]] = []
+            for index, (response, code) in enumerate(cases):
+                lens_run = await repository.create_lens_run(
+                    session, run, LensRunInput(lens_id=f"current-{index}", lens_type=LensType.ALERT)
+                )
+                await repository.advance_lens_run(session, lens_run, LensRunStatus.RUNNING)
+                context = AlertLensExecutionContext(
+                    identity=AlertIdentity(
+                        observation_id=observation.id,
+                        observation_run_id=run.id,
+                        lens_id=lens_run.lens_id,
+                        lens_run_id=lens_run.id,
+                    ),
+                    provider_scope=AlertProviderScope(source="fake", query="failure"),
+                    analysis_window=AlertAnalysisWindow(
+                        **{
+                            "from": datetime(2026, 9, 1, tzinfo=UTC),
+                            "to": datetime(2026, 9, 1, 1, tzinfo=UTC),
+                        }
+                    ),
+                    lens_name="Failure",
+                )
+                outcome = await AlertAnalysisPipeline(
+                    provider=Provider(response), agent=Agent()
+                ).analyze(context)
+                await persist_alert_terminal(session, lens_run, outcome, repository)
+                persisted.append((lens_run.id, code))
+            run_id = run.id
+            await session.commit()
+        async with session_factory() as session:
+            restored = await repository.get_observation_run(session, run_id)
+            assert restored is not None
+            by_id = {item.id: item for item in restored.lens_runs}
+            for lens_run_id, code in persisted:
+                assert by_id[lens_run_id].reason == {"code": code}
+                assert by_id[lens_run_id].analysis_result is None
+
+    asyncio.run(scenario())
+
+
+async def _persist_failed_alert_pipeline(
+    session_factory: async_sessionmaker[AsyncSession],
+    provider: object,
+    *,
+    analyzer: object | None = None,
+) -> tuple[str, dict[str, str] | None, bool]:
+    repository = RuntimePersistenceRepository()
+
+    class Agent:
+        async def complete(self, request: object) -> object:
+            raise AssertionError("failed paths must not invoke the agent")
+
+    async with session_factory() as session:
+        observation = await _seed_observation(session)
+        run = await repository.create_observation_run(
+            session, ObservationRunInput(observation_id=observation.id)
+        )
+        await repository.advance_observation_run(session, run, ObservationRunStatus.RUNNING)
+        lens_run = await repository.create_lens_run(
+            session, run, LensRunInput(lens_id="failure", lens_type=LensType.ALERT)
+        )
+        await repository.advance_lens_run(session, lens_run, LensRunStatus.RUNNING)
+        context = AlertLensExecutionContext(
+            identity=AlertIdentity(
+                observation_id=observation.id,
+                observation_run_id=run.id,
+                lens_id=lens_run.lens_id,
+                lens_run_id=lens_run.id,
+            ),
+            provider_scope=AlertProviderScope(source="fake", query="failure"),
+            analysis_window=AlertAnalysisWindow(
+                **{
+                    "from": datetime(2026, 9, 1, tzinfo=UTC),
+                    "to": datetime(2026, 9, 1, 1, tzinfo=UTC),
+                }
+            ),
+            lens_name="Failure",
+        )
+        arguments: dict[str, object] = {"provider": provider, "agent": Agent()}
+        if analyzer is not None:
+            arguments["analyzer"] = analyzer
+        outcome = await AlertAnalysisPipeline(**arguments).analyze(context)
+        await persist_alert_terminal(session, lens_run, outcome, repository)
+        run_id, lens_run_id = run.id, lens_run.id
+        await session.commit()
+    async with session_factory() as session:
+        restored = await repository.get_observation_run(session, run_id)
+        assert restored is not None
+        persisted = next(item for item in restored.lens_runs if item.id == lens_run_id)
+        return persisted.status, persisted.reason, persisted.analysis_result is not None
+
+
+def test_all_invalid_current_fails_without_artifact(
+    session_factory: async_sessionmaker[AsyncSession],
+) -> None:
+    class Provider:
+        async def acquire(self, *args: object) -> AlertRecordsAvailable:
+            return AlertRecordsAvailable(
+                source="fake",
+                records=(
+                    {"id": "bad", "started_at": "not-a-time"},
+                    {
+                        "id": "duplicate",
+                        "title": "one",
+                        "started_at": "2026-09-01T00:00:00Z",
+                        "source_status": "open",
+                    },
+                    {
+                        "id": "duplicate",
+                        "title": "two",
+                        "started_at": "2026-09-01T00:00:00Z",
+                        "source_status": "open",
+                    },
+                ),
+            )
+
+    status, reason, has_artifact = asyncio.run(
+        _persist_failed_alert_pipeline(session_factory, Provider())
+    )
+    assert status == "failed" and reason == {
+        "code": "invalid_records",
+        "component": "current_normalization",
+    }
+    assert not has_artifact
+
+
+def test_mandatory_analysis_failure_is_terminal_without_artifact(
+    session_factory: async_sessionmaker[AsyncSession],
+) -> None:
+    class Provider:
+        async def acquire(self, *args: object) -> AlertRecordsAvailable:
+            return AlertRecordsAvailable(
+                source="fake",
+                records=(
+                    {
+                        "id": "valid",
+                        "title": "Valid",
+                        "started_at": "2026-09-01T00:00:00Z",
+                        "source_status": "open",
+                    },
+                ),
+            )
+
+    def fail_analyzer(records: object) -> object:
+        raise RuntimeError("mandatory failure")
+
+    status, reason, has_artifact = asyncio.run(
+        _persist_failed_alert_pipeline(session_factory, Provider(), analyzer=fail_analyzer)
+    )
+    assert status == "failed" and reason == {"code": "deterministic_analysis_failed"}
+    assert not has_artifact
+
+
+def test_nonempty_all_out_of_scope_fails_while_empty_response_completes(
+    session_factory: async_sessionmaker[AsyncSession],
+) -> None:
+    class Provider:
+        def __init__(self, records: tuple[object, ...]) -> None:
+            self.records = records
+
+        async def acquire(self, *args: object) -> AlertRecordsAvailable:
+            return AlertRecordsAvailable(source="fake", records=self.records)
+
+    outside = (
+        {
+            "id": "outside",
+            "title": "Outside",
+            "started_at": "2026-09-01T01:00:00Z",
+            "source_status": "open",
+        },
+    )
+    status, reason, has_artifact = asyncio.run(
+        _persist_failed_alert_pipeline(session_factory, Provider(outside))
+    )
+    assert status == "failed" and reason == {
+        "code": "invalid_records",
+        "component": "current_normalization",
+    }
+    assert not has_artifact
+    empty_status, empty_reason, empty_has_artifact = asyncio.run(
+        _persist_failed_alert_pipeline(session_factory, Provider(()))
+    )
+    assert empty_status == "completed" and empty_reason is None and empty_has_artifact
 
 
 def _nonzero_alert_record(*, occurrences: int) -> AlertProviderRecord:
