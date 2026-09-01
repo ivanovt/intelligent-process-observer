@@ -189,6 +189,115 @@ def test_pydantic_ai_alerts_invalid_completion_error_and_timeout_are_terminal(
     asyncio.run(scenario())
 
 
+def test_pydantic_ai_alerts_optional_timeout_continues_to_valid_result(
+    session_factory: async_sessionmaker[AsyncSession],
+) -> None:
+    class Provider:
+        async def acquire(
+            self, scope: AlertProviderScope, window: AlertAnalysisWindow
+        ) -> AlertRecordsAvailable:
+            return AlertRecordsAvailable(
+                source=scope.source, records=(_nonzero_alert_record(occurrences=1),)
+            )
+
+    def timed_out_tool() -> object:
+        raise TimeoutError("tool deadline")
+
+    def model(messages: object, info: AgentInfo) -> ModelResponse:
+        if len(calls) == 0:
+            calls.append(messages)
+            return ModelResponse(parts=[ToolCallPart("recurrence_concentration_analysis", {})])
+        calls.append(messages)
+        return ModelResponse(
+            parts=[
+                ToolCallPart(
+                    info.output_tools[0].name,
+                    {"findings": (), "overall_importance": "low"},
+                )
+            ]
+        )
+
+    calls: list[object] = []
+
+    def tool_registry(records: tuple[object, ...], evidence: object) -> AlertOptionalToolRegistry:
+        return AlertOptionalToolRegistry(
+            records,
+            evidence,
+            evaluators={
+                "recurrence_concentration_analysis": timed_out_tool,
+                "duration_outlier_analysis": timed_out_tool,
+                "reference_pattern_analysis": timed_out_tool,
+            },
+        )
+
+    async def scenario() -> None:
+        repository = RuntimePersistenceRepository()
+        async with session_factory() as session:
+            observation = await _seed_observation(session)
+            run = await repository.create_observation_run(
+                session, ObservationRunInput(observation_id=observation.id)
+            )
+            await repository.advance_observation_run(session, run, ObservationRunStatus.RUNNING)
+            lens_run = await repository.create_lens_run(
+                session,
+                run,
+                LensRunInput(lens_id=f"adapter-{uuid4()}", lens_type=LensType.ALERT),
+            )
+            await repository.advance_lens_run(session, lens_run, LensRunStatus.RUNNING)
+            context = AlertLensExecutionContext(
+                identity=AlertIdentity(
+                    observation_id=observation.id,
+                    observation_run_id=run.id,
+                    lens_id=lens_run.lens_id,
+                    lens_run_id=lens_run.id,
+                ),
+                provider_scope=AlertProviderScope(source="fixture", query="opaque"),
+                analysis_window=AlertAnalysisWindow(
+                    **{
+                        "from": datetime(2026, 9, 1, tzinfo=UTC),
+                        "to": datetime(2026, 9, 1, 1, tzinfo=UTC),
+                    }
+                ),
+                lens_name="Adapter optional timeout fixture",
+            )
+            outcome = await AlertAnalysisPipeline(
+                provider=Provider(),
+                agent=PydanticAIAlertAnalysisAgent(FunctionModel(model)),
+                tool_registry_factory=tool_registry,
+            ).analyze(context)
+            assert outcome.status is LensRunStatus.COMPLETED
+            assert outcome.reason is None
+            assert outcome.artifact is not None
+            assert outcome.artifact.payload["optional_tool_execution"] == {
+                "unsuccessful_calls": [
+                    {"tool": "recurrence_concentration_analysis", "status": "timeout"}
+                ]
+            }
+            await persist_alert_terminal(session, lens_run, outcome, repository)
+            run_id, lens_run_id = run.id, lens_run.id
+            await session.commit()
+
+        assert len(calls) == 2
+        async with session_factory() as session:
+            restored = await repository.get_observation_run(session, run_id)
+            assert restored is not None
+            persisted = next(item for item in restored.lens_runs if item.id == lens_run_id)
+            assert persisted.status == "completed"
+            assert persisted.reason is None
+            assert persisted.analysis_result is not None
+            assert persisted.analysis_result.status == "completed"
+            assert persisted.analysis_result.payload["optional_tool_execution"] == {
+                "unsuccessful_calls": [
+                    {"tool": "recurrence_concentration_analysis", "status": "timeout"}
+                ]
+            }
+            serialized = str(persisted.analysis_result.payload)
+            assert "diagnostic" not in serialized
+            assert "ordinal" not in serialized
+
+    asyncio.run(scenario())
+
+
 def _result_input(
     lens_run_id: UUID,
     observation_id: UUID,
