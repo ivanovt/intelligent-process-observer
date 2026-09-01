@@ -107,7 +107,7 @@ parallel implementation.
 | VS-06 | Enforce canonical evidence references through persisted results | VS-04, VS-05 | high-risk | COMPLETE | 51a61b1 | `implementation/VS-06-handoff.md` |
 | VS-07 | Enforce exhaustive result invariants and builder failure | VS-06 | high-risk | COMPLETE | 9e634a6, a884623 | `implementation/VS-07-handoff.md` |
 | VS-08 | Translate the accepted boundary through injected PydanticAI | VS-05, VS-07 | high-risk | COMPLETE | 8eab18f, 4cbe450, f3b5344 | `implementation/VS-08-handoff.md` |
-| VS-09 | Prove transaction rollback, whole-change conformance, and documentation | VS-03, VS-04, VS-07, VS-08 | high-risk | COMPLETE | 4a1b03f, ccb06a9, 2ccc2fe | `implementation/VS-09-handoff.md` |
+| VS-09 | Prove transaction rollback, whole-change conformance, and documentation | VS-03, VS-04, VS-07, VS-08 | high-risk | COMPLETE | 4a1b03f, ccb06a9, 2ccc2fe, a81ff7d, 185795d | `implementation/VS-09-handoff.md`, `implementation/IR-001-handoff.md` |
 
 ## Slice definitions
 
@@ -1223,6 +1223,9 @@ here.
   independently reran focused contract/pipeline/adapter/builder tests (`47 passed`) and
   Ruff. Change-map deviation disposition: `N/A`; candidate awaits independent high-risk
   correction review.
+- 2026-09-01 — IR-001 accepted after high-risk review and bounded findings verification:
+  `RESOLVED`, no regressions. Accepted correction commits: `a81ff7d`, `185795d`.
+  The change awaits fresh whole-change implementation review; it remains unarchived.
 - 2026-09-01 — VS-03 accepted after corrected proof verification and `SLICE REVIEW PASS`.
   VS-04 and VS-05 are dependency-ready; VS-04 is next in the requested sequence.
 - 2026-09-01 — VS-04 assigned to fresh Slice Implementer `/root/vs04_implementer`.
