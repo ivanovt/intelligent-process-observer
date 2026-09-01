@@ -2466,7 +2466,7 @@ def test_alert_persistence_composer_rejects_every_mismatched_artifact_atomically
 def test_alert_terminal_outcome_correlation_matrix(
     session_factory: async_sessionmaker[AsyncSession],
 ) -> None:
-    """Reload completed, both partial causes, and failed Alert terminal outcomes."""
+    """Reload all approved Alert terminal status and reason correlations."""
 
     async def scenario() -> None:
         repository = RuntimePersistenceRepository()
@@ -2482,7 +2482,29 @@ def test_alert_terminal_outcome_correlation_matrix(
                 LensRunStatus.PARTIAL,
                 StructuredReason(code="reference_unavailable", component="reference_periods"),
             ),
-            ("failed", LensRunStatus.FAILED, StructuredReason(code="agent_failed")),
+            (
+                "current-query-failed",
+                LensRunStatus.FAILED,
+                StructuredReason(code="current_query_failed"),
+            ),
+            (
+                "current-query-timeout",
+                LensRunStatus.FAILED,
+                StructuredReason(code="current_query_timeout"),
+            ),
+            ("invalid-records", LensRunStatus.FAILED, StructuredReason(code="invalid_records")),
+            (
+                "deterministic-analysis-failed",
+                LensRunStatus.FAILED,
+                StructuredReason(code="deterministic_analysis_failed"),
+            ),
+            ("agent-failed", LensRunStatus.FAILED, StructuredReason(code="agent_failed")),
+            ("agent-timeout", LensRunStatus.FAILED, StructuredReason(code="agent_timeout")),
+            (
+                "result-validation-failed",
+                LensRunStatus.FAILED,
+                StructuredReason(code="result_validation_failed", component="alert_result_builder"),
+            ),
         )
         persisted: list[tuple[UUID, LensRunStatus, StructuredReason | None]] = []
         async with session_factory() as session:
@@ -2545,6 +2567,12 @@ def test_alert_terminal_outcome_correlation_matrix(
                 else:
                     assert lens_run.analysis_result is not None
                     assert lens_run.analysis_result.status == status.value
+                    if reason is None:
+                        assert "reason" not in lens_run.analysis_result.payload
+                    else:
+                        assert lens_run.analysis_result.payload["reason"] == reason.model_dump(
+                            mode="json"
+                        )
 
     asyncio.run(scenario())
 
