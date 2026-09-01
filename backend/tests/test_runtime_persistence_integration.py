@@ -11,9 +11,10 @@ import httpx
 import pytest
 from alembic import command
 from alembic.config import Config
-from sqlalchemy import func, select
+from sqlalchemy import delete, func, inspect, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
+from sqlalchemy.orm import selectinload
 
 from app.core.settings import get_settings
 from app.infrastructure.persistence.models import (
@@ -23,6 +24,7 @@ from app.infrastructure.persistence.models import (
     ObservationModel,
     ObservationRelationshipModel,
     ObservationReportModel,
+    ObservationRunModel,
     RelationshipEvaluationModel,
 )
 from app.infrastructure.persistence.repository import (
@@ -614,6 +616,156 @@ def test_postgresql_mixed_definition_order_navigation_and_late_failure_are_atomi
             with pytest.raises(RuntimeError, match="deliberate late persistence failure"):
                 await failing_service.create(session, failing_definition)
         assert await count_definition_rows() == before_failure
+
+    asyncio.run(scenario())
+
+
+def test_postgresql_alert_definition_ownership_cascade_and_runtime_restriction(
+    session_factory: async_sessionmaker[AsyncSession],
+) -> None:
+    async def create_observation_with_alerts() -> UUID:
+        async with session_factory() as session:
+            observation = ObservationModel(
+                name=f"Deletion ownership {uuid4()}",
+                objective="Prove Alert child ownership.",
+                schema_version=1,
+                alert_lenses=[
+                    AlertLensModel(
+                        lens_id="first-alert",
+                        lens_type="alert",
+                        name="First alert",
+                        source="jira_track_and_release",
+                        selector_query="project = FIRST",
+                        analysis_objectives=[],
+                        reference_periods=[],
+                        position=0,
+                    ),
+                    AlertLensModel(
+                        lens_id="second-alert",
+                        lens_type="alert",
+                        name="Second alert",
+                        source="jira_track_and_release",
+                        selector_query="project = SECOND",
+                        analysis_objectives=[],
+                        reference_periods=[],
+                        position=1,
+                    ),
+                ],
+            )
+            session.add(observation)
+            await session.commit()
+            return observation.id
+
+    async def count_rows(
+        model: type[ObservationModel] | type[AlertLensModel], identifier: UUID
+    ) -> int:
+        column = model.id if model is ObservationModel else model.observation_id
+        async with session_factory() as session:
+            return (
+                await session.scalar(
+                    select(func.count()).select_from(model).where(column == identifier)
+                )
+                or 0
+            )
+
+    async def assert_definition_and_alerts_exist(observation_id: UUID) -> None:
+        assert await count_rows(ObservationModel, observation_id) == 1
+        assert await count_rows(AlertLensModel, observation_id) == 2
+
+    async def scenario() -> None:
+        alert_foreign_key = next(iter(AlertLensModel.__table__.foreign_key_constraints))
+        runtime_foreign_key = next(iter(ObservationRunModel.__table__.foreign_key_constraints))
+        assert alert_foreign_key.referred_table.name == "observation_definitions"
+        assert alert_foreign_key.ondelete == "CASCADE"
+        assert runtime_foreign_key.referred_table.name == "observation_definitions"
+        assert runtime_foreign_key.ondelete == "RESTRICT"
+
+        async with session_factory() as session:
+            connection = await session.connection()
+            migrated_alert_foreign_key = await connection.run_sync(
+                lambda connection: inspect(connection).get_foreign_keys("alert_lens_definitions")
+            )
+            migrated_runtime_foreign_key = await connection.run_sync(
+                lambda connection: inspect(connection).get_foreign_keys("observation_runs")
+            )
+        assert migrated_alert_foreign_key == [
+            {
+                **migrated_alert_foreign_key[0],
+                "constrained_columns": ["observation_id"],
+                "referred_table": "observation_definitions",
+                "referred_columns": ["id"],
+                "options": {"ondelete": "CASCADE"},
+            }
+        ]
+        assert migrated_runtime_foreign_key == [
+            {
+                **migrated_runtime_foreign_key[0],
+                "constrained_columns": ["observation_id"],
+                "referred_table": "observation_definitions",
+                "referred_columns": ["id"],
+                "options": {"ondelete": "RESTRICT"},
+            }
+        ]
+
+        orm_observation_id = await create_observation_with_alerts()
+        async with session_factory() as session:
+            parent = await session.scalar(
+                select(ObservationModel)
+                .where(ObservationModel.id == orm_observation_id)
+                .options(selectinload(ObservationModel.alert_lenses))
+            )
+            assert parent is not None
+            assert [alert.lens_id for alert in parent.alert_lenses] == [
+                "first-alert",
+                "second-alert",
+            ]
+            await session.delete(parent)
+            await session.commit()
+        assert await count_rows(ObservationModel, orm_observation_id) == 0
+        assert await count_rows(AlertLensModel, orm_observation_id) == 0
+
+        sql_observation_id = await create_observation_with_alerts()
+        async with session_factory() as session:
+            await session.execute(
+                delete(ObservationModel).where(ObservationModel.id == sql_observation_id)
+            )
+            await session.commit()
+        assert await count_rows(ObservationModel, sql_observation_id) == 0
+        assert await count_rows(AlertLensModel, sql_observation_id) == 0
+
+        restricted_observation_id = await create_observation_with_alerts()
+        async with session_factory() as session:
+            session.add(
+                ObservationRunModel(
+                    observation_id=restricted_observation_id,
+                    status=ObservationRunStatus.PENDING.value,
+                    provenance={},
+                    execution_context={},
+                )
+            )
+            await session.commit()
+
+        async with session_factory() as session:
+            parent = await session.scalar(
+                select(ObservationModel)
+                .where(ObservationModel.id == restricted_observation_id)
+                .options(selectinload(ObservationModel.alert_lenses))
+            )
+            assert parent is not None
+            await session.delete(parent)
+            with pytest.raises(IntegrityError):
+                await session.commit()
+            await session.rollback()
+        await assert_definition_and_alerts_exist(restricted_observation_id)
+
+        async with session_factory() as session:
+            with pytest.raises(IntegrityError):
+                await session.execute(
+                    delete(ObservationModel).where(ObservationModel.id == restricted_observation_id)
+                )
+                await session.commit()
+            await session.rollback()
+        await assert_definition_and_alerts_exist(restricted_observation_id)
 
     asyncio.run(scenario())
 

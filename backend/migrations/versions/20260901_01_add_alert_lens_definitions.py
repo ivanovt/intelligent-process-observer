@@ -33,7 +33,9 @@ def upgrade() -> None:
         sa.Column("analysis_objectives", json_type, nullable=False),
         sa.Column("reference_periods", json_type, nullable=False),
         sa.Column("position", sa.Integer(), nullable=False),
-        sa.ForeignKeyConstraint(["observation_id"], ["observation_definitions.id"]),
+        sa.ForeignKeyConstraint(
+            ["observation_id"], ["observation_definitions.id"], ondelete="CASCADE"
+        ),
         sa.PrimaryKeyConstraint("id"),
         sa.UniqueConstraint("observation_id", "lens_id"),
     )

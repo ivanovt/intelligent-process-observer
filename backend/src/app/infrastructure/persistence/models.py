@@ -42,7 +42,9 @@ class ObservationModel(Base):
         order_by="MetricLensModel.position",
     )
     alert_lenses: Mapped[list[AlertLensModel]] = relationship(
-        back_populates="observation", order_by="AlertLensModel.position"
+        back_populates="observation",
+        cascade="all, delete-orphan",
+        order_by="AlertLensModel.position",
     )
     relationships: Mapped[list[ObservationRelationshipModel]] = relationship(
         back_populates="observation",
@@ -80,7 +82,7 @@ class AlertLensModel(Base):
 
     id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), primary_key=True, default=uuid4)
     observation_id: Mapped[UUID] = mapped_column(
-        ForeignKey("observation_definitions.id"), nullable=False
+        ForeignKey("observation_definitions.id", ondelete="CASCADE"), nullable=False
     )
     lens_id: Mapped[str] = mapped_column(String(255))
     lens_type: Mapped[str] = mapped_column(String(16))
