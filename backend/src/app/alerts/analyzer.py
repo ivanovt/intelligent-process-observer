@@ -8,7 +8,9 @@ from app.alerts.contracts import (
     AlertActivity,
     AlertDurationStatistics,
     AlertMandatoryEvidence,
+    AlertOccurrenceComparison,
     AlertProviderImportanceDistribution,
+    AlertReferenceComparison,
     AlertStatusDistribution,
     CanonicalAlertRecord,
 )
@@ -42,4 +44,20 @@ def analyze_current(records: tuple[CanonicalAlertRecord, ...]) -> AlertMandatory
         if durations
         else None,
         provider_importance_distribution=distribution,
+    )
+
+
+def compare_occurrences(
+    offset: str, current: AlertMandatoryEvidence, reference: AlertMandatoryEvidence
+) -> AlertReferenceComparison:
+    """Project one successful reference period as current-relative occurrence evidence."""
+    delta = current.occurrence_count - reference.occurrence_count
+    return AlertReferenceComparison(
+        offset=offset,
+        occurrence_comparison=AlertOccurrenceComparison(
+            current=current.occurrence_count,
+            reference=reference.occurrence_count,
+            delta=delta,
+            direction="increased" if delta > 0 else "decreased" if delta < 0 else "unchanged",
+        ),
     )

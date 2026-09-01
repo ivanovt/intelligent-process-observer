@@ -269,6 +269,7 @@ def test_alert_zero_record_walking_skeleton_persists_completed_result(
             "provider_acquisition",
             "current_normalization",
             "mandatory_analysis",
+            "reference_acquisition",
             "zero_record_gate",
             "result_build",
             "transaction_open",
@@ -332,6 +333,8 @@ def _assert_nonzero_alert_persists(
         async def acquire(
             self, scope: AlertProviderScope, window: AlertAnalysisWindow
         ) -> AlertRecordsAvailable:
+            if window.from_ == datetime(2026, 8, 31, tzinfo=UTC):
+                raise RuntimeError("reference unavailable")
             return AlertRecordsAvailable(
                 source=scope.source, records=(_nonzero_alert_record(occurrences=occurrences),)
             )
@@ -602,6 +605,80 @@ def test_runtime_persistence_round_trip_and_artifact_absence(
             assert restored.observation_analysis_result is not None
             assert restored.observation_analysis_result.report is not None
             assert len(restored.relationship_evaluations) == 1
+
+    asyncio.run(scenario())
+
+
+def test_invalid_current_subset_persists_correlated_partial(
+    session_factory: async_sessionmaker[AsyncSession],
+) -> None:
+    class Provider:
+        async def acquire(
+            self, scope: AlertProviderScope, window: AlertAnalysisWindow
+        ) -> AlertRecordsAvailable:
+            return AlertRecordsAvailable(
+                source=scope.source,
+                records=(
+                    AlertProviderRecord(
+                        id="usable", title="Usable", started_at=window.from_, source_status="open"
+                    ),
+                    {"id": "bad", "title": "Bad", "started_at": "invalid"},
+                ),
+            )
+
+    class Agent:
+        async def complete(self, request: object) -> AlertAgentCompletion:
+            return AlertAgentCompletion(findings=(), overall_importance="low")
+
+    async def scenario() -> None:
+        repository = RuntimePersistenceRepository()
+        async with session_factory() as session:
+            observation = await _seed_observation(session)
+            run = await repository.create_observation_run(
+                session, ObservationRunInput(observation_id=observation.id)
+            )
+            await repository.advance_observation_run(session, run, ObservationRunStatus.RUNNING)
+            lens_run = await repository.create_lens_run(
+                session, run, LensRunInput(lens_id="partial-alert", lens_type=LensType.ALERT)
+            )
+            await repository.advance_lens_run(session, lens_run, LensRunStatus.RUNNING)
+            context = AlertLensExecutionContext(
+                identity=AlertIdentity(
+                    observation_id=observation.id,
+                    observation_run_id=run.id,
+                    lens_id=lens_run.lens_id,
+                    lens_run_id=lens_run.id,
+                ),
+                provider_scope=AlertProviderScope(source="fake-alert-provider", query="partial"),
+                analysis_window=AlertAnalysisWindow(
+                    **{
+                        "from": datetime(2026, 9, 1, tzinfo=UTC),
+                        "to": datetime(2026, 9, 1, 1, tzinfo=UTC),
+                    }
+                ),
+                lens_name="Partial alerts",
+                reference_periods=("1d",),
+            )
+            outcome = await AlertAnalysisPipeline(provider=Provider(), agent=Agent()).analyze(
+                context
+            )
+            assert outcome.status is LensRunStatus.PARTIAL
+            await persist_alert_terminal(session, lens_run, outcome, repository)
+            run_id, lens_run_id = run.id, lens_run.id
+            await session.commit()
+        async with session_factory() as session:
+            restored = await repository.get_observation_run(session, run_id)
+            assert restored is not None
+            persisted = next(item for item in restored.lens_runs if item.id == lens_run_id)
+            assert persisted.status == "partial"
+            assert persisted.reason == {
+                "code": "invalid_records",
+                "component": "current_normalization",
+            }
+            assert persisted.analysis_result is not None
+            assert persisted.analysis_result.status == "partial"
+            assert persisted.analysis_result.payload["reason"] == persisted.reason
+            assert persisted.analysis_result.payload["identity"]["lens_run_id"] == str(lens_run_id)
 
     asyncio.run(scenario())
 

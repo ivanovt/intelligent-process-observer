@@ -13,12 +13,14 @@ from app.alerts.contracts import (
     AlertTerminalOutcome,
     CanonicalAlertRecord,
     CompletedAlertAnalysisResult,
+    PartialAlertAnalysisResult,
 )
 from app.infrastructure.persistence.runtime_contracts import (
     LensAnalysisResultInput,
     LensResultIdentity,
     LensRunStatus,
     LensType,
+    StructuredReason,
 )
 
 
@@ -91,3 +93,71 @@ class AlertResultBuilder:
             payload=payload,
         )
         return result, AlertTerminalOutcome(artifact=envelope)
+
+    def usable(
+        self,
+        context: AlertLensExecutionContext,
+        records: tuple[CanonicalAlertRecord, ...],
+        evidence: AlertMandatoryEvidence,
+        completion: AlertAgentCompletion | None,
+        current_rejected: bool,
+        reference_unavailable: bool,
+        *,
+        zero: bool = False,
+    ) -> tuple[CompletedAlertAnalysisResult | PartialAlertAnalysisResult, AlertTerminalOutcome]:
+        """Build the completed or primary-reason partial artifact from usable evidence."""
+        if completion is None:
+            completion = AlertAgentCompletion(findings=(), overall_importance="low")
+            zero = True
+        if zero:
+            completion = completion.model_copy(update={"overall_importance": "none"})
+        reason = (
+            StructuredReason(code="invalid_records", component="current_normalization")
+            if current_rejected
+            else StructuredReason(code="reference_unavailable", component="reference_periods")
+            if reference_unavailable
+            else None
+        )
+        if reason is None:
+            return self.completed(context, records, evidence, completion, zero=zero)
+        if evidence.record_count != len(records):
+            raise ValueError("evidence record_count must match canonical records")
+        allowed = {
+            "alert_activity",
+            "status_distribution",
+            "duration_statistics",
+            "provider_importance_distribution",
+        } | {f"alerts.{record.id}" for record in records}
+        if any(
+            ref not in allowed for finding in completion.findings for ref in finding.evidence_refs
+        ):
+            raise ValueError("finding evidence ref does not resolve to this Alert result")
+        provenance = AlertResultProvenance(
+            source_provider=context.provider_scope.source, generated_at=self._clock()
+        )
+        result = PartialAlertAnalysisResult(
+            identity=context.identity,
+            analysis_timestamp=context.analysis_window.to,
+            analysis_window=context.analysis_window,
+            alerts=records,
+            alert_activity=evidence.alert_activity,
+            status_distribution=evidence.status_distribution,
+            duration_statistics=evidence.duration_statistics,
+            provider_importance_distribution=evidence.provider_importance_distribution,
+            comparisons=evidence.comparisons,
+            findings=completion.findings,
+            overall_importance=completion.overall_importance,
+            provenance=provenance,
+            reason=reason,
+        )
+        envelope = LensAnalysisResultInput(
+            result_type=LensType.ALERT,
+            status=LensRunStatus.PARTIAL,
+            schema_version=result.schema_version,
+            identity=LensResultIdentity(**context.identity.model_dump()),
+            provenance=provenance.model_dump(mode="json"),
+            payload=result.model_dump(mode="json", by_alias=True, exclude_none=True),
+        )
+        return result, AlertTerminalOutcome(
+            status=LensRunStatus.PARTIAL, reason=reason, artifact=envelope
+        )

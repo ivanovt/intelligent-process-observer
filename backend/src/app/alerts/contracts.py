@@ -3,12 +3,16 @@
 from __future__ import annotations
 
 from datetime import UTC, datetime
-from typing import Literal
+from typing import Any, Literal
 from uuid import UUID
 
 from pydantic import AliasChoices, BaseModel, ConfigDict, Field, field_validator, model_validator
 
-from app.infrastructure.persistence.runtime_contracts import LensAnalysisResultInput, LensRunStatus
+from app.infrastructure.persistence.runtime_contracts import (
+    LensAnalysisResultInput,
+    LensRunStatus,
+    StructuredReason,
+)
 
 
 class StrictAlertModel(BaseModel):
@@ -71,6 +75,18 @@ class AlertLensExecutionContext(StrictAlertModel):
     reference_periods: tuple[str, ...] = ()
     lens_run_status: Literal["running"] = "running"
 
+    @field_validator("reference_periods")
+    @classmethod
+    def validate_reference_periods(cls, values: tuple[str, ...]) -> tuple[str, ...]:
+        """Accept unique positive configured offsets used by reference acquisition."""
+        import re
+
+        if len(values) != len(set(values)) or any(
+            re.fullmatch(r"[1-9][0-9]*(m|h|d|w)", value) is None for value in values
+        ):
+            raise ValueError("reference_periods must contain unique positive m, h, d, or w offsets")
+        return values
+
 
 class AlertProviderImportance(StrictAlertModel):
     """Provider-native importance retained without cross-provider mapping."""
@@ -107,7 +123,8 @@ class AlertProviderRecord(StrictAlertModel):
 class AlertRecordsAvailable(StrictAlertModel):
     """Successful provider response with mapped records only."""
 
-    records: tuple[AlertProviderRecord, ...] = ()
+    # Provider mapping can leave malformed values for application-owned normalization.
+    records: tuple[AlertProviderRecord | dict[str, Any], ...] = ()
     source: str = Field(min_length=1)
 
 
@@ -189,7 +206,7 @@ class AlertMandatoryEvidence(StrictAlertModel):
     )
     duration_statistics: AlertDurationStatistics | None = None
     provider_importance_distribution: AlertProviderImportanceDistribution | None = None
-    comparisons: tuple[()] = ()
+    comparisons: tuple[AlertReferenceComparison, ...] = ()
 
     @property
     def record_count(self) -> int:
@@ -217,7 +234,23 @@ class AlertAgentRequest(StrictAlertModel):
     lens_description: str | None = None
     current_records: tuple[CanonicalAlertRecord, ...]
     mandatory_evidence: AlertMandatoryEvidence
-    comparisons: tuple[()] = ()
+    comparisons: tuple[AlertReferenceComparison, ...] = ()
+
+
+class AlertOccurrenceComparison(StrictAlertModel):
+    """Current occurrence activity relative to one successful reference period."""
+
+    current: int = Field(ge=0)
+    reference: int = Field(ge=0)
+    delta: int
+    direction: Literal["increased", "decreased", "unchanged"]
+
+
+class AlertReferenceComparison(StrictAlertModel):
+    """Compact evidence retained for one successful configured reference offset."""
+
+    offset: str = Field(min_length=2)
+    occurrence_comparison: AlertOccurrenceComparison
 
 
 class AlertAgentCompletion(StrictAlertModel):
@@ -263,7 +296,7 @@ class CompletedAlertAnalysisResult(StrictAlertModel):
     status_distribution: AlertStatusDistribution
     duration_statistics: AlertDurationStatistics | None = None
     provider_importance_distribution: AlertProviderImportanceDistribution | None = None
-    comparisons: tuple[()] = ()
+    comparisons: tuple[AlertReferenceComparison, ...] = ()
     findings: tuple[AlertFinding, ...]
     overall_importance: Literal["none", "low", "moderate", "high", "critical"]
     provenance: AlertResultProvenance
@@ -301,9 +334,31 @@ class CompletedAlertAnalysisResult(StrictAlertModel):
 CompletedZeroAlertAnalysisResult = CompletedAlertAnalysisResult
 
 
+class PartialAlertAnalysisResult(CompletedAlertAnalysisResult):
+    """Strict usable Alert artifact with one approved incompleteness reason."""
+
+    status: Literal["partial"] = "partial"
+    reason: StructuredReason
+
+    @model_validator(mode="after")
+    def validate_partial_reason(self) -> PartialAlertAnalysisResult:
+        if (self.reason.code, self.reason.component) not in {
+            ("invalid_records", "current_normalization"),
+            ("reference_unavailable", "reference_periods"),
+        }:
+            raise ValueError("unsupported Alert partial reason")
+        return self
+
+
 class AlertTerminalOutcome(StrictAlertModel):
     """ORM-neutral terminal outcome ready for caller-owned transaction persistence."""
 
-    status: Literal[LensRunStatus.COMPLETED] = LensRunStatus.COMPLETED
-    reason: None = None
+    status: Literal[LensRunStatus.COMPLETED, LensRunStatus.PARTIAL] = LensRunStatus.COMPLETED
+    reason: StructuredReason | None = None
     artifact: LensAnalysisResultInput
+
+    @model_validator(mode="after")
+    def correlate_partial_reason(self) -> AlertTerminalOutcome:
+        if (self.status is LensRunStatus.PARTIAL) != (self.reason is not None):
+            raise ValueError("partial Alert outcome requires exactly one reason")
+        return self

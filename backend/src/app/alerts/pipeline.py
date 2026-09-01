@@ -11,8 +11,9 @@ from app.alerts.contracts import (
     AlertRecordsAvailable,
     AlertTerminalOutcome,
 )
-from app.alerts.normalization import normalize_current
+from app.alerts.normalization import normalize_current_with_rejections
 from app.alerts.ports import AlertAnalysisAgent, AlertProvider
+from app.alerts.references import acquire_comparisons
 from app.alerts.result_builder import AlertResultBuilder
 
 PhaseRecorder = Callable[[str], None]
@@ -39,27 +40,41 @@ class AlertAnalysisPipeline:
         """Acquire, normalize, analyze, and build the completed Alert result."""
         if context.lens_run_status != "running":
             raise ValueError("Alert pipeline requires an existing running LensRun")
-        if context.reference_periods:
-            raise ValueError("configured Alert references are outside VS-02")
         self._record_phase("provider_acquisition")
         response = await self._provider.acquire(context.provider_scope, context.analysis_window)
         if not isinstance(response, AlertRecordsAvailable):
             raise ValueError("non-successful Alert acquisition is outside VS-02")
         self._record_phase("current_normalization")
-        records = normalize_current(response, context.analysis_window, context.analysis_window.to)
+        records, current_rejected = normalize_current_with_rejections(
+            response, context.analysis_window, context.analysis_window.to
+        )
         self._record_phase("mandatory_analysis")
         evidence = analyze_current(records)
+        self._record_phase("reference_acquisition")
+        comparisons, reference_unavailable = await acquire_comparisons(
+            self._provider,
+            context.provider_scope,
+            context.analysis_window,
+            evidence,
+            context.reference_periods,
+        )
+        evidence = evidence.model_copy(update={"comparisons": comparisons})
         self._record_phase("zero_record_gate")
         if not evidence.record_count:
             self._record_phase("result_build")
-            return self._result_builder.completed_zero(context, evidence)[1]
+            return self._result_builder.usable(
+                context, (), evidence, None, current_rejected, reference_unavailable, zero=True
+            )[1]
         self._record_phase("agent_completion")
         request = AlertAgentRequest(
             lens_name=context.lens_name,
             lens_description=context.lens_description,
             current_records=records,
             mandatory_evidence=evidence,
+            comparisons=comparisons,
         )
         completion = await self._agent.complete(request)
         self._record_phase("result_build")
-        return self._result_builder.completed(context, records, evidence, completion)[1]
+        return self._result_builder.usable(
+            context, records, evidence, completion, current_rejected, reference_unavailable
+        )[1]

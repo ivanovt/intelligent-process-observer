@@ -323,3 +323,201 @@ def test_agent_projection_is_exactly_bounded() -> None:
         AlertAgentCompletion.model_validate(
             {"findings": [], "overall_importance": "high", "raw_payload": "forbidden"}
         )
+
+
+class OffsetProvider(FakeProvider):
+    def __init__(self, responses: dict[datetime, object]) -> None:
+        super().__init__()
+        self.responses = responses
+
+    async def acquire(self, scope: AlertProviderScope, window: AlertAnalysisWindow) -> object:
+        self.calls.append((scope, window))
+        response = self.responses[window.from_]
+        if isinstance(response, Exception):
+            raise response
+        return response
+
+
+def test_references_are_independent_ordered_and_precede_zero_gate() -> None:
+    async def scenario() -> None:
+        context = _context().model_copy(update={"reference_periods": ("7d", "1d", "14d")})
+        empty = AlertRecordsAvailable(source="fixture-source")
+        responses = {
+            context.analysis_window.from_: empty,
+            datetime(2026, 8, 25, tzinfo=UTC): AlertRecordsAvailable(
+                source="fixture-source",
+                records=(
+                    _record(
+                        "low", started=datetime(2026, 8, 25, tzinfo=UTC), ended=None, occurrences=1
+                    ),
+                ),
+            ),
+            datetime(2026, 8, 31, tzinfo=UTC): RuntimeError("unavailable"),
+            datetime(2026, 8, 18, tzinfo=UTC): AlertRecordsAvailable(
+                source="fixture-source",
+                records=(
+                    _record(
+                        "high", started=datetime(2026, 8, 18, tzinfo=UTC), ended=None, occurrences=2
+                    ),
+                ),
+            ),
+        }
+        provider, agent = OffsetProvider(responses), FailOnCallAgent()
+        outcome = await AlertAnalysisPipeline(provider=provider, agent=agent).analyze(context)
+        assert [call[1].from_ for call in provider.calls] == [
+            context.analysis_window.from_,
+            datetime(2026, 8, 25, tzinfo=UTC),
+            datetime(2026, 8, 31, tzinfo=UTC),
+            datetime(2026, 8, 18, tzinfo=UTC),
+        ]
+        assert [item["offset"] for item in outcome.artifact.payload["comparisons"]] == ["7d", "14d"]
+        assert [
+            item["occurrence_comparison"]["direction"]
+            for item in outcome.artifact.payload["comparisons"]
+        ] == ["decreased", "decreased"]
+        assert outcome.status.value == "partial" and agent.calls == 0
+
+    asyncio.run(scenario())
+
+
+def test_invalid_current_subset_selects_current_normalization_partial() -> None:
+    async def scenario() -> None:
+        context = _context()
+        valid = _record(
+            "valid", started=datetime(2026, 9, 1, tzinfo=UTC), ended=None, occurrences=1
+        )
+        malformed = {"id": "bad", "title": "Bad", "started_at": "not-a-time"}
+        outcome = await AlertAnalysisPipeline(
+            provider=RecordsProvider((valid, malformed)), agent=CapturingAgent()
+        ).analyze(context)
+        assert outcome.status.value == "partial"
+        assert outcome.reason is not None and outcome.reason.model_dump() == {
+            "code": "invalid_records",
+            "component": "current_normalization",
+        }
+        assert [item["id"] for item in outcome.artifact.payload["alerts"]] == ["valid"]
+
+    asyncio.run(scenario())
+
+
+def test_duplicate_collision_rejects_every_member() -> None:
+    async def scenario() -> None:
+        context = _context()
+        records = (
+            _record(
+                "duplicate", started=datetime(2026, 9, 1, tzinfo=UTC), ended=None, occurrences=1
+            ),
+            _record("unique", started=datetime(2026, 9, 1, tzinfo=UTC), ended=None, occurrences=1),
+            _record(
+                "duplicate", started=datetime(2026, 9, 1, tzinfo=UTC), ended=None, occurrences=1
+            ),
+        )
+        outcome = await AlertAnalysisPipeline(
+            provider=RecordsProvider(records), agent=CapturingAgent()
+        ).analyze(context)
+        assert [item["id"] for item in outcome.artifact.payload["alerts"]] == ["unique"]
+        assert outcome.status.value == "partial"
+
+    asyncio.run(scenario())
+
+
+def test_successful_empty_reference_yields_zero_comparison() -> None:
+    async def scenario() -> None:
+        context = _context().model_copy(update={"reference_periods": ("1d",)})
+        current = AlertRecordsAvailable(
+            source="fixture-source",
+            records=(
+                _record(
+                    "current", started=datetime(2026, 9, 1, tzinfo=UTC), ended=None, occurrences=3
+                ),
+            ),
+        )
+        provider = OffsetProvider(
+            {
+                context.analysis_window.from_: current,
+                datetime(2026, 8, 31, tzinfo=UTC): AlertRecordsAvailable(source="fixture-source"),
+            }
+        )
+        outcome = await AlertAnalysisPipeline(provider=provider, agent=CapturingAgent()).analyze(
+            context
+        )
+        assert outcome.status.value == "completed"
+        assert outcome.artifact.payload["comparisons"] == [
+            {
+                "offset": "1d",
+                "occurrence_comparison": {
+                    "current": 3,
+                    "reference": 0,
+                    "delta": 3,
+                    "direction": "increased",
+                },
+            }
+        ]
+
+    asyncio.run(scenario())
+
+
+def test_all_references_unavailable_remains_usable_partial() -> None:
+    async def scenario() -> None:
+        context = _context().model_copy(update={"reference_periods": ("1d", "7d", "14d")})
+        current = AlertRecordsAvailable(
+            source="fixture-source",
+            records=(
+                _record(
+                    "current", started=datetime(2026, 9, 1, tzinfo=UTC), ended=None, occurrences=1
+                ),
+            ),
+        )
+        provider = OffsetProvider(
+            {
+                context.analysis_window.from_: current,
+                datetime(2026, 8, 31, tzinfo=UTC): RuntimeError("error"),
+                datetime(2026, 8, 25, tzinfo=UTC): RuntimeError("timeout"),
+                datetime(2026, 8, 18, tzinfo=UTC): AlertRecordsAvailable(
+                    source="fixture-source", records=({"id": "bad", "started_at": "bad"},)
+                ),
+            }
+        )
+        outcome = await AlertAnalysisPipeline(provider=provider, agent=CapturingAgent()).analyze(
+            context
+        )
+        assert outcome.status.value == "partial"
+        assert outcome.reason is not None and outcome.reason.model_dump() == {
+            "code": "reference_unavailable",
+            "component": "reference_periods",
+        }
+        assert outcome.artifact.payload["comparisons"] == []
+
+    asyncio.run(scenario())
+
+
+def test_current_incompleteness_precedes_reference_unavailability() -> None:
+    async def scenario() -> None:
+        context = _context().model_copy(update={"reference_periods": ("1d",)})
+        provider = OffsetProvider(
+            {
+                context.analysis_window.from_: AlertRecordsAvailable(
+                    source="fixture-source",
+                    records=(
+                        _record(
+                            "current",
+                            started=datetime(2026, 9, 1, tzinfo=UTC),
+                            ended=None,
+                            occurrences=1,
+                        ),
+                        {"id": "bad", "started_at": "bad"},
+                    ),
+                ),
+                datetime(2026, 8, 31, tzinfo=UTC): RuntimeError("unavailable"),
+            }
+        )
+        outcome = await AlertAnalysisPipeline(provider=provider, agent=CapturingAgent()).analyze(
+            context
+        )
+        assert outcome.reason is not None and outcome.reason.model_dump() == {
+            "code": "invalid_records",
+            "component": "current_normalization",
+        }
+        assert "reference_unavailable" not in str(outcome.artifact.payload)
+
+    asyncio.run(scenario())
