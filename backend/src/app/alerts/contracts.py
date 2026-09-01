@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from datetime import UTC, datetime
+from math import isfinite
 from typing import Any, Literal
 from uuid import UUID
 
@@ -434,6 +435,18 @@ class CompletedAlertAnalysisResult(StrictAlertModel):
     def validate_invariants(self) -> CompletedAlertAnalysisResult:
         if len(self.alerts) != self.alert_activity.record_count:
             raise ValueError("record_count must equal alerts length")
+        effective_occurrences = sum(
+            alert.occurrence_count if alert.occurrence_count is not None else 1
+            for alert in self.alerts
+        )
+        if self.alert_activity.occurrence_count != effective_occurrences:
+            raise ValueError("occurrence_count must equal effective alert occurrences")
+        actual_statuses = {
+            status: sum(alert.status.normalized == status for alert in self.alerts)
+            for status in ("active", "resolved", "unknown")
+        }
+        if self.status_distribution.model_dump() != actual_statuses:
+            raise ValueError("status distribution must equal alert statuses")
         if (
             sum(
                 (
@@ -445,10 +458,60 @@ class CompletedAlertAnalysisResult(StrictAlertModel):
             != self.alert_activity.record_count
         ):
             raise ValueError("status counts must equal record_count")
+        for alert in self.alerts:
+            if not isfinite(alert.duration_seconds):
+                raise ValueError("alert duration must be finite")
+            if alert.ended_at is not None and alert.ended_at < alert.started_at:
+                raise ValueError("alert ended_at must not precede started_at")
+            if alert.status.normalized == "active" and alert.ended_at is not None:
+                raise ValueError("active alert must not have ended_at")
+            if alert.status.normalized == "resolved" and alert.ended_at is None:
+                raise ValueError("resolved alert requires ended_at")
+            lifecycle_end = alert.ended_at or self.analysis_timestamp
+            expected_duration = (lifecycle_end - alert.started_at).total_seconds()
+            if alert.duration_seconds != expected_duration:
+                raise ValueError("alert duration must match its lifecycle timestamps")
+        if self.duration_statistics is not None:
+            durations = [alert.duration_seconds for alert in self.alerts]
+            expected_statistics = {
+                "min_seconds": min(durations),
+                "max_seconds": max(durations),
+                "average_seconds": sum(durations) / len(durations),
+            }
+            if self.duration_statistics.model_dump() != expected_statistics:
+                raise ValueError("duration statistics must equal alert durations")
+        importance = [
+            alert.provider_importance for alert in self.alerts if alert.provider_importance
+        ]
+        if self.provider_importance_distribution is not None:
+            if not importance:
+                raise ValueError("provider importance section requires provider importance")
+            if any(item.type != self.provider_importance_distribution.type for item in importance):
+                raise ValueError("provider importance type must match every alert")
+            expected_values = {
+                value: sum(item.value == value for item in importance)
+                for value in {item.value for item in importance}
+            }
+            if self.provider_importance_distribution.values != expected_values:
+                raise ValueError("provider importance values must equal alert importance")
+        elif importance:
+            raise ValueError("provider importance section is required when alerts have importance")
+        for comparison in self.comparisons:
+            occurrence = comparison.occurrence_comparison
+            delta = occurrence.current - occurrence.reference
+            direction = "increased" if delta > 0 else "decreased" if delta < 0 else "unchanged"
+            if occurrence.current != self.alert_activity.occurrence_count:
+                raise ValueError("comparison current must equal current occurrence_count")
+            if occurrence.delta != delta or occurrence.direction != direction:
+                raise ValueError("comparison delta and direction must be exact")
         if self.alert_activity.record_count == 0:
-            if self.overall_importance != "none" or self.duration_statistics is not None:
+            if (
+                self.overall_importance != "none"
+                or self.duration_statistics is not None
+                or self.provider_importance_distribution is not None
+            ):
                 raise ValueError(
-                    "zero-record result requires none importance and no duration statistics"
+                    "zero-record result requires none importance and no optional aggregates"
                 )
         elif self.overall_importance == "none" or self.duration_statistics is None:
             raise ValueError("non-zero result requires importance and duration statistics")

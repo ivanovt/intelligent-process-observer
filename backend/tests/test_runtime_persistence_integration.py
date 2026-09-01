@@ -943,6 +943,94 @@ def test_noncanonical_evidence_refs_fail_without_artifact(
     asyncio.run(scenario())
 
 
+def test_representative_builder_invariant_failures_persist_failed_run_without_artifact(
+    session_factory: async_sessionmaker[AsyncSession],
+) -> None:
+    class Provider:
+        async def acquire(
+            self, scope: AlertProviderScope, window: AlertAnalysisWindow
+        ) -> AlertRecordsAvailable:
+            return AlertRecordsAvailable(
+                source=scope.source, records=(_nonzero_alert_record(occurrences=1),)
+            )
+
+    class Agent:
+        async def complete(self, request: object) -> AlertAgentCompletion:
+            return AlertAgentCompletion(findings=(), overall_importance="high")
+
+    class CorruptingBuilder(AlertResultBuilder):
+        def __init__(self, failure: str) -> None:
+            super().__init__()
+            self.failure = failure
+
+        def _validate_completed_result(self, result: object, context: object) -> object:
+            if self.failure == "identity":
+                result = result.model_copy(
+                    update={"identity": result.identity.model_copy(update={"lens_id": "wrong"})}
+                )
+            else:
+                result = result.model_copy(
+                    update={
+                        "alert_activity": result.alert_activity.model_copy(
+                            update={"occurrence_count": result.alert_activity.occurrence_count + 1}
+                        )
+                    }
+                )
+            return super()._validate_completed_result(result, context)
+
+    async def scenario() -> None:
+        repository = RuntimePersistenceRepository()
+        async with session_factory() as session:
+            observation = await _seed_observation(session)
+            run = await repository.create_observation_run(
+                session, ObservationRunInput(observation_id=observation.id)
+            )
+            await repository.advance_observation_run(session, run, ObservationRunStatus.RUNNING)
+            for failure in ("identity", "activity"):
+                lens_run = await repository.create_lens_run(
+                    session, run, LensRunInput(lens_id=f"bad-{failure}", lens_type=LensType.ALERT)
+                )
+                await repository.advance_lens_run(session, lens_run, LensRunStatus.RUNNING)
+                context = AlertLensExecutionContext(
+                    identity=AlertIdentity(
+                        observation_id=observation.id,
+                        observation_run_id=run.id,
+                        lens_id=lens_run.lens_id,
+                        lens_run_id=lens_run.id,
+                    ),
+                    provider_scope=AlertProviderScope(source="fixture", query="opaque"),
+                    analysis_window=AlertAnalysisWindow(
+                        **{
+                            "from": datetime(2026, 9, 1, tzinfo=UTC),
+                            "to": datetime(2026, 9, 1, 1, tzinfo=UTC),
+                        }
+                    ),
+                    lens_name="builder invariant",
+                )
+                outcome = await AlertAnalysisPipeline(
+                    provider=Provider(), agent=Agent(), result_builder=CorruptingBuilder(failure)
+                ).analyze(context)
+                assert outcome == AlertTerminalOutcome(
+                    status=LensRunStatus.FAILED,
+                    reason=StructuredReason(
+                        code="result_validation_failed", component="alert_result_builder"
+                    ),
+                )
+                await persist_alert_terminal(session, lens_run, outcome, repository)
+            run_id = run.id
+            await session.commit()
+        async with session_factory() as session:
+            restored = await repository.get_observation_run(session, run_id)
+            assert restored is not None
+            failures = [item for item in restored.lens_runs if item.lens_id.startswith("bad-")]
+            assert len(failures) == 2
+            assert all(
+                item.status == "failed" and item.analysis_result is None for item in failures
+            )
+
+    asyncio.run(scenario())
+
+
 def test_runtime_persistence_round_trip_and_artifact_absence(
     session_factory: async_sessionmaker[AsyncSession],
 ) -> None:

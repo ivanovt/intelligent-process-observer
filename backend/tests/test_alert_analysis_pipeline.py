@@ -19,6 +19,7 @@ from app.alerts.contracts import (
     AlertRecordsAvailable,
 )
 from app.alerts.pipeline import AlertAnalysisPipeline
+from app.alerts.result_builder import AlertResultBuilder
 from app.alerts.tools import AlertOptionalToolRegistry, duration_outliers
 
 
@@ -886,5 +887,48 @@ def test_unresolvable_finding_reference_stops_before_persistence() -> None:
         ).analyze(_context())
         _assert_failed(outcome, "result_validation_failed")
         assert outcome.reason.component == "alert_result_builder"
+
+    asyncio.run(scenario())
+
+
+def test_representative_builder_failures_map_exact_reason() -> None:
+    class CorruptingBuilder(AlertResultBuilder):
+        def __init__(self, failure: str) -> None:
+            super().__init__()
+            self.failure = failure
+
+        def _validate_completed_result(self, result: object, context: object) -> object:
+            if self.failure == "identity":
+                result = result.model_copy(
+                    update={"identity": result.identity.model_copy(update={"lens_id": "wrong"})}
+                )
+            else:
+                result = result.model_copy(
+                    update={
+                        "alert_activity": result.alert_activity.model_copy(
+                            update={"occurrence_count": result.alert_activity.occurrence_count + 1}
+                        )
+                    }
+                )
+            return super()._validate_completed_result(result, context)
+
+    class MalformedAgent:
+        async def complete(self, request: object) -> object:
+            return {"findings": "not-a-list", "overall_importance": "high"}
+
+    async def scenario() -> None:
+        provider = RecordsProvider(
+            (_record("valid", started=datetime(2026, 9, 1, tzinfo=UTC), ended=None, occurrences=1),)
+        )
+        for failure in ("identity", "activity"):
+            outcome = await AlertAnalysisPipeline(
+                provider=provider, agent=CapturingAgent(), result_builder=CorruptingBuilder(failure)
+            ).analyze(_context())
+            _assert_failed(outcome, "result_validation_failed")
+            assert outcome.reason.component == "alert_result_builder" and outcome.artifact is None
+        outcome = await AlertAnalysisPipeline(provider=provider, agent=MalformedAgent()).analyze(
+            _context()
+        )
+        _assert_failed(outcome, "agent_failed")
 
     asyncio.run(scenario())
