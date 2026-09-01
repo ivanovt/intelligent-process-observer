@@ -1145,3 +1145,6 @@ here.
 - 2026-09-01 — VS-03 accepted after corrected proof verification and `SLICE REVIEW PASS`.
   VS-04 and VS-05 are dependency-ready; VS-04 is next in the requested sequence.
 - 2026-09-01 — VS-04 assigned to fresh Slice Implementer `/root/vs04_implementer`.
+- 2026-09-01 — Coordinator review found VS-04 PostgreSQL verification failing: failed
+  reason projection retains a null component, and the deterministic-failure fixture does
+  not reach its analyzer. VS-04 remains `IN_PROGRESS`; focused correction required.
