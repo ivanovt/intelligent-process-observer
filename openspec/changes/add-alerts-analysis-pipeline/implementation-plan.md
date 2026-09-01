@@ -1151,3 +1151,6 @@ here.
 - 2026-09-01 — Corrections `eb7ac9a` and `5319227` restore reason projection and the
   deterministic-failure proof; Coordinator reran the five required PostgreSQL nodes
   successfully. Deviation disposition: `N/A`; candidate awaits high-risk review.
+- 2026-09-01 — VS-04 review requires focused correction: add the AC01 analyzer-bypass
+  guard and remove the out-of-map shared runtime serializer change. VS-04 remains
+  `IN_PROGRESS`.
