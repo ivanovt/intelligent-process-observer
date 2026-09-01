@@ -154,10 +154,21 @@ def test_invalid_completion_failure_counts_have_no_corrective_retry() -> None:
             parts=[ToolCallPart("final_result", {"findings": (), "overall_importance": "none"})]
         )
 
-    injected, calls = model([invalid])
-    with pytest.raises(UnexpectedModelBehavior):
-        run(PydanticAIAlertAnalysisAgent(injected).complete(request(), registry()))
-    assert len(calls) == 1
+    def model_error(_: AgentInfo) -> ModelResponse:
+        raise RuntimeError("model failure")
+
+    def timeout(_: AgentInfo) -> ModelResponse:
+        raise TimeoutError("model deadline")
+
+    for terminal_response, error_type in (
+        (invalid, UnexpectedModelBehavior),
+        (model_error, RuntimeError),
+        (timeout, TimeoutError),
+    ):
+        injected, calls = model([terminal_response])
+        with pytest.raises(error_type):
+            run(PydanticAIAlertAnalysisAgent(injected).complete(request(), registry()))
+        assert len(calls) == 1
 
 
 def test_invalid_completion_error_and_timeout_map_exactly() -> None:
