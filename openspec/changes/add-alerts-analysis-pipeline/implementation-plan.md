@@ -1219,6 +1219,10 @@ here.
   mapping to `agent_failed`, add builder defense-in-depth, and add focused contract,
   pipeline/adapter, and builder proofs. This is a user-authorized local correction; no
   frozen plan structure or normative behavior is changed.
+- 2026-09-01 — IR-001 correction commits `a81ff7d` and `185795d`; Coordinator
+  independently reran focused contract/pipeline/adapter/builder tests (`47 passed`) and
+  Ruff. Change-map deviation disposition: `N/A`; candidate awaits independent high-risk
+  correction review.
 - 2026-09-01 — VS-03 accepted after corrected proof verification and `SLICE REVIEW PASS`.
   VS-04 and VS-05 are dependency-ready; VS-04 is next in the requested sequence.
 - 2026-09-01 — VS-04 assigned to fresh Slice Implementer `/root/vs04_implementer`.
