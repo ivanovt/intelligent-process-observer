@@ -449,7 +449,7 @@ class RuntimePersistenceRepository:
 
         if reason is None:
             return None
-        return reason.model_dump(mode="json")
+        return reason.model_dump(mode="json", exclude_none=True)
 
     @staticmethod
     def _validate_lens_result(

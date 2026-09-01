@@ -530,18 +530,24 @@ def test_mandatory_analysis_failure_is_terminal_without_artifact(
                     {
                         "id": "valid",
                         "title": "Valid",
-                        "started_at": "2026-09-01T00:00:00Z",
+                        "started_at": "2026-09-01T00:30:00Z",
                         "source_status": "open",
                     },
                 ),
             )
 
-    def fail_analyzer(records: object) -> object:
+    analyzer_calls = 0
+
+    def fail_analyzer(records: tuple[object, ...]) -> object:
+        nonlocal analyzer_calls
+        analyzer_calls += 1
+        assert len(records) == 1
         raise RuntimeError("mandatory failure")
 
     status, reason, has_artifact = asyncio.run(
         _persist_failed_alert_pipeline(session_factory, Provider(), analyzer=fail_analyzer)
     )
+    assert analyzer_calls == 1
     assert status == "failed" and reason == {"code": "deterministic_analysis_failed"}
     assert not has_artifact
 
