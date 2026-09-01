@@ -82,10 +82,14 @@ def test_zero_record_path_skips_agent_and_builds_strict_result() -> None:
             _context()
         )
         payload = outcome.artifact.payload
-        assert payload["activity"]["record_count"] == 0
+        assert payload["alerts"] == []
+        assert payload["alert_activity"] == {"record_count": 0, "occurrence_count": 0}
+        assert payload["status_distribution"] == {"active": 0, "resolved": 0, "unknown": 0}
+        assert payload["comparisons"] == []
         assert payload["findings"] == []
         assert payload["overall_importance"] == "none"
-        assert "duration" not in payload and "provider_importance" not in payload
+        assert "duration_statistics" not in payload
+        assert "provider_importance_distribution" not in payload
         assert agent.calls == 0
 
     asyncio.run(scenario())

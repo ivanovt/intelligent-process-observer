@@ -277,8 +277,31 @@ def test_alert_zero_record_walking_skeleton_persists_completed_result(
             artifact = persisted_run.analysis_result
             assert artifact.result_type == "alert" and artifact.status == "completed"
             assert artifact.schema_version == "1.0"
-            assert artifact.payload["identity"]["lens_run_id"] == str(lens_run.id)
-            assert artifact.payload["activity"]["record_count"] == 0
+            assert artifact.payload["identity"] == context.identity.model_dump(mode="json")
+            assert artifact.payload["lens_type"] == "alert"
+            assert artifact.payload["status"] == "completed"
+            assert artifact.payload["analysis_timestamp"] == "2026-09-01T01:00:00Z"
+            assert artifact.payload["analysis_window"] == {
+                "start": "2026-09-01T00:00:00Z",
+                "end": "2026-09-01T01:00:00Z",
+            }
+            assert artifact.payload["provenance"]["source_provider"] == "fake-alert-provider"
+            assert "generated_at" in artifact.payload["provenance"]
+            assert artifact.payload["alerts"] == []
+            assert artifact.payload["alert_activity"] == {
+                "record_count": 0,
+                "occurrence_count": 0,
+            }
+            assert artifact.payload["status_distribution"] == {
+                "active": 0,
+                "resolved": 0,
+                "unknown": 0,
+            }
+            assert artifact.payload["comparisons"] == []
+            assert artifact.payload["findings"] == []
+            assert artifact.payload["overall_importance"] == "none"
+            assert "duration_statistics" not in artifact.payload
+            assert "provider_importance_distribution" not in artifact.payload
 
     asyncio.run(scenario())
 

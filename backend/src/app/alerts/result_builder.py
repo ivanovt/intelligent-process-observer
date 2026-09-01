@@ -6,9 +6,11 @@ from collections.abc import Callable
 from datetime import UTC, datetime
 
 from app.alerts.contracts import (
+    AlertActivity,
     AlertLensExecutionContext,
     AlertMandatoryEvidence,
     AlertResultProvenance,
+    AlertStatusDistribution,
     AlertTerminalOutcome,
     CompletedZeroAlertAnalysisResult,
 )
@@ -34,12 +36,17 @@ class AlertResultBuilder:
         if evidence.record_count != 0 or evidence.occurrence_count != 0:
             raise ValueError("zero-record builder requires zero mandatory evidence")
         provenance = AlertResultProvenance(
-            source=context.provider_scope.source, generated_at=self._clock()
+            source_provider=context.provider_scope.source, generated_at=self._clock()
         )
         result = CompletedZeroAlertAnalysisResult(
             identity=context.identity,
+            analysis_timestamp=context.analysis_window.to,
             analysis_window=context.analysis_window,
-            activity=evidence,
+            alert_activity=AlertActivity(
+                record_count=evidence.record_count,
+                occurrence_count=evidence.occurrence_count,
+            ),
+            status_distribution=AlertStatusDistribution(**evidence.status_counts),
             provenance=provenance,
         )
         payload = result.model_dump(mode="json", by_alias=True, exclude_none=True)

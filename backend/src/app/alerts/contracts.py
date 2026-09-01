@@ -6,7 +6,14 @@ from datetime import UTC, datetime
 from typing import Literal
 from uuid import UUID
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
+from pydantic import (
+    AliasChoices,
+    BaseModel,
+    ConfigDict,
+    Field,
+    field_validator,
+    model_validator,
+)
 
 from app.infrastructure.persistence.runtime_contracts import (
     LensAnalysisResultInput,
@@ -38,8 +45,10 @@ class AlertIdentity(StrictAlertModel):
 class AlertAnalysisWindow(StrictAlertModel):
     """The fixed time boundary for one Alert acquisition."""
 
-    from_: datetime = Field(alias="from")
-    to: datetime
+    from_: datetime = Field(
+        validation_alias=AliasChoices("from", "start"), serialization_alias="start"
+    )
+    to: datetime = Field(validation_alias=AliasChoices("to", "end"), serialization_alias="end")
 
     @field_validator("from_", "to")
     @classmethod
@@ -103,7 +112,11 @@ class AlertMandatoryEvidence(StrictAlertModel):
 class AlertResultProvenance(StrictAlertModel):
     """Stable source provenance for a generated Alert artifact."""
 
-    source: str = Field(min_length=1)
+    source_provider: str = Field(
+        min_length=1,
+        validation_alias=AliasChoices("source", "source_provider"),
+        serialization_alias="source_provider",
+    )
     generated_at: datetime
 
     @field_validator("generated_at")
@@ -119,11 +132,35 @@ class CompletedZeroAlertAnalysisResult(StrictAlertModel):
     lens_type: Literal["alert"] = "alert"
     status: Literal["completed"] = "completed"
     identity: AlertIdentity
+    analysis_timestamp: datetime
     analysis_window: AlertAnalysisWindow
-    activity: AlertMandatoryEvidence
+    alerts: tuple[()] = ()
+    alert_activity: AlertActivity
+    status_distribution: AlertStatusDistribution
+    comparisons: tuple[()] = ()
     findings: tuple[()] = ()
     overall_importance: Literal["none"] = "none"
     provenance: AlertResultProvenance
+
+    @field_validator("analysis_timestamp")
+    @classmethod
+    def normalize_analysis_timestamp(cls, value: datetime) -> datetime:
+        return _utc(value)
+
+
+class AlertActivity(StrictAlertModel):
+    """Top-level count evidence for current normalized alerts."""
+
+    record_count: Literal[0] = 0
+    occurrence_count: Literal[0] = 0
+
+
+class AlertStatusDistribution(StrictAlertModel):
+    """Top-level record-based status counts for current alerts."""
+
+    active: Literal[0] = 0
+    resolved: Literal[0] = 0
+    unknown: Literal[0] = 0
 
 
 class AlertTerminalOutcome(StrictAlertModel):
