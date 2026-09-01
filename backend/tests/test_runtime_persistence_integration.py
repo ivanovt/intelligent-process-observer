@@ -2,10 +2,12 @@ from __future__ import annotations
 
 import asyncio
 import os
+from collections.abc import AsyncIterator
 from datetime import UTC, datetime
 from pathlib import Path
 from uuid import UUID, uuid4
 
+import httpx
 import pytest
 from alembic import command
 from alembic.config import Config
@@ -41,6 +43,8 @@ from app.infrastructure.persistence.runtime_contracts import (
     RelationshipEvaluationInput,
     StructuredReason,
 )
+from app.main import app
+from app.observations.api import get_service, get_session
 from app.observations.contracts import ObservationCreate
 from app.observations.service import ObservationDefinitionService
 
@@ -394,29 +398,45 @@ def test_postgresql_alert_definition_walking_skeleton_and_empty_rejection(
             assert detail.alert_lenses[0] == nested
             assert "future_field" not in nested.model_dump_json()
 
-            rows_before = [
-                await session.scalar(select(func.count()).select_from(model))
-                for model in (
-                    ObservationModel,
-                    MetricLensModel,
-                    AlertLensModel,
-                    ObservationRelationshipModel,
-                )
-            ]
-            with pytest.raises(ValueError, match="at least one Lens"):
-                ObservationCreate.model_validate(
-                    {"name": "No lenses", "objective": "Must be rejected.", "lenses": []}
-                )
-            rows_after = [
-                await session.scalar(select(func.count()).select_from(model))
-                for model in (
-                    ObservationModel,
-                    MetricLensModel,
-                    AlertLensModel,
-                    ObservationRelationshipModel,
-                )
-            ]
-            assert rows_before == rows_after
+        async def count_definition_rows() -> list[int]:
+            async with session_factory() as count_session:
+                return [
+                    await count_session.scalar(select(func.count()).select_from(model))
+                    for model in (
+                        ObservationModel,
+                        MetricLensModel,
+                        AlertLensModel,
+                        ObservationRelationshipModel,
+                    )
+                ]
+
+        async def postgres_session() -> AsyncIterator[AsyncSession]:
+            async with session_factory() as request_session:
+                yield request_session
+
+        async def postgres_service() -> ObservationDefinitionService:
+            return service
+
+        rows_before = await count_definition_rows()
+        app.dependency_overrides[get_session] = postgres_session
+        app.dependency_overrides[get_service] = postgres_service
+        try:
+            transport = httpx.ASGITransport(app=app)
+            async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+                for payload in ({}, {"lenses": [], "alert_lenses": []}):
+                    response = await client.post(
+                        "/api/v1/observations",
+                        json={
+                            "name": "No lenses",
+                            "objective": "Must be rejected.",
+                            **payload,
+                        },
+                    )
+                    assert response.status_code == 422
+                    assert response.json()["code"] == "validation_error"
+                    assert await count_definition_rows() == rows_before
+        finally:
+            app.dependency_overrides.clear()
 
     asyncio.run(scenario())
 
