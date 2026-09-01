@@ -32,6 +32,7 @@ from app.alerts.contracts import (
     AlertTerminalOutcome,
 )
 from app.alerts.pipeline import AlertAnalysisPipeline
+from app.alerts.tools import AlertOptionalToolRegistry
 from app.core.settings import get_settings
 from app.infrastructure.persistence.alert_runtime import persist_alert_terminal
 from app.infrastructure.persistence.models import (
@@ -605,8 +606,11 @@ def _nonzero_alert_record(*, occurrences: int) -> AlertProviderRecord:
 
 
 def _assert_nonzero_alert_persists(
-    session_factory: async_sessionmaker[AsyncSession], *, occurrences: int
-) -> None:
+    session_factory: async_sessionmaker[AsyncSession],
+    *,
+    occurrences: int,
+    tool_registry_factory: object | None = None,
+) -> dict[str, object]:
     class Provider:
         async def acquire(
             self, scope: AlertProviderScope, window: AlertAnalysisWindow
@@ -621,7 +625,9 @@ def _assert_nonzero_alert_persists(
         def __init__(self) -> None:
             self.calls = 0
 
-        async def complete(self, request: object) -> AlertAgentCompletion:
+        async def complete(
+            self, request: object, tools: object | None = None
+        ) -> AlertAgentCompletion:
             self.calls += 1
             assert (
                 request.lens_name == "Persisted alerts"
@@ -638,6 +644,10 @@ def _assert_nonzero_alert_persists(
                 "mandatory_evidence",
                 "comparisons",
             }
+            if tools is not None:
+                await tools.execute("recurrence_concentration_analysis", {})
+                await tools.execute("duration_outlier_analysis", {})
+                await tools.execute("reference_pattern_analysis", {})
             return AlertAgentCompletion(
                 findings=(
                     AlertFinding(
@@ -678,7 +688,9 @@ def _assert_nonzero_alert_persists(
                 lens_name="Persisted alerts",
                 lens_description="exact bounded description",
             )
-            outcome = await AlertAnalysisPipeline(provider=Provider(), agent=agent).analyze(context)
+            outcome = await AlertAnalysisPipeline(
+                provider=Provider(), agent=agent, tool_registry_factory=tool_registry_factory
+            ).analyze(context)
             await persist_alert_terminal(session, lens_run, outcome, repository)
             run_id, lens_run_id = run.id, lens_run.id
             await session.commit()
@@ -702,14 +714,43 @@ def _assert_nonzero_alert_persists(
             assert artifact.payload["overall_importance"] == "high" and "query" not in str(
                 artifact.payload
             )
+            return artifact.payload
 
-    asyncio.run(scenario())
+    return asyncio.run(scenario())
 
 
 def test_nonzero_zero_occurrence_invokes_agent_with_exact_projection_and_persists(
     session_factory: async_sessionmaker[AsyncSession],
 ) -> None:
     _assert_nonzero_alert_persists(session_factory, occurrences=0)
+
+
+def test_optional_failures_continue_and_persist_only_minimal_trace(
+    session_factory: async_sessionmaker[AsyncSession],
+) -> None:
+    def registry(records: tuple[object, ...], evidence: object) -> AlertOptionalToolRegistry:
+        tools = AlertOptionalToolRegistry(records, evidence)
+
+        def failed() -> object:
+            raise RuntimeError("transient")
+
+        def timed_out() -> object:
+            raise TimeoutError("transient")
+
+        tools._evaluators["recurrence_concentration_analysis"] = timed_out
+        tools._evaluators["reference_pattern_analysis"] = failed
+        return tools
+
+    payload = _assert_nonzero_alert_persists(
+        session_factory, occurrences=1, tool_registry_factory=registry
+    )
+    assert payload["optional_tool_execution"] == {
+        "unsuccessful_calls": [
+            {"tool": "recurrence_concentration_analysis", "status": "timeout"},
+            {"tool": "reference_pattern_analysis", "status": "failed"},
+        ]
+    }
+    assert "diagnostic" not in str(payload) and "ordinal" not in str(payload)
 
 
 def test_representative_nonzero_alert_result_round_trips_strictly(

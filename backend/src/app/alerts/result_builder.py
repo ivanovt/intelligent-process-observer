@@ -9,6 +9,7 @@ from app.alerts.contracts import (
     AlertAgentCompletion,
     AlertLensExecutionContext,
     AlertMandatoryEvidence,
+    AlertOptionalToolExecution,
     AlertResultProvenance,
     AlertTerminalOutcome,
     CanonicalAlertRecord,
@@ -50,6 +51,7 @@ class AlertResultBuilder:
         completion: AlertAgentCompletion,
         *,
         zero: bool = False,
+        unsuccessful_calls: tuple[dict[str, str], ...] = (),
     ) -> tuple[CompletedAlertAnalysisResult, AlertTerminalOutcome]:
         """Build the completed strict artifact from canonical records and bounded output."""
         if zero:
@@ -79,6 +81,11 @@ class AlertResultBuilder:
             duration_statistics=evidence.duration_statistics,
             provider_importance_distribution=evidence.provider_importance_distribution,
             comparisons=evidence.comparisons,
+            optional_tool_execution=(
+                AlertOptionalToolExecution(unsuccessful_calls=unsuccessful_calls)
+                if unsuccessful_calls
+                else None
+            ),
             findings=completion.findings,
             overall_importance=completion.overall_importance,
             provenance=provenance,
@@ -104,6 +111,7 @@ class AlertResultBuilder:
         reference_unavailable: bool,
         *,
         zero: bool = False,
+        unsuccessful_calls: tuple[dict[str, str], ...] = (),
     ) -> tuple[CompletedAlertAnalysisResult | PartialAlertAnalysisResult, AlertTerminalOutcome]:
         """Build the completed or primary-reason partial artifact from usable evidence."""
         if completion is None:
@@ -119,7 +127,14 @@ class AlertResultBuilder:
             else None
         )
         if reason is None:
-            return self.completed(context, records, evidence, completion, zero=zero)
+            return self.completed(
+                context,
+                records,
+                evidence,
+                completion,
+                zero=zero,
+                unsuccessful_calls=unsuccessful_calls,
+            )
         if evidence.record_count != len(records):
             raise ValueError("evidence record_count must match canonical records")
         allowed = {
@@ -145,6 +160,11 @@ class AlertResultBuilder:
             duration_statistics=evidence.duration_statistics,
             provider_importance_distribution=evidence.provider_importance_distribution,
             comparisons=evidence.comparisons,
+            optional_tool_execution=(
+                AlertOptionalToolExecution(unsuccessful_calls=unsuccessful_calls)
+                if unsuccessful_calls
+                else None
+            ),
             findings=completion.findings,
             overall_importance=completion.overall_importance,
             provenance=provenance,

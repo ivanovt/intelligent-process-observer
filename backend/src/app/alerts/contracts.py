@@ -253,6 +253,113 @@ class AlertAgentRequest(StrictAlertModel):
     comparisons: tuple[AlertReferenceComparison, ...] = ()
 
 
+AlertOptionalToolName = Literal[
+    "recurrence_concentration_analysis",
+    "duration_outlier_analysis",
+    "reference_pattern_analysis",
+]
+
+
+class RecurrenceConcentrationToolDescriptor(StrictAlertModel):
+    """Describe the bounded recurrence concentration capability."""
+
+    name: Literal["recurrence_concentration_analysis"] = "recurrence_concentration_analysis"
+
+
+class DurationOutlierToolDescriptor(StrictAlertModel):
+    """Describe the bounded high-side duration outlier capability."""
+
+    name: Literal["duration_outlier_analysis"] = "duration_outlier_analysis"
+
+
+class ReferencePatternToolDescriptor(StrictAlertModel):
+    """Describe the bounded reference comparison pattern capability."""
+
+    name: Literal["reference_pattern_analysis"] = "reference_pattern_analysis"
+
+
+AlertOptionalToolDescriptors = tuple[
+    RecurrenceConcentrationToolDescriptor,
+    DurationOutlierToolDescriptor,
+    ReferencePatternToolDescriptor,
+]
+FIXED_ALERT_OPTIONAL_TOOLS: AlertOptionalToolDescriptors = (
+    RecurrenceConcentrationToolDescriptor(),
+    DurationOutlierToolDescriptor(),
+    ReferencePatternToolDescriptor(),
+)
+
+
+class AlertOptionalToolSuccess(StrictAlertModel):
+    """A transient successful optional-tool result."""
+
+    name: AlertOptionalToolName
+    outcome: Literal["success"] = "success"
+    data: dict[str, Any]
+
+
+class AlertOptionalToolNotApplicable(StrictAlertModel):
+    """A normal transient non-applicability optional-tool result."""
+
+    name: AlertOptionalToolName
+    outcome: Literal["not_applicable"] = "not_applicable"
+    data: dict[str, Any] = Field(default_factory=dict)
+
+
+class AlertOptionalToolFailed(StrictAlertModel):
+    """A transient failed optional-tool result."""
+
+    name: AlertOptionalToolName
+    outcome: Literal["failed"] = "failed"
+    diagnostic: str = Field(min_length=1, max_length=512)
+
+
+class AlertOptionalToolTimedOut(StrictAlertModel):
+    """A transient timed-out optional-tool result."""
+
+    name: AlertOptionalToolName
+    outcome: Literal["timeout"] = "timeout"
+    diagnostic: str = Field(min_length=1, max_length=512)
+
+
+class AlertOptionalToolRejected(StrictAlertModel):
+    """A request rejected before optional-tool evaluation."""
+
+    outcome: Literal["rejected"] = "rejected"
+    reason: Literal["unregistered", "invalid_arguments", "over_budget"]
+
+
+AlertOptionalToolExecutionOutcome = (
+    AlertOptionalToolSuccess
+    | AlertOptionalToolNotApplicable
+    | AlertOptionalToolFailed
+    | AlertOptionalToolTimedOut
+)
+AlertOptionalToolOutcome = AlertOptionalToolExecutionOutcome | AlertOptionalToolRejected
+
+
+class AlertOptionalToolAttempt(StrictAlertModel):
+    """One internal ordered optional-tool admission and execution record."""
+
+    ordinal: int = Field(gt=0)
+    requested_name: str = Field(min_length=1)
+    outcome: AlertOptionalToolOutcome
+    executed: bool
+
+
+class AlertUnsuccessfulToolCall(StrictAlertModel):
+    """The minimal public trace for one failed or timed-out optional call."""
+
+    tool: AlertOptionalToolName
+    status: Literal["failed", "timeout"]
+
+
+class AlertOptionalToolExecution(StrictAlertModel):
+    """Minimal public projection of unsuccessful optional calls only."""
+
+    unsuccessful_calls: tuple[AlertUnsuccessfulToolCall, ...] = Field(min_length=1)
+
+
 class AlertOccurrenceComparison(StrictAlertModel):
     """Current occurrence activity relative to one successful reference period."""
 
@@ -313,6 +420,7 @@ class CompletedAlertAnalysisResult(StrictAlertModel):
     duration_statistics: AlertDurationStatistics | None = None
     provider_importance_distribution: AlertProviderImportanceDistribution | None = None
     comparisons: tuple[AlertReferenceComparison, ...] = ()
+    optional_tool_execution: AlertOptionalToolExecution | None = None
     findings: tuple[AlertFinding, ...]
     overall_importance: Literal["none", "low", "moderate", "high", "critical"]
     provenance: AlertResultProvenance

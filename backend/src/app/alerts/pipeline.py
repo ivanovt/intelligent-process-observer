@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Callable
+from inspect import signature
 
 from pydantic import ValidationError
 
@@ -19,6 +20,7 @@ from app.alerts.normalization import normalize_current_with_rejections
 from app.alerts.ports import AlertAnalysisAgent, AlertProvider
 from app.alerts.references import acquire_comparisons
 from app.alerts.result_builder import AlertResultBuilder
+from app.alerts.tools import AlertOptionalToolRegistry, unsuccessful_trace
 from app.infrastructure.persistence.runtime_contracts import LensRunStatus, StructuredReason
 
 PhaseRecorder = Callable[[str], None]
@@ -35,6 +37,9 @@ class AlertAnalysisPipeline:
         result_builder: AlertResultBuilder | None = None,
         record_phase: PhaseRecorder | None = None,
         analyzer: Callable = analyze_current,
+        tool_registry_factory: Callable[
+            [tuple, object], AlertOptionalToolRegistry
+        ] = AlertOptionalToolRegistry,
     ) -> None:
         self._provider, self._agent = provider, agent
         self._result_builder, self._record_phase = (
@@ -42,6 +47,7 @@ class AlertAnalysisPipeline:
             record_phase or (lambda _: None),
         )
         self._analyzer = analyzer
+        self._tool_registry_factory = tool_registry_factory or AlertOptionalToolRegistry
 
     @staticmethod
     def _failed(code: str, component: str | None = None) -> AlertTerminalOutcome:
@@ -100,8 +106,14 @@ class AlertAnalysisPipeline:
             mandatory_evidence=evidence,
             comparisons=comparisons,
         )
+        tools = self._tool_registry_factory(records, evidence)
         try:
-            completion = await self._agent.complete(request)
+            complete = self._agent.complete
+            completion = await (
+                complete(request, tools)
+                if len(signature(complete).parameters) > 1
+                else complete(request)
+            )
         except TimeoutError:
             return self._failed("agent_timeout")
         except Exception:
@@ -112,5 +124,11 @@ class AlertAnalysisPipeline:
             return self._failed("agent_failed")
         self._record_phase("result_build")
         return self._result_builder.usable(
-            context, records, evidence, completion, current_rejected, reference_unavailable
+            context,
+            records,
+            evidence,
+            completion,
+            current_rejected,
+            reference_unavailable,
+            unsuccessful_calls=unsuccessful_trace(tools.ledger),
         )[1]

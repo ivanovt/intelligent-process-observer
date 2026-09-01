@@ -19,6 +19,7 @@ from app.alerts.contracts import (
     AlertRecordsAvailable,
 )
 from app.alerts.pipeline import AlertAnalysisPipeline
+from app.alerts.tools import AlertOptionalToolRegistry
 
 
 class FakeProvider:
@@ -788,5 +789,59 @@ def test_current_incompleteness_precedes_reference_unavailability() -> None:
             "component": "current_normalization",
         }
         assert "reference_unavailable" not in str(outcome.artifact.payload)
+
+    asyncio.run(scenario())
+
+
+def test_optional_failure_timeout_continue_with_minimal_trace() -> None:
+    class ToolUsingAgent:
+        async def complete(self, request: object, tools: object) -> AlertAgentCompletion:
+            await tools.execute("recurrence_concentration_analysis", {})
+            await tools.execute("duration_outlier_analysis", {})
+            await tools.execute("reference_pattern_analysis", {})
+            await tools.execute("recurrence_concentration_analysis", {})
+            return AlertAgentCompletion(
+                findings=(
+                    AlertFinding(id="f-1", statement="Observed", evidence_refs=("alert_activity",)),
+                ),
+                overall_importance="high",
+            )
+
+    async def scenario() -> None:
+        records = (
+            _record("valid", started=datetime(2026, 9, 1, tzinfo=UTC), ended=None, occurrences=1),
+        )
+
+        def registry(records: tuple[object, ...], evidence: object) -> AlertOptionalToolRegistry:
+            tools = AlertOptionalToolRegistry(records, evidence)
+
+            def failed() -> object:
+                raise RuntimeError("transient")
+
+            def timed_out() -> object:
+                raise TimeoutError("transient")
+
+            tools._evaluators["reference_pattern_analysis"] = failed
+            tools._evaluators["recurrence_concentration_analysis"] = timed_out
+            return tools
+
+        outcome = await AlertAnalysisPipeline(
+            provider=RecordsProvider(records),
+            agent=ToolUsingAgent(),
+            tool_registry_factory=registry,
+        ).analyze(_context())
+        payload = outcome.artifact.payload
+        assert outcome.status.value == "completed"
+        assert payload["optional_tool_execution"] == {
+            "unsuccessful_calls": [
+                {"tool": "recurrence_concentration_analysis", "status": "timeout"},
+                {"tool": "reference_pattern_analysis", "status": "failed"},
+                {"tool": "recurrence_concentration_analysis", "status": "timeout"},
+            ]
+        }
+        serialized = str(payload)
+        assert "diagnostic" not in serialized and "ordinal" not in serialized
+        assert "'outcome': 'not_applicable'" not in serialized
+        assert "'outcome': 'success'" not in serialized
 
     asyncio.run(scenario())
