@@ -102,7 +102,7 @@ parallel implementation.
 | VS-01 | Persist a zero-record completed Alert walking skeleton | none | high-risk | COMPLETE | d1dc5b3, 5933bb5, af65a93 | `implementation/VS-01-handoff.md` |
 | VS-02 | Persist representative non-zero deterministic evidence and fake-agent findings | VS-01 | high-risk | COMPLETE | b0c322d | `implementation/VS-02-handoff.md` |
 | VS-03 | Add independent references, invalid subsets, partial precedence, and partial persistence | VS-02 | high-risk | COMPLETE | fa2ae78, f26b582, 093e36a, da36b71 | `implementation/VS-03-handoff.md` |
-| VS-04 | Persist every mandatory failure with no Alert artifact | VS-03 | high-risk | READY | - | - |
+| VS-04 | Persist every mandatory failure with no Alert artifact | VS-03 | high-risk | IN_PROGRESS | - | - |
 | VS-05 | Execute the bounded optional registry and retain only allowed failure traces | VS-03 | high-risk | READY | - | - |
 | VS-06 | Enforce canonical evidence references through persisted results | VS-04, VS-05 | high-risk | PLANNED | - | - |
 | VS-07 | Enforce exhaustive result invariants and builder failure | VS-06 | high-risk | PLANNED | - | - |
@@ -1144,3 +1144,4 @@ here.
   `N/A`; candidate awaits bounded re-review.
 - 2026-09-01 — VS-03 accepted after corrected proof verification and `SLICE REVIEW PASS`.
   VS-04 and VS-05 are dependency-ready; VS-04 is next in the requested sequence.
+- 2026-09-01 — VS-04 assigned to fresh Slice Implementer `/root/vs04_implementer`.
