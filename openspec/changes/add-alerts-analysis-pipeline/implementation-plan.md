@@ -1148,3 +1148,6 @@ here.
 - 2026-09-01 — Coordinator review found VS-04 PostgreSQL verification failing: failed
   reason projection retains a null component, and the deterministic-failure fixture does
   not reach its analyzer. VS-04 remains `IN_PROGRESS`; focused correction required.
+- 2026-09-01 — Corrections `eb7ac9a` and `5319227` restore reason projection and the
+  deterministic-failure proof; Coordinator reran the five required PostgreSQL nodes
+  successfully. Deviation disposition: `N/A`; candidate awaits high-risk review.
