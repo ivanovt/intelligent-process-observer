@@ -1139,3 +1139,6 @@ here.
   VS03-AC02, and VS03-AC04; VS-03 remains `IN_PROGRESS`.
 - 2026-09-01 — Coordinator verification of the corrected candidate found the frozen
   VS03-AC05 PostgreSQL node absent; a focused proof correction is required.
+- 2026-09-01 — Corrections `093e36a` and `da36b71` restore the frozen VS03 proof
+  fixtures; Coordinator reran AC05 PostgreSQL (`1 passed`). Deviation disposition:
+  `N/A`; candidate awaits bounded re-review.
