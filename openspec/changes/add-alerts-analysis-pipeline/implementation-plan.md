@@ -1182,6 +1182,10 @@ here.
 - 2026-09-01 — VS-08 assigned to fresh Slice Implementer `/root/vs08_implementer`.
 - 2026-09-01 — VS-08 candidate `8eab18f` requires focused correction: frozen
   VS08-AC05 PostgreSQL proof cannot be deferred to VS-09. VS-08 remains `IN_PROGRESS`.
+- 2026-09-01 — VS-08 correction `4cbe450` adds the frozen AC05 PostgreSQL proof;
+  Coordinator independently reran both required PostgreSQL nodes (`2 passed`) and the
+  domain import-boundary scan. Deviation disposition: `N/A`; candidate awaits high-risk
+  review. Candidate knowledge accepted as `PK-001`.
 - 2026-09-01 — VS-03 accepted after corrected proof verification and `SLICE REVIEW PASS`.
   VS-04 and VS-05 are dependency-ready; VS-04 is next in the requested sequence.
 - 2026-09-01 — VS-04 assigned to fresh Slice Implementer `/root/vs04_implementer`.
