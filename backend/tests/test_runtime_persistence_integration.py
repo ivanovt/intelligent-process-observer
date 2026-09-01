@@ -32,7 +32,7 @@ from app.alerts.contracts import (
     AlertTerminalOutcome,
 )
 from app.alerts.pipeline import AlertAnalysisPipeline
-from app.alerts.tools import AlertOptionalToolRegistry
+from app.alerts.tools import AlertOptionalToolRegistry, duration_outliers
 from app.core.settings import get_settings
 from app.infrastructure.persistence.alert_runtime import persist_alert_terminal
 from app.infrastructure.persistence.models import (
@@ -729,17 +729,21 @@ def test_optional_failures_continue_and_persist_only_minimal_trace(
     session_factory: async_sessionmaker[AsyncSession],
 ) -> None:
     def registry(records: tuple[object, ...], evidence: object) -> AlertOptionalToolRegistry:
-        tools = AlertOptionalToolRegistry(records, evidence)
-
         def failed() -> object:
             raise RuntimeError("transient")
 
         def timed_out() -> object:
             raise TimeoutError("transient")
 
-        tools._evaluators["recurrence_concentration_analysis"] = timed_out
-        tools._evaluators["reference_pattern_analysis"] = failed
-        return tools
+        return AlertOptionalToolRegistry(
+            records,
+            evidence,
+            evaluators={
+                "recurrence_concentration_analysis": timed_out,
+                "duration_outlier_analysis": lambda: duration_outliers(records),
+                "reference_pattern_analysis": failed,
+            },
+        )
 
     payload = _assert_nonzero_alert_persists(
         session_factory, occurrences=1, tool_registry_factory=registry

@@ -120,7 +120,9 @@ class AlertOptionalToolRegistry:
             "reference_pattern_analysis": lambda: reference_pattern(evidence),
         }
         if evaluators is not None:
-            self._evaluators.update(evaluators)
+            if set(evaluators) != set(self._evaluators):
+                raise ValueError("optional-tool evaluators must cover exactly the approved names")
+            self._evaluators = evaluators
 
     @property
     def ledger(self) -> tuple[AlertOptionalToolAttempt, ...]:
@@ -134,7 +136,7 @@ class AlertOptionalToolRegistry:
             return self._rejected(name, ordinal, "over_budget")
         if name not in self._evaluators:
             return self._rejected(name, ordinal, "unregistered")
-        if arguments not in (None, {}):
+        if not isinstance(arguments, dict) or arguments:
             return self._rejected(name, ordinal, "invalid_arguments")
         registered_name: AlertOptionalToolName = name
         try:

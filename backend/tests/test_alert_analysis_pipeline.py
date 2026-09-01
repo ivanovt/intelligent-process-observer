@@ -19,7 +19,7 @@ from app.alerts.contracts import (
     AlertRecordsAvailable,
 )
 from app.alerts.pipeline import AlertAnalysisPipeline
-from app.alerts.tools import AlertOptionalToolRegistry
+from app.alerts.tools import AlertOptionalToolRegistry, duration_outliers
 
 
 class FakeProvider:
@@ -813,17 +813,21 @@ def test_optional_failure_timeout_continue_with_minimal_trace() -> None:
         )
 
         def registry(records: tuple[object, ...], evidence: object) -> AlertOptionalToolRegistry:
-            tools = AlertOptionalToolRegistry(records, evidence)
-
             def failed() -> object:
                 raise RuntimeError("transient")
 
             def timed_out() -> object:
                 raise TimeoutError("transient")
 
-            tools._evaluators["reference_pattern_analysis"] = failed
-            tools._evaluators["recurrence_concentration_analysis"] = timed_out
-            return tools
+            return AlertOptionalToolRegistry(
+                records,
+                evidence,
+                evaluators={
+                    "recurrence_concentration_analysis": timed_out,
+                    "duration_outlier_analysis": lambda: duration_outliers(records),
+                    "reference_pattern_analysis": failed,
+                },
+            )
 
         outcome = await AlertAnalysisPipeline(
             provider=RecordsProvider(records),

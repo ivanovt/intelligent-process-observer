@@ -3,13 +3,19 @@
 import asyncio
 from datetime import UTC, datetime
 
+import pytest
+from pydantic import ValidationError
+
 from app.alerts.contracts import (
     AlertActivity,
     AlertMandatoryEvidence,
     AlertOccurrenceComparison,
+    AlertOptionalToolExecution,
+    AlertOptionalToolSuccess,
     AlertReferenceComparison,
     AlertStatus,
     AlertStatusDistribution,
+    AlertUnsuccessfulToolCall,
     CanonicalAlertRecord,
 )
 from app.alerts.tools import AlertOptionalToolRegistry
@@ -65,10 +71,66 @@ def test_optional_registry_enforces_scope_repeats_and_ten_attempt_budget() -> No
         rejected = AlertOptionalToolRegistry(records, _evidence(records))
         unknown = await rejected.execute("unknown", {})
         scoped = await rejected.execute("recurrence_concentration_analysis", {"scope": "new"})
+        none_arguments = await rejected.execute("recurrence_concentration_analysis")
         assert unknown.outcome == "rejected" and scoped.outcome == "rejected"
+        assert none_arguments.outcome == "rejected" and none_arguments.reason == "invalid_arguments"
         assert not any(attempt.executed for attempt in rejected.ledger)
 
+        evaluated: list[str] = []
+
+        def evaluator(name: str) -> AlertOptionalToolSuccess:
+            evaluated.append(name)
+            return AlertOptionalToolSuccess(name=name, data={})  # type: ignore[arg-type]
+
+        approved = {
+            "recurrence_concentration_analysis": lambda: evaluator(
+                "recurrence_concentration_analysis"
+            ),
+            "duration_outlier_analysis": lambda: evaluator("duration_outlier_analysis"),
+            "reference_pattern_analysis": lambda: evaluator("reference_pattern_analysis"),
+        }
+        injected = AlertOptionalToolRegistry(records, _evidence(records), evaluators=approved)
+        await injected.execute("recurrence_concentration_analysis", {})
+        assert evaluated == ["recurrence_concentration_analysis"]
+        with pytest.raises(ValueError, match="exactly the approved names"):
+            AlertOptionalToolRegistry(
+                records,
+                _evidence(records),
+                evaluators={
+                    **approved,
+                    "unregistered": lambda: evaluator("unregistered"),
+                },  # type: ignore[dict-item]
+            )
+        with pytest.raises(ValueError, match="exactly the approved names"):
+            AlertOptionalToolRegistry(
+                records,
+                _evidence(records),
+                evaluators={
+                    "recurrence_concentration_analysis": approved[
+                        "recurrence_concentration_analysis"
+                    ],
+                },
+            )
+        assert evaluated == ["recurrence_concentration_analysis"]
+
     asyncio.run(scenario())
+
+
+def test_optional_tool_contracts_reject_unknown_and_internal_fields() -> None:
+    call = AlertUnsuccessfulToolCall(tool="duration_outlier_analysis", status="timeout")
+    assert call.model_dump() == {"tool": "duration_outlier_analysis", "status": "timeout"}
+    with pytest.raises(ValidationError):
+        AlertUnsuccessfulToolCall.model_validate(
+            {"tool": "duration_outlier_analysis", "status": "timeout", "ordinal": 1}
+        )
+    with pytest.raises(ValidationError):
+        AlertUnsuccessfulToolCall.model_validate(
+            {"tool": "duration_outlier_analysis", "status": "timeout", "diagnostic": "internal"}
+        )
+    with pytest.raises(ValidationError):
+        AlertOptionalToolExecution.model_validate(
+            {"unsuccessful_calls": [call.model_dump()], "ledger": []}
+        )
 
 
 def test_recurrence_concentration_defaults_zero_and_ties() -> None:
