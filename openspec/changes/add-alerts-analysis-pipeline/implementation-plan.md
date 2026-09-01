@@ -1209,6 +1209,11 @@ here.
   final validation gates, and whole-change task portions passed; all approved task
   checkboxes are now complete. The change awaits the required independent whole-change
   implementation review; it is not archived.
+- 2026-09-01 — Whole-change implementation review completed with unresolved MEDIUM
+  finding IR-001: repository-wide workflow skill, project-knowledge, and OpenSpec
+  template modifications in the feature diff are outside the approved Alert-pipeline
+  scope. Execution is stopped pending human triage to split, explicitly approve, or
+  otherwise resolve that unrelated scope. No archive, push, PR, or merge was performed.
 - 2026-09-01 — VS-03 accepted after corrected proof verification and `SLICE REVIEW PASS`.
   VS-04 and VS-05 are dependency-ready; VS-04 is next in the requested sequence.
 - 2026-09-01 — VS-04 assigned to fresh Slice Implementer `/root/vs04_implementer`.
