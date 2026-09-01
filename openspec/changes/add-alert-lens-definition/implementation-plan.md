@@ -92,10 +92,10 @@ review and Coordinator acceptance.
 
 | Slice | Goal | Depends on | Risk | Status | Commit | Handoff |
 |---|---|---|---|---|---|---|
-| VS-01 | Create/retrieve one defaulted Alert-only Observation, reject an empty aggregate, and preserve Metric-only reads | none | high-risk | PLANNED | - | - |
-| VS-02 | Complete exact Alert validation, mixed/type-local topology, ordering, navigation, and atomic aggregate creation | VS-01 | high-risk | PLANNED | - | - |
-| VS-03 | Enforce and prove Alert-child ownership, parent cascade, and runtime deletion restriction | VS-02 | high-risk | PLANNED | - | - |
-| VS-04 | Implement and prove type-aware LensRun uniqueness and safe migration upgrade/downgrade behavior | VS-03 | high-risk | PLANNED | - | - |
+| VS-01 | Create/retrieve one defaulted Alert-only Observation, reject an empty aggregate, and preserve Metric-only reads | none | high-risk | COMPLETE | 6416c76, e5db53d, 352e2d4 | `implementation/VS-01-handoff.md` (+ corrective handoffs) |
+| VS-02 | Complete exact Alert validation, mixed/type-local topology, ordering, navigation, and atomic aggregate creation | VS-01 | high-risk | COMPLETE | 132d7d7, 112c08a, 7749dbd | `implementation/VS-02-handoff.md` (+ corrective handoffs) |
+| VS-03 | Enforce and prove Alert-child ownership, parent cascade, and runtime deletion restriction | VS-02 | high-risk | COMPLETE | 81ab73b | `implementation/VS-03-handoff.md` |
+| VS-04 | Implement and prove type-aware LensRun uniqueness and safe migration upgrade/downgrade behavior | VS-03 | high-risk | COMPLETE | faaa640 | `implementation/VS-04-handoff.md` |
 
 ## Slice definitions
 
@@ -555,6 +555,20 @@ redesign decisions here.
   reuse a database already stamped with an earlier intermediate form of that revision,
   and never use the developer's ordinary local database for upgrade/downgrade tests.
 - VS-04 final verification requires PostgreSQL-backed tests to run rather than skip.
+- VS-01 accepted: commits `6416c76`, `e5db53d`, and `352e2d4`; Coordinator independent
+  verification passed 23 focused tests against a fresh disposable PostgreSQL database,
+  Ruff check/format passed, and the final independent high-risk review returned `PASS`.
+  No shared-knowledge candidates were proposed.
+- VS-02 accepted: commits `132d7d7`, `112c08a`, and `7749dbd`; Coordinator independent
+  verification passed 45 focused tests against a fresh disposable PostgreSQL database,
+  Ruff check/format passed, and the final independent high-risk review returned `PASS`.
+  No shared-knowledge candidates were proposed.
+- VS-03 accepted: commit `81ab73b`; Coordinator independent verification passed 46 focused
+  tests against a newly created disposable PostgreSQL database, and the independent
+  high-risk review returned `PASS`. No shared-knowledge candidates were proposed.
+- VS-04 accepted: commit `faaa640`; Coordinator independent fresh-database runtime/migration
+  verification passed 21 tests, strict OpenSpec validation and diff checks passed, and the
+  independent high-risk review returned `PASS`. No shared-knowledge candidates were proposed.
 - Completion of VS-04 means ready for official change verification and independent final
   implementation review. It does not authorize archive, push, PR creation, merge, or work
   on `main`.
