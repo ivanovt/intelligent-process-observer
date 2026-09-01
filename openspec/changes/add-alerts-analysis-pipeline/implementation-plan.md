@@ -1159,6 +1159,11 @@ here.
 - 2026-09-01 — VS-05 accepted after final `SLICE REVIEW PASS`; all acceptance and
   PostgreSQL evidence passed. VS-06 is dependency-ready.
 - 2026-09-01 — VS-06 assigned to fresh Slice Implementer `/root/vs06_implementer`.
+- 2026-09-01 — VS-06 candidate `51a61b1`; Coordinator independently reran frozen
+  PostgreSQL (`2 passed`), focused tests (`25 passed`), and Ruff. Deviation disposition:
+  `ACCEPT_LOCAL` — the direct-builder Unicode/reserved comparison-offset fixture is a
+  test-only way to exercise the approved URI contract without changing constrained
+  configured-offset acquisition semantics. Candidate awaits high-risk review.
 - 2026-09-01 — VS-03 accepted after corrected proof verification and `SLICE REVIEW PASS`.
   VS-04 and VS-05 are dependency-ready; VS-04 is next in the requested sequence.
 - 2026-09-01 — VS-04 assigned to fresh Slice Implementer `/root/vs04_implementer`.
