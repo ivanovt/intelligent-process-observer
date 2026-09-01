@@ -1132,3 +1132,6 @@ here.
 - 2026-09-01 — VS-03 candidate `fa2ae78` requires focused correction: the required
   PostgreSQL proof cases for VS03-AC06 and VS03-AC07 are absent. VS-03 remains
   `IN_PROGRESS`.
+- 2026-09-01 — VS-03 correction `f26b582` adds AC06/AC07 PostgreSQL proofs; Coordinator
+  independently ran both (`2 passed`). Change-map deviation disposition: `N/A`; ready
+  for high-risk review.
