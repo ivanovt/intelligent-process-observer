@@ -144,7 +144,11 @@ class CapturingAgent:
         self.calls.append(request)
         return AlertAgentCompletion(
             findings=(
-                AlertFinding(id="f-1", statement="Observed", evidence_refs=("alert_activity",)),
+                AlertFinding(
+                    id="f-1",
+                    statement="Observed",
+                    evidence_refs=("alert://aggregate/alert_activity/record_count",),
+                ),
             ),
             overall_importance="high",
         )
@@ -802,7 +806,11 @@ def test_optional_failure_timeout_continue_with_minimal_trace() -> None:
             await tools.execute("recurrence_concentration_analysis", {})
             return AlertAgentCompletion(
                 findings=(
-                    AlertFinding(id="f-1", statement="Observed", evidence_refs=("alert_activity",)),
+                    AlertFinding(
+                        id="f-1",
+                        statement="Observed",
+                        evidence_refs=("alert://aggregate/alert_activity/record_count",),
+                    ),
                 ),
                 overall_importance="high",
             )
@@ -847,5 +855,36 @@ def test_optional_failure_timeout_continue_with_minimal_trace() -> None:
         assert "diagnostic" not in serialized and "ordinal" not in serialized
         assert "'outcome': 'not_applicable'" not in serialized
         assert "'outcome': 'success'" not in serialized
+
+    asyncio.run(scenario())
+
+
+def test_unresolvable_finding_reference_stops_before_persistence() -> None:
+    class Agent:
+        async def complete(self, request: object) -> AlertAgentCompletion:
+            return AlertAgentCompletion(
+                findings=(
+                    AlertFinding(
+                        id="transient-only",
+                        statement="not persisted",
+                        evidence_refs=("alert://optional/recurrence",),
+                    ),
+                ),
+                overall_importance="high",
+            )
+
+    async def scenario() -> None:
+        outcome = await AlertAnalysisPipeline(
+            provider=RecordsProvider(
+                (
+                    _record(
+                        "valid", started=datetime(2026, 9, 1, tzinfo=UTC), ended=None, occurrences=1
+                    ),
+                )
+            ),
+            agent=Agent(),
+        ).analyze(_context())
+        _assert_failed(outcome, "result_validation_failed")
+        assert outcome.reason.component == "alert_result_builder"
 
     asyncio.run(scenario())

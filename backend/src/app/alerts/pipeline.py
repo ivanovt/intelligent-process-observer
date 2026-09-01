@@ -123,12 +123,15 @@ class AlertAnalysisPipeline:
         except ValidationError:
             return self._failed("agent_failed")
         self._record_phase("result_build")
-        return self._result_builder.usable(
-            context,
-            records,
-            evidence,
-            completion,
-            current_rejected,
-            reference_unavailable,
-            unsuccessful_calls=unsuccessful_trace(tools.ledger),
-        )[1]
+        try:
+            return self._result_builder.usable(
+                context,
+                records,
+                evidence,
+                completion,
+                current_rejected,
+                reference_unavailable,
+                unsuccessful_calls=unsuccessful_trace(tools.ledger),
+            )[1]
+        except ValueError:
+            return self._failed("result_validation_failed", "alert_result_builder")

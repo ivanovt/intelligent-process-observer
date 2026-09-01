@@ -17,6 +17,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 from sqlalchemy.orm import selectinload
 
+from app.alerts.analyzer import analyze_current, compare_occurrences
 from app.alerts.contracts import (
     AlertAgentCompletion,
     AlertAnalysisWindow,
@@ -31,7 +32,10 @@ from app.alerts.contracts import (
     AlertRecordsAvailable,
     AlertTerminalOutcome,
 )
+from app.alerts.evidence_refs import encode_dynamic_segment
+from app.alerts.normalization import normalize_current
 from app.alerts.pipeline import AlertAnalysisPipeline
+from app.alerts.result_builder import AlertResultBuilder
 from app.alerts.tools import AlertOptionalToolRegistry, duration_outliers
 from app.core.settings import get_settings
 from app.infrastructure.persistence.alert_runtime import persist_alert_terminal
@@ -651,7 +655,9 @@ def _assert_nonzero_alert_persists(
             return AlertAgentCompletion(
                 findings=(
                     AlertFinding(
-                        id="persisted", statement="grounded", evidence_refs=("alerts.ALERT-77",)
+                        id="persisted",
+                        statement="grounded",
+                        evidence_refs=("alert://current/ALERT-77",),
                     ),
                 ),
                 overall_importance="high",
@@ -709,7 +715,11 @@ def _assert_nonzero_alert_persists(
                 "occurrence_count": occurrences,
             }
             assert artifact.payload["findings"] == [
-                {"id": "persisted", "statement": "grounded", "evidence_refs": ["alerts.ALERT-77"]}
+                {
+                    "id": "persisted",
+                    "statement": "grounded",
+                    "evidence_refs": ["alert://current/ALERT-77"],
+                }
             ]
             assert artifact.payload["overall_importance"] == "high" and "query" not in str(
                 artifact.payload
@@ -761,6 +771,176 @@ def test_representative_nonzero_alert_result_round_trips_strictly(
     session_factory: async_sessionmaker[AsyncSession],
 ) -> None:
     _assert_nonzero_alert_persists(session_factory, occurrences=3)
+
+
+def test_all_canonical_evidence_target_forms_round_trip(
+    session_factory: async_sessionmaker[AsyncSession],
+) -> None:
+    identifier, importance_type, importance_value, offset = (
+        "id / % Ж",
+        "type / Ж",
+        "value % space",
+        "1d / Ж",
+    )
+    refs = (
+        f"alert://current/{encode_dynamic_segment(identifier)}",
+        "alert://aggregate/alert_activity/record_count",
+        "alert://aggregate/alert_activity/occurrence_count",
+        "alert://aggregate/status_distribution/active",
+        "alert://aggregate/status_distribution/resolved",
+        "alert://aggregate/status_distribution/unknown",
+        "alert://aggregate/duration_statistics/min_seconds",
+        "alert://aggregate/duration_statistics/max_seconds",
+        "alert://aggregate/duration_statistics/average_seconds",
+        "alert://aggregate/provider_importance/"
+        f"{encode_dynamic_segment(importance_type)}/{encode_dynamic_segment(importance_value)}",
+        f"alert://comparison/{encode_dynamic_segment(offset)}",
+    )
+
+    async def scenario() -> None:
+        repository = RuntimePersistenceRepository()
+        async with session_factory() as session:
+            observation = await _seed_observation(session)
+            run = await repository.create_observation_run(
+                session, ObservationRunInput(observation_id=observation.id)
+            )
+            await repository.advance_observation_run(session, run, ObservationRunStatus.RUNNING)
+            lens_run = await repository.create_lens_run(
+                session, run, LensRunInput(lens_id="canonical-refs", lens_type=LensType.ALERT)
+            )
+            await repository.advance_lens_run(session, lens_run, LensRunStatus.RUNNING)
+            context = AlertLensExecutionContext(
+                identity=AlertIdentity(
+                    observation_id=observation.id,
+                    observation_run_id=run.id,
+                    lens_id=lens_run.lens_id,
+                    lens_run_id=lens_run.id,
+                ),
+                provider_scope=AlertProviderScope(source="fixture", query="opaque"),
+                analysis_window=AlertAnalysisWindow(
+                    **{
+                        "from": datetime(2026, 9, 1, tzinfo=UTC),
+                        "to": datetime(2026, 9, 1, 1, tzinfo=UTC),
+                    }
+                ),
+                lens_name="canonical refs",
+            )
+            records = normalize_current(
+                type(
+                    "Response",
+                    (),
+                    {
+                        "records": (
+                            AlertProviderRecord(
+                                id=identifier,
+                                title="encoded target",
+                                started_at=context.analysis_window.from_,
+                                source_status="active",
+                                provider_importance=AlertProviderImportance(
+                                    type=importance_type, value=importance_value
+                                ),
+                            ),
+                        )
+                    },
+                )(),
+                context.analysis_window,
+                context.analysis_window.to,
+            )
+            evidence = analyze_current(records)
+            comparison = compare_occurrences(offset, evidence, evidence)
+            _, outcome = AlertResultBuilder().completed(
+                context,
+                records,
+                evidence.model_copy(update={"comparisons": (comparison,)}),
+                AlertAgentCompletion(
+                    findings=(
+                        AlertFinding(id="all-targets", statement="grounded", evidence_refs=refs),
+                    ),
+                    overall_importance="high",
+                ),
+            )
+            await persist_alert_terminal(session, lens_run, outcome, repository)
+            run_id = run.id
+            await session.commit()
+        async with session_factory() as session:
+            restored = await repository.get_observation_run(session, run_id)
+            assert restored is not None
+            artifact = next(
+                item for item in restored.lens_runs if item.lens_id == "canonical-refs"
+            ).analysis_result
+            assert artifact is not None
+            assert artifact.payload["findings"][0]["evidence_refs"] == list(refs)
+
+    asyncio.run(scenario())
+
+
+def test_noncanonical_evidence_refs_fail_without_artifact(
+    session_factory: async_sessionmaker[AsyncSession],
+) -> None:
+    class Agent:
+        async def complete(self, request: object) -> AlertAgentCompletion:
+            return AlertAgentCompletion(
+                findings=(
+                    AlertFinding(
+                        id="bad", statement="bad ref", evidence_refs=("alert://current/raw space",)
+                    ),
+                ),
+                overall_importance="high",
+            )
+
+    class Provider:
+        async def acquire(
+            self, scope: AlertProviderScope, window: AlertAnalysisWindow
+        ) -> AlertRecordsAvailable:
+            return AlertRecordsAvailable(
+                source=scope.source, records=(_nonzero_alert_record(occurrences=1),)
+            )
+
+    async def scenario() -> None:
+        repository = RuntimePersistenceRepository()
+        async with session_factory() as session:
+            observation = await _seed_observation(session)
+            run = await repository.create_observation_run(
+                session, ObservationRunInput(observation_id=observation.id)
+            )
+            await repository.advance_observation_run(session, run, ObservationRunStatus.RUNNING)
+            lens_run = await repository.create_lens_run(
+                session, run, LensRunInput(lens_id="bad-ref", lens_type=LensType.ALERT)
+            )
+            await repository.advance_lens_run(session, lens_run, LensRunStatus.RUNNING)
+            context = AlertLensExecutionContext(
+                identity=AlertIdentity(
+                    observation_id=observation.id,
+                    observation_run_id=run.id,
+                    lens_id=lens_run.lens_id,
+                    lens_run_id=lens_run.id,
+                ),
+                provider_scope=AlertProviderScope(source="fixture", query="opaque"),
+                analysis_window=AlertAnalysisWindow(
+                    **{
+                        "from": datetime(2026, 9, 1, tzinfo=UTC),
+                        "to": datetime(2026, 9, 1, 1, tzinfo=UTC),
+                    }
+                ),
+                lens_name="bad ref",
+            )
+            outcome = await AlertAnalysisPipeline(provider=Provider(), agent=Agent()).analyze(
+                context
+            )
+            assert outcome.status is LensRunStatus.FAILED
+            assert outcome.reason == StructuredReason(
+                code="result_validation_failed", component="alert_result_builder"
+            )
+            await persist_alert_terminal(session, lens_run, outcome, repository)
+            run_id = run.id
+            await session.commit()
+        async with session_factory() as session:
+            restored = await repository.get_observation_run(session, run_id)
+            assert restored is not None
+            persisted = next(item for item in restored.lens_runs if item.lens_id == "bad-ref")
+            assert persisted.status == "failed" and persisted.analysis_result is None
+
+    asyncio.run(scenario())
 
 
 def test_runtime_persistence_round_trip_and_artifact_absence(

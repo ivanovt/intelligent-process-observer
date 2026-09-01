@@ -111,7 +111,9 @@ def test_representative_nonzero_alert_result_is_strict() -> None:
         AlertAgentCompletion(
             findings=(
                 AlertFinding(
-                    id="finding-1", statement="Grounded", evidence_refs=("alerts.ALERT-1",)
+                    id="finding-1",
+                    statement="Grounded",
+                    evidence_refs=("alert://current/ALERT-1",),
                 ),
             ),
             overall_importance="high",

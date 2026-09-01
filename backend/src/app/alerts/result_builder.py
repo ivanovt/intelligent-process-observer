@@ -16,6 +16,7 @@ from app.alerts.contracts import (
     CompletedAlertAnalysisResult,
     PartialAlertAnalysisResult,
 )
+from app.alerts.evidence_refs import resolve_evidence_references
 from app.infrastructure.persistence.runtime_contracts import (
     LensAnalysisResultInput,
     LensResultIdentity,
@@ -58,16 +59,7 @@ class AlertResultBuilder:
             completion = completion.model_copy(update={"overall_importance": "none"})
         if evidence.record_count != len(records):
             raise ValueError("evidence record_count must match canonical records")
-        allowed = {
-            "alert_activity",
-            "status_distribution",
-            "duration_statistics",
-            "provider_importance_distribution",
-        } | {f"alerts.{record.id}" for record in records}
-        if any(
-            ref not in allowed for finding in completion.findings for ref in finding.evidence_refs
-        ):
-            raise ValueError("finding evidence ref does not resolve to this Alert result")
+        self._resolve_findings(completion, records, evidence)
         provenance = AlertResultProvenance(
             source_provider=context.provider_scope.source, generated_at=self._clock()
         )
@@ -137,16 +129,7 @@ class AlertResultBuilder:
             )
         if evidence.record_count != len(records):
             raise ValueError("evidence record_count must match canonical records")
-        allowed = {
-            "alert_activity",
-            "status_distribution",
-            "duration_statistics",
-            "provider_importance_distribution",
-        } | {f"alerts.{record.id}" for record in records}
-        if any(
-            ref not in allowed for finding in completion.findings for ref in finding.evidence_refs
-        ):
-            raise ValueError("finding evidence ref does not resolve to this Alert result")
+        self._resolve_findings(completion, records, evidence)
         provenance = AlertResultProvenance(
             source_provider=context.provider_scope.source, generated_at=self._clock()
         )
@@ -181,3 +164,13 @@ class AlertResultBuilder:
         return result, AlertTerminalOutcome(
             status=LensRunStatus.PARTIAL, reason=reason, artifact=envelope
         )
+
+    @staticmethod
+    def _resolve_findings(
+        completion: AlertAgentCompletion,
+        records: tuple[CanonicalAlertRecord, ...],
+        evidence: AlertMandatoryEvidence,
+    ) -> None:
+        """Validate every agent finding against final persisted Alert evidence."""
+        for finding in completion.findings:
+            resolve_evidence_references(finding.evidence_refs, records, evidence)
