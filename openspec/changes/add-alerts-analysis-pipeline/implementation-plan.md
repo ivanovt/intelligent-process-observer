@@ -1188,6 +1188,9 @@ here.
   review. Candidate knowledge accepted as `PK-001`.
 - 2026-09-01 — VS-08 review requires the frozen no-retry model-count proof for error
   and timeout terminal paths. VS-08 remains `IN_PROGRESS`.
+- 2026-09-01 — Correction `f3b5344` adds exact one-attempt assertions for malformed,
+  error, and timeout terminal paths. Deviation disposition: `N/A`; candidate awaits
+  bounded re-review.
 - 2026-09-01 — VS-03 accepted after corrected proof verification and `SLICE REVIEW PASS`.
   VS-04 and VS-05 are dependency-ready; VS-04 is next in the requested sequence.
 - 2026-09-01 — VS-04 assigned to fresh Slice Implementer `/root/vs04_implementer`.
