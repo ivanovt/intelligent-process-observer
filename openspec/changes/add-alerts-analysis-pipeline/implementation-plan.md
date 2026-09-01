@@ -105,7 +105,7 @@ parallel implementation.
 | VS-04 | Persist every mandatory failure with no Alert artifact | VS-03 | high-risk | COMPLETE | a3ae394, eb7ac9a, 5319227, c56901a | `implementation/VS-04-handoff.md` |
 | VS-05 | Execute the bounded optional registry and retain only allowed failure traces | VS-03 | high-risk | COMPLETE | e7c4bec, 6413361, c3030c6 | `implementation/VS-05-handoff.md` |
 | VS-06 | Enforce canonical evidence references through persisted results | VS-04, VS-05 | high-risk | COMPLETE | 51a61b1 | `implementation/VS-06-handoff.md` |
-| VS-07 | Enforce exhaustive result invariants and builder failure | VS-06 | high-risk | READY | - | - |
+| VS-07 | Enforce exhaustive result invariants and builder failure | VS-06 | high-risk | IN_PROGRESS | - | - |
 | VS-08 | Translate the accepted boundary through injected PydanticAI | VS-05, VS-07 | high-risk | PLANNED | - | - |
 | VS-09 | Prove transaction rollback, whole-change conformance, and documentation | VS-03, VS-04, VS-07, VS-08 | high-risk | PLANNED | - | - |
 
@@ -1168,6 +1168,7 @@ here.
   `SLICE REVIEW PASS`. No approved task checkbox is complete yet because each task
   touched by VS-04 through VS-06 has later assigned portions. VS-07 is now
   dependency-ready; VS-08 and VS-09 remain planned pending their dependencies.
+- 2026-09-01 — VS-07 assigned to fresh Slice Implementer `/root/vs07_implementer`.
 - 2026-09-01 — VS-03 accepted after corrected proof verification and `SLICE REVIEW PASS`.
   VS-04 and VS-05 are dependency-ready; VS-04 is next in the requested sequence.
 - 2026-09-01 — VS-04 assigned to fresh Slice Implementer `/root/vs04_implementer`.
