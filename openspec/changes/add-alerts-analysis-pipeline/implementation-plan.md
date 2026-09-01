@@ -107,7 +107,7 @@ parallel implementation.
 | VS-06 | Enforce canonical evidence references through persisted results | VS-04, VS-05 | high-risk | COMPLETE | 51a61b1 | `implementation/VS-06-handoff.md` |
 | VS-07 | Enforce exhaustive result invariants and builder failure | VS-06 | high-risk | COMPLETE | 9e634a6, a884623 | `implementation/VS-07-handoff.md` |
 | VS-08 | Translate the accepted boundary through injected PydanticAI | VS-05, VS-07 | high-risk | COMPLETE | 8eab18f, 4cbe450, f3b5344 | `implementation/VS-08-handoff.md` |
-| VS-09 | Prove transaction rollback, whole-change conformance, and documentation | VS-03, VS-04, VS-07, VS-08 | high-risk | IN_PROGRESS | - | - |
+| VS-09 | Prove transaction rollback, whole-change conformance, and documentation | VS-03, VS-04, VS-07, VS-08 | high-risk | COMPLETE | 4a1b03f, ccb06a9, 2ccc2fe | `implementation/VS-09-handoff.md` |
 
 ## Slice definitions
 
@@ -1205,6 +1205,10 @@ here.
   PostgreSQL (`1 passed`) and `make check` (`237 passed, 57 skipped`; frontend
   lint/build and strict validation passed). Deviation disposition: `N/A`; candidate
   awaits bounded re-review.
+- 2026-09-01 — VS-09 accepted after `SLICE REVIEW PASS`. All VS09 acceptance evidence,
+  final validation gates, and whole-change task portions passed; all approved task
+  checkboxes are now complete. The change awaits the required independent whole-change
+  implementation review; it is not archived.
 - 2026-09-01 — VS-03 accepted after corrected proof verification and `SLICE REVIEW PASS`.
   VS-04 and VS-05 are dependency-ready; VS-04 is next in the requested sequence.
 - 2026-09-01 — VS-04 assigned to fresh Slice Implementer `/root/vs04_implementer`.
