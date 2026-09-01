@@ -8,6 +8,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app.infrastructure.prometheus.contracts import PrometheusQueryAdapter
 from app.observations.contracts import (
+    AlertLensResponse,
     DefinitionCapabilities,
     MetricLensResponse,
     MetricPreflightRequest,
@@ -74,6 +75,18 @@ async def get_lens(
     service: ObservationDefinitionService = Depends(get_service),  # noqa: B008
 ) -> MetricLensResponse:
     return await service.get_lens(session, observation_id, lens_id)
+
+
+@router.get(
+    "/observations/{observation_id}/alert-lenses/{lens_id}", response_model=AlertLensResponse
+)
+async def get_alert_lens(
+    observation_id: UUID,
+    lens_id: str,
+    session: AsyncSession = Depends(get_session),  # noqa: B008
+    service: ObservationDefinitionService = Depends(get_service),  # noqa: B008
+) -> AlertLensResponse:
+    return await service.get_alert_lens(session, observation_id, lens_id)
 
 
 @router.get(

@@ -11,6 +11,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from app.infrastructure.persistence.models import (
+    AlertLensModel,
     LensAnalysisResultModel,
     LensRunModel,
     MetricLensModel,
@@ -69,6 +70,20 @@ class ObservationRepository:
                 )
                 for index, lens in enumerate(definition.lenses)
             ],
+            alert_lenses=[
+                AlertLensModel(
+                    lens_id=lens.id,
+                    lens_type=lens.type,
+                    name=lens.name,
+                    description=lens.description,
+                    source=lens.source,
+                    selector_query=lens.selector.query,
+                    analysis_objectives=lens.analysis_objectives,
+                    reference_periods=lens.reference_periods,
+                    position=index,
+                )
+                for index, lens in enumerate(definition.alert_lenses)
+            ],
             relationships=[
                 ObservationRelationshipModel(
                     relationship_id=relationship.id,
@@ -90,7 +105,9 @@ class ObservationRepository:
         )
         session.add(observation)
         await session.flush()
-        await session.refresh(observation, attribute_names=["lenses", "relationships"])
+        await session.refresh(
+            observation, attribute_names=["lenses", "alert_lenses", "relationships"]
+        )
         return observation
 
     async def list(self, session: AsyncSession) -> list[ObservationModel]:
@@ -98,6 +115,7 @@ class ObservationRepository:
             select(ObservationModel)
             .options(
                 selectinload(ObservationModel.lenses),
+                selectinload(ObservationModel.alert_lenses),
                 selectinload(ObservationModel.relationships),
             )
             .order_by(ObservationModel.creation_order)
@@ -110,6 +128,7 @@ class ObservationRepository:
             .where(ObservationModel.id == observation_id)
             .options(
                 selectinload(ObservationModel.lenses),
+                selectinload(ObservationModel.alert_lenses),
                 selectinload(ObservationModel.relationships),
             )
         )

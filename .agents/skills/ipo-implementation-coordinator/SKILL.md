@@ -39,8 +39,9 @@ For the next `READY` slice:
 4. independently verify the completion evidence rather than trusting the worker's declaration;
 5. for `high-risk` slices, spawn a fresh independent slice reviewer before accepting completion;
 6. process candidate shared knowledge;
-7. mark the slice `COMPLETE` only after the gate passes;
-8. automatically continue to the next ready slice.
+7. reconcile `tasks.md` against the accepted slice coverage: mark an approved task `- [x]` only after every slice portion assigned to it has passed its completion gate; leave multi-slice tasks unchecked until their final assigned portion passes. Checkbox updates are completion metadata only and MUST NOT rewrite approved task scope;
+8. mark the slice `COMPLETE` only after the gate passes;
+9. automatically continue to the next ready slice.
 
 If a slice needs corrective work, delegate the correction; do not implement it yourself.
 
@@ -80,6 +81,10 @@ following from the repository and live delegation state:
   verification/review step has been accepted; and
 - if the plan is incomplete, a defined stop/escalation condition is recorded in the
   plan's mutable execution metadata.
+
+Before handing off a completed change for archive, reconcile all approved task checkboxes
+with the execution plan and accepted handoffs. A completed task list prevents the archive
+workflow from requiring an avoidable incomplete-task override.
 
 If any condition is false, continue coordination and use commentary for progress
 updates. Do not return a final response merely to report intermediate state.

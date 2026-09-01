@@ -602,3 +602,15 @@ def test_runtime_schema_and_migration_have_required_cardinality() -> None:
     assert "observation_run_id" not in Base.metadata.tables["lens_analysis_results"].c
     assert "provenance" not in Base.metadata.tables["lens_analysis_results"].c
     assert "observation_run_id" not in Base.metadata.tables["observation_reports"].c
+
+
+def test_lens_run_schema_has_type_aware_runtime_identity() -> None:
+    lens_run_constraints = Base.metadata.tables["lens_runs"].constraints
+
+    assert any(
+        isinstance(constraint, UniqueConstraint)
+        and constraint.name == "uq_lens_runs_observation_run_id_lens_type_lens_id"
+        and tuple(column.name for column in constraint.columns)
+        == ("observation_run_id", "lens_type", "lens_id")
+        for constraint in lens_run_constraints
+    )

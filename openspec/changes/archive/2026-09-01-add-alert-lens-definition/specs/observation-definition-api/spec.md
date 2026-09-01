@@ -1,10 +1,4 @@
-# observation-definition-api Specification
-
-## Purpose
-
-Provide a versioned backend interface for storing, reading, navigating, and preflighting predefined Observation definitions before any Observation runtime execution exists.
-
-## Requirements
+## ADDED Requirements
 
 ### Requirement: Define supported Alert Lenses
 
@@ -57,6 +51,8 @@ Deleting an Observation Definition through the supported repository/database bou
 - **GIVEN** an Observation Definition without deletion-blocking runtime dependents owns Alert Lens definitions
 - **WHEN** the parent is deleted through the repository/database boundary
 - **THEN** all of its Alert Lens definition data is deleted in the same transaction and no orphan remains
+
+## MODIFIED Requirements
 
 ### Requirement: Create an atomic, versioned Observation definition
 
@@ -173,33 +169,3 @@ The system SHALL expose `GET /api/v1/observations` and return all persisted defi
 - **GIVEN** a mixed Observation has a Metric Lens and Alert Lens with the same ID
 - **WHEN** the client follows each collection's href
 - **THEN** each type-specific route returns the correct owned definition without ambiguity
-
-### Requirement: Discover enabled Metric acquisition capabilities
-
-The system SHALL expose `GET /api/v1/observation-definition-capabilities`. It SHALL return the enabled Metric adapter type `prometheus` and compatible stable source IDs with human-readable names. It SHALL NOT expose credentials, endpoint URLs, or connection details.
-
-#### Scenario: Read enabled sources
-
-- **GIVEN** configured sources are enabled
-- **WHEN** the client requests the capability endpoint
-- **THEN** the system returns `200 OK` with Metric Lens type, `prometheus`, source ID, and source name without secret connection data
-
-### Requirement: Preflight candidate Metric Lenses without persistence
-
-The system SHALL expose non-persisting `POST /api/v1/observation-lens-validations/metric`. It SHALL accept only the candidate Prometheus acquisition fields and a relative `validation_window.duration` using the reference-offset grammar. It SHALL not require or create an Observation, Lens, or runtime object.
-
-Metric preflight SHALL send a POST range query to the configured Prometheus source with adapter-selected sampling resolution, a 15-second server timeout, and no automatic retry. A successful response SHALL return `valid: true` only for exactly one series and include resolved timestamps, step, labels, all samples, and provider warnings. Samples SHALL have UTC timestamp and `value_status` of `finite|nan|positive_infinity|negative_infinity`; finite values are numbers and all other values are `null`. Zero/multiple series and rejected PromQL SHALL return `200 OK` and `valid: false`; multiple series SHALL include bounded label-set diagnostics.
-
-Malformed input SHALL return `4xx`; Prometheus authentication/authorization rejection SHALL return `401`/`403`; transport, timeout, provider outage, and unexpected adapter failure SHALL return `5xx`. Client errors SHALL use a machine-readable envelope with stable code, message, and field path where applicable.
-
-#### Scenario: Validate a single Metric series
-
-- **GIVEN** a valid candidate Metric query executes against an enabled source and resolves to one series over `60m`
-- **WHEN** the client sends Metric preflight
-- **THEN** the system returns `200 OK`, window/step metadata, labels, and all typed samples without persistence
-
-#### Scenario: Report an unsuitable Metric query
-
-- **GIVEN** a valid candidate Metric query executes but resolves to multiple series
-- **WHEN** the client sends Metric preflight
-- **THEN** the system returns `200 OK`, `valid: false`, a cardinality error code, and bounded label-set diagnostics without persistence

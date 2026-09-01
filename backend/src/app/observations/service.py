@@ -9,6 +9,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.settings import PrometheusSourceSettings, get_settings
 from app.infrastructure.persistence.models import (
+    AlertLensModel,
     MetricLensModel,
     ObservationModel,
     ObservationRelationshipModel,
@@ -25,6 +26,8 @@ from app.infrastructure.prometheus.contracts import (
     PrometheusSourceProfile,
 )
 from app.observations.contracts import (
+    AlertLensReference,
+    AlertLensResponse,
     CapabilityAdapter,
     CapabilitySource,
     DefinitionCapabilities,
@@ -95,6 +98,15 @@ class ObservationDefinitionService:
                 return self.lens_response(model, lens)
         raise ApiError(404, "lens_not_found", "Lens definition was not found")
 
+    async def get_alert_lens(
+        self, session: AsyncSession, observation_id: UUID, lens_id: str
+    ) -> AlertLensResponse:
+        model = await self._get_model(session, observation_id)
+        for lens in model.alert_lenses:
+            if lens.lens_id == lens_id:
+                return self.alert_lens_response(model, lens)
+        raise ApiError(404, "alert_lens_not_found", "Alert Lens definition was not found")
+
     async def get_relationship(
         self, session: AsyncSession, observation_id: UUID, relationship_id: str
     ) -> RelationshipResponse:
@@ -147,6 +159,7 @@ class ObservationDefinitionService:
             objective=model.objective,
             schema_version=model.schema_version,
             lenses=[self.lens_reference(model, lens) for lens in model.lenses],
+            alert_lenses=[self.alert_lens_reference(model, lens) for lens in model.alert_lenses],
             relationships=[
                 self.relationship_reference(model, relationship)
                 for relationship in model.relationships
@@ -157,8 +170,9 @@ class ObservationDefinitionService:
     def observation_response(self, model: ObservationModel) -> ObservationResponse:
         summary = self.observation_summary(model)
         return ObservationResponse(
-            **summary.model_dump(),
+            **summary.model_dump(exclude={"lenses", "alert_lenses", "relationships"}),
             lenses=[self.lens_response(model, lens) for lens in model.lenses],
+            alert_lenses=[self.alert_lens_response(model, lens) for lens in model.alert_lenses],
             relationships=[
                 self.relationship_response(model, relationship)
                 for relationship in model.relationships
@@ -187,6 +201,32 @@ class ObservationDefinitionService:
             analysis_objectives=lens.analysis_objectives,
             reference_periods=lens.reference_periods,
             href=f"{self._observation_href(model.id)}/lenses/{lens.lens_id}",
+            observation_href=self._observation_href(model.id),
+        )
+
+    def alert_lens_reference(
+        self, model: ObservationModel, lens: AlertLensModel
+    ) -> AlertLensReference:
+        return AlertLensReference(
+            id=lens.lens_id,
+            name=lens.name,
+            type="alert",
+            href=f"{self._observation_href(model.id)}/alert-lenses/{lens.lens_id}",
+        )
+
+    def alert_lens_response(
+        self, model: ObservationModel, lens: AlertLensModel
+    ) -> AlertLensResponse:
+        return AlertLensResponse(
+            id=lens.lens_id,
+            name=lens.name,
+            description=lens.description,
+            type="alert",
+            source=lens.source,
+            selector={"query": lens.selector_query},
+            analysis_objectives=lens.analysis_objectives,
+            reference_periods=lens.reference_periods,
+            href=f"{self._observation_href(model.id)}/alert-lenses/{lens.lens_id}",
             observation_href=self._observation_href(model.id),
         )
 

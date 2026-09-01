@@ -2134,9 +2134,9 @@ Metric Lens поддържа `0..N` конфигурирани reference offsets
 
 ```yaml
 reference_periods:
-  - offset: 1d
-  - offset: 7d
-  - offset: 14d
+  - 1d
+  - 7d
+  - 14d
 ```
 
 Reference periods не са baseline и не заменят persisted Lens history.
@@ -2915,19 +2915,22 @@ Normative examples use full transition names:
 След приемането на Alert Lens analytical semantics е необходимо exact definition/API ownership да бъде фиксирано, без да се въвежда отделен Alert CRUD lifecycle или преждевременен generic Lens-definition модел.
 
 **Decision**
-`Observation Definition` съдържа отделна nested `alert_lenses` collection наред с `metric_lenses` и `relationships`. Alert Lens create/read/update се извършва чрез съществуващия Observation Definition aggregate/API; standalone Alert Lens endpoints не са част от MVP.
+Съществуващото публично поле `lenses` се запазва без преименуване и продължава да означава Metric Lens definitions. `Observation Definition` се разширява с отделна nested `alert_lenses` collection наред с `lenses` и `relationships`. Не се въвежда alias `metric_lenses`. Standalone Alert Lens endpoints не са част от MVP.
 
-- update семантиката е snapshot/replacement и се прилага атомарно върху aggregate-а;
-- липсващо `alert_lenses` при input означава `[]`; canonical read винаги връща `alert_lenses`, включително празен списък;
+- `add-alert-lens-definition` разширява съществуващите Observation Definition create/read surfaces и не добавя нов public update или delete endpoint;
+- ако/когато Observation Definition update capability бъде добавена, nested Lens collections използват snapshot/replacement semantics и aggregate промяната е атомарна; това е ownership invariant, не endpoint requirement за текущия feature;
+- липсващо `alert_lenses` при input означава `[]`; canonical read запазва `lenses` и винаги връща `alert_lenses`, включително празен списък;
 - Observation Definition трябва да съдържа поне един Lens общо, така че Metric-only, Alert-only и mixed Metric+Alert configurations са валидни;
-- Metric Lens IDs са unique в `metric_lenses`, Alert Lens IDs са unique в `alert_lenses`; еднакъв `lens_id` между различни Lens типове е допустим;
-- Relationship participant validation остава Metric-only и resolve-ва IDs само срещу `metric_lenses`; Alert Lens не става Relationship participant поради съвпадащ ID.
+- Metric Lens IDs са unique в `lenses`, Alert Lens IDs са unique в `alert_lenses`; еднакъв `lens_id` между различни Lens типове е допустим;
+- Relationship participant validation остава Metric-only и resolve-ва IDs само срещу `lenses`; Alert Lens не става Relationship participant поради съвпадащ ID.
 
 **Consequences**
 - Alert Lens следва съществуващия Observation Definition ownership model;
-- backward compatibility се запазва за Metric-only clients, които не изпращат `alert_lenses`;
+- backward compatibility се запазва без rename или dual-field compatibility layer за съществуващото `lenses`;
+- Metric-only clients, които не изпращат `alert_lenses`, продължават да работят;
 - Alert-only Observation може да бъде валиден без да се въвеждат cross-type Relationships;
-- не е необходима cross-table/global Lens ID uniqueness или нов type discriminator в Relationship DSL.
+- не е необходима cross-table/global Lens ID uniqueness или нов type discriminator в Relationship DSL;
+- future update/delete API ergonomics могат да бъдат добавени отделно, без промяна на aggregate ownership semantics.
 
 ---
 
@@ -2950,7 +2953,7 @@ source: jira_track_and_release
 selector:
   query: "<provider-native query>"
 analysis_objectives: []   # optional, default []
-reference_periods: []     # optional, default []
+reference_periods: [1d, 7d]  # optional ordered list[str], default []
 ```
 
 Rules:
@@ -2961,7 +2964,7 @@ Rules:
 - `source` е supported-provider identifier; MVP допуска само `jira_track_and_release`;
 - `selector` е object с required `query`; query трябва да има non-whitespace content, но иначе е opaque provider-native string и се запазва точно както е подаден; system не го trim-ва, normalize-ва, parse-ва, lint-ва или rewrite-ва;
 - `analysis_objectives` е optional ordered duplicate-free list от non-whitespace opaque strings, без max-count, controlled vocabulary, priority, inheritance/default hierarchy или tool-selection semantics;
-- `reference_periods` е optional ordered `0..N` list, reuse-ва canonical Metric reference-offset primitive, забранява duplicate offsets и няма implicit defaults;
+- `reference_periods` е optional ordered `0..N` list от canonical Metric reference-offset strings (например `1d`, `7d`), забранява duplicate offsets и няма implicit defaults; serialized items не използват `{offset: ...}` wrapper;
 - configured order на `analysis_objectives` и `reference_periods` се запазва;
 - unknown/extra input fields се толерират и игнорират, не се persist-ват и не се връщат в canonical read output; recognized fields продължават да се валидират по правилата по-горе.
 
@@ -2979,7 +2982,7 @@ Rules:
 **Status:** Accepted
 
 **Context**
-Добавянето на Alert Lens definitions не трябва да преработва съществуващия Metric definition persistence в generic polymorphic model, но трябва да осигури atomic aggregate updates, ordering и deletion ownership.
+Добавянето на Alert Lens definitions не трябва да преработва съществуващия Metric definition persistence в generic polymorphic model, но трябва да осигури ordering и ясна deletion/aggregate ownership семантика.
 
 **Decision**
 Alert Lens definitions се persist-ват като owned children на Observation Definition в dedicated `alert_lens_definitions` storage/table.
@@ -2987,16 +2990,17 @@ Alert Lens definitions се persist-ват като owned children на Observat
 - stable scalar properties (`lens_id`, `type`, `name`, `description`, `source`, `selector_query`) се моделират explicit;
 - ordered list properties (`analysis_objectives`, `reference_periods`) използват подходящо structured storage, без generic opaque payload за целия Alert Lens;
 - configured order трябва да се запазва при persistence/read, включително order на `alert_lenses` в Observation Definition projection;
-- removal на Alert Lens от replacement snapshot физически премахва owned definition row;
-- delete на Observation Definition cascade-ва към всички негови Alert Lens definition rows;
-- create/update/delete на aggregate-а и owned Alert rows се извършват атомарно;
+- при бъдещ aggregate snapshot update removal на Alert Lens физически премахва owned definition row; текущият feature не е длъжен да въвежда public update endpoint;
+- delete на Observation Definition на repository/database ниво cascade-ва към всички негови Alert Lens definition rows; текущият feature не добавя public delete endpoint;
+- всяка поддържана aggregate mutation, която засяга owned Alert rows, е atomic в рамките на съответната transaction;
 - soft-delete и independent Alert Lens lifecycle не се въвеждат за MVP;
 - не се прави generic `lens_definitions` refactor само заради добавянето на Alert Lens.
 
 **Consequences**
 - persistence остава explicit и inspectable;
 - Metric definition storage не се мигрира към нов polymorphic abstraction;
-- няма orphan Alert definitions след snapshot update или Observation deletion;
+- ownership rules предотвратяват orphan Alert definitions при бъдещ snapshot update или parent deletion;
+- public update/delete capabilities могат да бъдат дефинирани отделно и не са implicit scope на `add-alert-lens-definition`;
 - бъдещи Lens types могат да бъдат добавени отделно и да мотивират generalization само при реална нужда.
 
 ---

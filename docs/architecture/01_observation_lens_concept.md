@@ -85,16 +85,18 @@ execution:
 
 ### 4.4. Observation Definition и type-specific Lens collections
 
-За MVP `Observation Definition` остава aggregate owner на Lens конфигурациите. Metric и Alert Lens-овете се моделират като отделни type-specific collections в същия definition contract:
+За MVP `Observation Definition` остава aggregate owner на Lens конфигурациите. Съществуващото публично поле `lenses` се запазва без преименуване и продължава да означава Metric Lens definitions; Alert Lens-овете се добавят чрез отделна `alert_lenses` collection:
 
 ```text
 Observation Definition
-├── metric_lenses: 0..N
-├── alert_lenses:  0..N
+├── lenses:       0..N   # existing Metric Lens collection
+├── alert_lenses: 0..N
 └── relationships: 0..N
 ```
 
-Няма standalone Alert Lens lifecycle/API. Create/read/update на Alert Lens конфигурации се извършват чрез Observation Definition. Update семантиката е snapshot/replacement: подаденият collection описва желаното крайно състояние и се валидира/persist-ва атомарно като част от aggregate update-а.
+Това е type-specific model, но не въвежда alias `metric_lenses` и не променя съществуващия публичен Metric contract. Няма standalone Alert Lens lifecycle/API. `add-alert-lens-definition` разширява съществуващите Observation Definition create/read surfaces; не добавя нов public update или delete endpoint.
+
+Ако/когато Observation Definition update capability бъде добавена, nested Lens collections следват snapshot/replacement semantics: подаденият collection описва желаното крайно състояние и aggregate промяната се валидира/persist-ва атомарно. Това е ownership invariant, а не изискване текущият Alert feature да въведе update endpoint.
 
 Observation Definition трябва да съдържа поне един Lens общо. Следователно за MVP са валидни:
 
@@ -104,11 +106,11 @@ Alert-only Observation
 Metric + Alert Observation
 ```
 
-Невалидна е конфигурация без нито един Metric или Alert Lens. Липсващо `alert_lenses` при вход означава празен списък; canonical read projection винаги съдържа `alert_lenses`, включително `[]`.
+Невалидна е конфигурация без нито един Metric или Alert Lens. Липсващо `alert_lenses` при вход означава празен списък; canonical read projection запазва съществуващото `lenses` поле и винаги съдържа `alert_lenses`, включително `[]`.
 
-`lens_id` uniqueness е type-local: Metric Lens IDs са уникални сред `metric_lenses`, Alert Lens IDs са уникални сред `alert_lenses`, а еднакъв ID между различни Lens типове е допустим. Runtime identity остава type-aware.
+`lens_id` uniqueness е type-local: Metric Lens IDs са уникални сред `lenses`, Alert Lens IDs са уникални сред `alert_lenses`, а еднакъв ID между различни Lens типове е допустим. Runtime identity остава type-aware.
 
-Relationships са Metric-only за MVP. Configuration-time participant validation resolve-ва participant IDs само спрямо `metric_lenses`; наличието на Alert Lens със същия ID не създава ambiguity и не го прави Relationship participant.
+Relationships са Metric-only за MVP. Configuration-time participant validation resolve-ва participant IDs само спрямо `lenses`; наличието на Alert Lens със същия ID не създава ambiguity и не го прави Relationship participant.
 
 ## 5. Lens
 
@@ -237,9 +239,9 @@ Metric Lens може да конфигурира `0..N` reference periods. Вс�
 
 ```yaml
 reference_periods:
-  - offset: 1d
-  - offset: 7d
-  - offset: 14d
+  - 1d
+  - 7d
+  - 14d
 ```
 
 Reference periods дават periodic/seasonal temporal context, но не са baseline и не заменят `history`.
@@ -336,8 +338,8 @@ alert_lens:
   analysis_objectives:
     - "Assess recurrence and persistence"
   reference_periods:
-    - offset: 1d
-    - offset: 7d
+    - 1d
+    - 7d
 ```
 
 MVP serialized definition използва explicit `type: alert`, required non-empty `name`, optional non-empty `description`, strict supported-provider identifier `source`, provider-native `selector.query`, optional `analysis_objectives` и optional `reference_periods`. Текущият supported Alert source е само `jira_track_and_release`.

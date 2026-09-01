@@ -72,8 +72,8 @@ alert_lens:
     - "Assess recurrence and persistence"
 
   reference_periods:
-    - offset: 1d
-    - offset: 7d
+    - 1d
+    - 7d
 ```
 
 MVP definition contract е нормативно фиксиран:
@@ -84,35 +84,36 @@ MVP definition contract е нормативно фиксиран:
 - `source` е supported-provider identifier и за MVP допуска само `jira_track_and_release`;
 - `selector` е object с recognized required field `query`; query е non-whitespace opaque provider-native string и се запазва точно както е подаден, без trim/normalize/parse/rewrite;
 - `analysis_objectives` е optional ordered duplicate-free list от opaque non-whitespace strings, default `[]`; няма vocabulary, priority, max-count, inheritance/default hierarchy или tool-selection semantics;
-- `reference_periods` е optional ordered `0..N` list, default `[]`, reuse-ва canonical Metric reference-offset primitive, забранява duplicate offsets и няма implicit defaults;
+- `reference_periods` е optional ordered `0..N` list от canonical Metric reference-offset strings, default `[]`, забранява duplicate offsets и няма implicit defaults; serialized items са директни string offsets (например `1d`, `7d`), без `{offset: ...}` wrapper;
 - unknown/extra input fields се толерират и игнорират; не се persist-ват и не се връщат в canonical read output;
 - configured order на objectives/reference periods се запазва.
 
 ### 3.3. Observation Definition ownership и validation
 
-Alert Lens не е standalone top-level resource. Той е owned child на съществуващия Observation Definition aggregate чрез `alert_lenses`.
+Alert Lens не е standalone top-level resource. Той е owned child на съществуващия Observation Definition aggregate чрез `alert_lenses`. Съществуващото публично поле `lenses` се запазва и продължава да означава Metric Lens definitions; не се въвежда `metric_lenses` alias.
 
 ```text
 Observation Definition
-├── metric_lenses: 0..N
-├── alert_lenses:  0..N
+├── lenses:       0..N   # existing Metric Lens collection
+├── alert_lenses: 0..N
 └── relationships: 0..N
 ```
 
 За MVP:
 
-- create/read/update на Alert Lens се извършват чрез Observation Definition; няма отделни Alert Lens CRUD endpoints;
-- update на `alert_lenses` е snapshot/replacement и се валидира/persist-ва атомарно като част от aggregate update-а;
-- липсващо `alert_lenses` на input означава `[]`; canonical read винаги включва collection-а;
+- `add-alert-lens-definition` разширява съществуващите Observation Definition create/read surfaces; няма отделни Alert Lens CRUD endpoints;
+- feature-ът не добавя нов public Observation Definition update или delete endpoint;
+- ако/когато aggregate update capability бъде добавена, `alert_lenses` следва snapshot/replacement semantics и промяната се валидира/persist-ва атомарно;
+- липсващо `alert_lenses` на input означава `[]`; canonical read запазва `lenses` и винаги включва `alert_lenses`;
 - Observation Definition трябва да има поне един Lens общо, затова Metric-only, Alert-only и mixed definitions са валидни;
-- Alert Lens IDs са unique в `alert_lenses`, Metric Lens IDs са unique в `metric_lenses`; еднакъв ID между различни types е допустим;
-- Relationship participant validation остава Metric-only и resolve-ва participant IDs само срещу `metric_lenses`.
+- Alert Lens IDs са unique в `alert_lenses`, Metric Lens IDs са unique в `lenses`; еднакъв ID между различни types е допустим;
+- Relationship participant validation остава Metric-only и resolve-ва participant IDs само срещу `lenses`.
 
 ### 3.4. Definition persistence ownership
 
 Alert Lens definition persistence използва dedicated owned child storage/table `alert_lens_definitions`, без generic polymorphic `lens_definitions` refactor. Stable scalar properties се съхраняват explicit, а ordered list properties могат да използват structured storage.
 
-Removal на Alert Lens от replacement snapshot физически изтрива owned row. Delete на Observation Definition cascade-ва към Alert Lens definitions. Aggregate update/delete е atomic; soft-delete и independent Alert Lens lifecycle не са част от MVP.
+При бъдещ replacement update removal на Alert Lens физически изтрива owned row. Delete на Observation Definition на repository/database ниво cascade-ва към Alert Lens definitions. Всяка поддържана aggregate mutation е atomic; текущият feature не въвежда public update/delete endpoints. Soft-delete и independent Alert Lens lifecycle не са част от MVP.
 
 ## 4. Provider и query semantics
 

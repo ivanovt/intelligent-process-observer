@@ -90,6 +90,48 @@ class MetricLensCreate(ApiModel):
         return self
 
 
+class AlertApiModel(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+
+
+class AlertSelectorCreate(AlertApiModel):
+    query: str = Field(min_length=1)
+
+    @model_validator(mode="after")
+    def validate_query(self) -> AlertSelectorCreate:
+        if not self.query.strip():
+            raise ValueError("selector query must contain non-whitespace content")
+        return self
+
+
+class AlertLensCreate(AlertApiModel):
+    id: str = Field(pattern=IDENTIFIER_PATTERN)
+    name: str = Field(min_length=1)
+    description: str | None = None
+    type: Literal["alert"]
+    source: Literal["jira_track_and_release"]
+    selector: AlertSelectorCreate
+    analysis_objectives: list[str] = Field(default_factory=list)
+    reference_periods: list[str] = Field(default_factory=list)
+
+    @model_validator(mode="after")
+    def validate_alert_configuration(self) -> AlertLensCreate:
+        if not self.name.strip():
+            raise ValueError("name must contain non-whitespace content")
+        if self.description is not None and not self.description.strip():
+            raise ValueError("description must contain non-whitespace content")
+        if any(not objective.strip() for objective in self.analysis_objectives):
+            raise ValueError("analysis_objectives must contain non-whitespace content")
+        if len(set(self.analysis_objectives)) != len(self.analysis_objectives):
+            raise ValueError("analysis_objectives must not contain duplicates")
+        if len(set(self.reference_periods)) != len(self.reference_periods):
+            raise ValueError("reference_periods must not contain duplicates")
+        for offset in self.reference_periods:
+            if not re.fullmatch(OFFSET_PATTERN, offset):
+                raise ValueError("reference_periods must use positive m, h, d, or w offsets")
+        return self
+
+
 class RelationshipCreate(ApiModel):
     id: str = Field(pattern=IDENTIFIER_PATTERN)
     name: str = Field(min_length=1)
@@ -115,18 +157,24 @@ class ObservationCreate(ApiModel):
     name: str = Field(min_length=1)
     description: str | None = None
     objective: str = Field(min_length=1)
-    lenses: list[MetricLensCreate]
-    relationships: list[RelationshipCreate]
+    lenses: list[MetricLensCreate] = Field(default_factory=list)
+    alert_lenses: list[AlertLensCreate] = Field(default_factory=list)
+    relationships: list[RelationshipCreate] = Field(default_factory=list)
 
     @model_validator(mode="after")
     def validate_topology(self) -> ObservationCreate:
-        lens_ids = [lens.id for lens in self.lenses]
-        if len(set(lens_ids)) != len(lens_ids):
-            raise ValueError("lens IDs must be unique")
+        if not self.lenses and not self.alert_lenses:
+            raise ValueError("Observation definition must contain at least one Lens")
+        metric_lens_ids = [lens.id for lens in self.lenses]
+        if len(set(metric_lens_ids)) != len(metric_lens_ids):
+            raise ValueError("Metric Lens IDs must be unique")
+        alert_lens_ids = [lens.id for lens in self.alert_lenses]
+        if len(set(alert_lens_ids)) != len(alert_lens_ids):
+            raise ValueError("Alert Lens IDs must be unique")
         relationship_ids = [relationship.id for relationship in self.relationships]
         if len(set(relationship_ids)) != len(relationship_ids):
             raise ValueError("relationship IDs must be unique")
-        known_lenses = set(lens_ids)
+        known_lenses = set(metric_lens_ids)
         for relationship in self.relationships:
             unknown = set(relationship.participants) - known_lenses
             if unknown:
@@ -143,6 +191,13 @@ class LensReference(ApiModel):
     href: str
 
 
+class AlertLensReference(ApiModel):
+    id: str
+    name: str
+    type: Literal["alert"]
+    href: str
+
+
 class RelationshipReference(ApiModel):
     id: str
     name: str
@@ -156,11 +211,17 @@ class ObservationSummary(ApiModel):
     objective: str
     schema_version: int
     lenses: list[LensReference]
+    alert_lenses: list[AlertLensReference] = Field(default_factory=list)
     relationships: list[RelationshipReference]
     href: str
 
 
 class MetricLensResponse(MetricLensCreate):
+    href: str
+    observation_href: str
+
+
+class AlertLensResponse(AlertLensCreate):
     href: str
     observation_href: str
 
@@ -172,6 +233,7 @@ class RelationshipResponse(RelationshipCreate):
 
 class ObservationResponse(ObservationSummary):
     lenses: list[MetricLensResponse]
+    alert_lenses: list[AlertLensResponse] = Field(default_factory=list)
     relationships: list[RelationshipResponse]
 
 

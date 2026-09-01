@@ -2,24 +2,36 @@ from __future__ import annotations
 
 import asyncio
 import os
+from collections.abc import AsyncIterator
 from datetime import UTC, datetime
 from pathlib import Path
 from uuid import UUID, uuid4
 
+import httpx
 import pytest
 from alembic import command
 from alembic.config import Config
+from sqlalchemy import delete, func, inspect, select, text
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
+from sqlalchemy.orm import selectinload
 
 from app.core.settings import get_settings
 from app.infrastructure.persistence.models import (
+    AlertLensModel,
+    LensRunModel,
+    MetricLensModel,
     ObservationAnalysisResultModel,
     ObservationModel,
+    ObservationRelationshipModel,
     ObservationReportModel,
+    ObservationRunModel,
     RelationshipEvaluationModel,
 )
-from app.infrastructure.persistence.repository import RuntimePersistenceRepository
+from app.infrastructure.persistence.repository import (
+    ObservationRepository,
+    RuntimePersistenceRepository,
+)
 from app.infrastructure.persistence.runtime_contracts import (
     LensAnalysisResultInput,
     LensResultIdentity,
@@ -34,6 +46,10 @@ from app.infrastructure.persistence.runtime_contracts import (
     RelationshipEvaluationInput,
     StructuredReason,
 )
+from app.main import app
+from app.observations.api import get_service, get_session
+from app.observations.contracts import ObservationCreate
+from app.observations.service import ObservationDefinitionService
 
 _BACKEND_ROOT = Path(__file__).resolve().parents[1]
 
@@ -348,6 +364,413 @@ def test_runtime_persistence_round_trip_and_artifact_absence(
     asyncio.run(scenario())
 
 
+def test_postgresql_alert_definition_walking_skeleton_and_empty_rejection(
+    session_factory: async_sessionmaker[AsyncSession],
+) -> None:
+    async def scenario() -> None:
+        service = ObservationDefinitionService(ObservationRepository())
+        definition = ObservationCreate.model_validate(
+            {
+                "name": f"Release health {uuid4()}",
+                "objective": "Observe release alerts.",
+                "alert_lenses": [
+                    {
+                        "id": "release-alerts",
+                        "type": "alert",
+                        "name": "Release alerts",
+                        "source": "jira_track_and_release",
+                        "selector": {"query": "project = REL", "future_field": "ignored"},
+                        "future_field": "ignored",
+                    }
+                ],
+            }
+        )
+        async with session_factory() as session:
+            created = await service.create(session, definition)
+            assert created.schema_version == 1
+            assert created.lenses == []
+            assert created.relationships == []
+            assert created.alert_lenses[0].id == "release-alerts"
+            assert created.alert_lenses[0].type == "alert"
+            assert created.alert_lenses[0].analysis_objectives == []
+            assert created.alert_lenses[0].reference_periods == []
+            assert created.alert_lenses[0].href == (f"{created.href}/alert-lenses/release-alerts")
+
+            detail = await service.get(session, created.id)
+            nested = await service.get_alert_lens(session, created.id, "release-alerts")
+            assert detail.alert_lenses[0] == nested
+            assert "future_field" not in nested.model_dump_json()
+
+        async def count_definition_rows() -> list[int]:
+            async with session_factory() as count_session:
+                return [
+                    await count_session.scalar(select(func.count()).select_from(model))
+                    for model in (
+                        ObservationModel,
+                        MetricLensModel,
+                        AlertLensModel,
+                        ObservationRelationshipModel,
+                    )
+                ]
+
+        async def postgres_session() -> AsyncIterator[AsyncSession]:
+            async with session_factory() as request_session:
+                yield request_session
+
+        async def postgres_service() -> ObservationDefinitionService:
+            return service
+
+        rows_before = await count_definition_rows()
+        app.dependency_overrides[get_session] = postgres_session
+        app.dependency_overrides[get_service] = postgres_service
+        try:
+            transport = httpx.ASGITransport(app=app)
+            async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+                for payload in ({}, {"lenses": [], "alert_lenses": []}):
+                    response = await client.post(
+                        "/api/v1/observations",
+                        json={
+                            "name": "No lenses",
+                            "objective": "Must be rejected.",
+                            **payload,
+                        },
+                    )
+                    assert response.status_code == 422
+                    assert response.json()["code"] == "validation_error"
+                    assert await count_definition_rows() == rows_before
+        finally:
+            app.dependency_overrides.clear()
+
+    asyncio.run(scenario())
+
+
+def test_postgresql_mixed_definition_order_navigation_and_late_failure_are_atomic(
+    session_factory: async_sessionmaker[AsyncSession],
+) -> None:
+    async def count_definition_rows() -> list[int]:
+        async with session_factory() as session:
+            return [
+                await session.scalar(select(func.count()).select_from(model))
+                for model in (
+                    ObservationModel,
+                    MetricLensModel,
+                    AlertLensModel,
+                    ObservationRelationshipModel,
+                )
+            ]
+
+    async def scenario() -> None:
+        repository = ObservationRepository()
+        service = ObservationDefinitionService(repository)
+        definition = ObservationCreate.model_validate(
+            {
+                "name": f"Mixed definition {uuid4()}",
+                "objective": "Prove type-local navigation and order.",
+                "lenses": [
+                    {
+                        "id": "shared",
+                        "name": "Shared metric",
+                        "type": "metric",
+                        "metric_id": "shared_metric",
+                        "adapter_type": "prometheus",
+                        "source_id": "production-prometheus",
+                        "query": "avg(shared_metric)",
+                        "unit": "count",
+                        "analysis_objectives": ["spike"],
+                        "reference_periods": ["1d"],
+                    },
+                    {
+                        "id": "pressure",
+                        "name": "Pressure",
+                        "type": "metric",
+                        "metric_id": "pressure",
+                        "adapter_type": "prometheus",
+                        "source_id": "production-prometheus",
+                        "query": "avg(pressure)",
+                        "unit": "bar",
+                        "analysis_objectives": ["drift"],
+                        "reference_periods": [],
+                    },
+                ],
+                "alert_lenses": [
+                    {
+                        "id": "alert-second",
+                        "name": "Second alert",
+                        "type": "alert",
+                        "source": "jira_track_and_release",
+                        "selector": {"query": " project = REL-2 "},
+                        "analysis_objectives": ["Second", "First"],
+                        "reference_periods": ["7d", "1d"],
+                    },
+                    {
+                        "id": "shared",
+                        "name": "Shared alert",
+                        "type": "alert",
+                        "source": "jira_track_and_release",
+                        "selector": {"query": "project = REL-1"},
+                    },
+                ],
+                "relationships": [
+                    {
+                        "id": "zeta-first",
+                        "name": "Pressure and shared metric",
+                        "participants": ["pressure", "shared"],
+                        "conditions": {},
+                        "expected": {
+                            "pressure": {"trend": {"direction": "increasing"}},
+                            "shared": {"variability": {"state": "low"}},
+                        },
+                    },
+                    {
+                        "id": "alpha-second",
+                        "name": "Shared metric and pressure",
+                        "participants": ["shared", "pressure"],
+                        "conditions": {},
+                        "expected": {
+                            "shared": {"trend": {"direction": "increasing"}},
+                            "pressure": {"variability": {"state": "low"}},
+                        },
+                    },
+                ],
+            }
+        )
+        async with session_factory() as session:
+            async with session.begin():
+                model = await repository.create(session, definition)
+            created = service.observation_response(model)
+            observation_id = created.id
+
+        async with session_factory() as session:
+            restored = await service.get(session, observation_id)
+            summaries = await service.list(session)
+            metric = await service.get_lens(session, observation_id, "shared")
+            alert = await service.get_alert_lens(session, observation_id, "shared")
+            assert [lens.id for lens in restored.lenses] == ["shared", "pressure"]
+            assert [lens.id for lens in restored.alert_lenses] == ["alert-second", "shared"]
+            assert [relationship.id for relationship in restored.relationships] == [
+                "zeta-first",
+                "alpha-second",
+            ]
+            assert restored.alert_lenses[0].selector.query == " project = REL-2 "
+            assert restored.alert_lenses[0].analysis_objectives == ["Second", "First"]
+            assert restored.alert_lenses[0].reference_periods == ["7d", "1d"]
+            assert summaries[-1].lenses[0].href == metric.href
+            assert summaries[-1].alert_lenses[1].href == alert.href
+            assert metric.type == "metric"
+            assert alert.type == "alert"
+            assert metric.href != alert.href
+
+        definition_before = restored.model_dump()
+        rows_before_unknown_alert = await count_definition_rows()
+
+        async def postgres_session() -> AsyncIterator[AsyncSession]:
+            async with session_factory() as request_session:
+                yield request_session
+
+        async def postgres_service() -> ObservationDefinitionService:
+            return service
+
+        app.dependency_overrides[get_session] = postgres_session
+        app.dependency_overrides[get_service] = postgres_service
+        try:
+            transport = httpx.ASGITransport(app=app)
+            async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+                response = await client.get(
+                    f"/api/v1/observations/{observation_id}/alert-lenses/unknown-alert"
+                )
+        finally:
+            app.dependency_overrides.clear()
+
+        assert response.status_code == 404
+        assert response.json() == {
+            "code": "alert_lens_not_found",
+            "message": "Alert Lens definition was not found",
+        }
+        assert await count_definition_rows() == rows_before_unknown_alert
+        async with session_factory() as session:
+            assert (await service.get(session, observation_id)).model_dump() == definition_before
+
+        before_failure = await count_definition_rows()
+
+        class FailingAfterFlushRepository(ObservationRepository):
+            async def create(self, session, definition):
+                await super().create(session, definition)
+                raise RuntimeError("deliberate late persistence failure")
+
+        failing_service = ObservationDefinitionService(FailingAfterFlushRepository())
+        failing_definition = ObservationCreate.model_validate(
+            {
+                "name": f"Late failure {uuid4()}",
+                "objective": "Prove rollback.",
+                "alert_lenses": [
+                    {
+                        "id": "rollback-alert",
+                        "name": "Rollback alert",
+                        "type": "alert",
+                        "source": "jira_track_and_release",
+                        "selector": {"query": "project = ROLLBACK"},
+                    }
+                ],
+            }
+        )
+        async with session_factory() as session:
+            with pytest.raises(RuntimeError, match="deliberate late persistence failure"):
+                await failing_service.create(session, failing_definition)
+        assert await count_definition_rows() == before_failure
+
+    asyncio.run(scenario())
+
+
+def test_postgresql_alert_definition_ownership_cascade_and_runtime_restriction(
+    session_factory: async_sessionmaker[AsyncSession],
+) -> None:
+    async def create_observation_with_alerts() -> UUID:
+        async with session_factory() as session:
+            observation = ObservationModel(
+                name=f"Deletion ownership {uuid4()}",
+                objective="Prove Alert child ownership.",
+                schema_version=1,
+                alert_lenses=[
+                    AlertLensModel(
+                        lens_id="first-alert",
+                        lens_type="alert",
+                        name="First alert",
+                        source="jira_track_and_release",
+                        selector_query="project = FIRST",
+                        analysis_objectives=[],
+                        reference_periods=[],
+                        position=0,
+                    ),
+                    AlertLensModel(
+                        lens_id="second-alert",
+                        lens_type="alert",
+                        name="Second alert",
+                        source="jira_track_and_release",
+                        selector_query="project = SECOND",
+                        analysis_objectives=[],
+                        reference_periods=[],
+                        position=1,
+                    ),
+                ],
+            )
+            session.add(observation)
+            await session.commit()
+            return observation.id
+
+    async def count_rows(
+        model: type[ObservationModel] | type[AlertLensModel], identifier: UUID
+    ) -> int:
+        column = model.id if model is ObservationModel else model.observation_id
+        async with session_factory() as session:
+            return (
+                await session.scalar(
+                    select(func.count()).select_from(model).where(column == identifier)
+                )
+                or 0
+            )
+
+    async def assert_definition_and_alerts_exist(observation_id: UUID) -> None:
+        assert await count_rows(ObservationModel, observation_id) == 1
+        assert await count_rows(AlertLensModel, observation_id) == 2
+
+    async def scenario() -> None:
+        alert_foreign_key = next(iter(AlertLensModel.__table__.foreign_key_constraints))
+        runtime_foreign_key = next(iter(ObservationRunModel.__table__.foreign_key_constraints))
+        assert alert_foreign_key.referred_table.name == "observation_definitions"
+        assert alert_foreign_key.ondelete == "CASCADE"
+        assert runtime_foreign_key.referred_table.name == "observation_definitions"
+        assert runtime_foreign_key.ondelete == "RESTRICT"
+
+        async with session_factory() as session:
+            connection = await session.connection()
+            migrated_alert_foreign_key = await connection.run_sync(
+                lambda connection: inspect(connection).get_foreign_keys("alert_lens_definitions")
+            )
+            migrated_runtime_foreign_key = await connection.run_sync(
+                lambda connection: inspect(connection).get_foreign_keys("observation_runs")
+            )
+        assert migrated_alert_foreign_key == [
+            {
+                **migrated_alert_foreign_key[0],
+                "constrained_columns": ["observation_id"],
+                "referred_table": "observation_definitions",
+                "referred_columns": ["id"],
+                "options": {"ondelete": "CASCADE"},
+            }
+        ]
+        assert migrated_runtime_foreign_key == [
+            {
+                **migrated_runtime_foreign_key[0],
+                "constrained_columns": ["observation_id"],
+                "referred_table": "observation_definitions",
+                "referred_columns": ["id"],
+                "options": {"ondelete": "RESTRICT"},
+            }
+        ]
+
+        orm_observation_id = await create_observation_with_alerts()
+        async with session_factory() as session:
+            parent = await session.scalar(
+                select(ObservationModel)
+                .where(ObservationModel.id == orm_observation_id)
+                .options(selectinload(ObservationModel.alert_lenses))
+            )
+            assert parent is not None
+            assert [alert.lens_id for alert in parent.alert_lenses] == [
+                "first-alert",
+                "second-alert",
+            ]
+            await session.delete(parent)
+            await session.commit()
+        assert await count_rows(ObservationModel, orm_observation_id) == 0
+        assert await count_rows(AlertLensModel, orm_observation_id) == 0
+
+        sql_observation_id = await create_observation_with_alerts()
+        async with session_factory() as session:
+            await session.execute(
+                delete(ObservationModel).where(ObservationModel.id == sql_observation_id)
+            )
+            await session.commit()
+        assert await count_rows(ObservationModel, sql_observation_id) == 0
+        assert await count_rows(AlertLensModel, sql_observation_id) == 0
+
+        restricted_observation_id = await create_observation_with_alerts()
+        async with session_factory() as session:
+            session.add(
+                ObservationRunModel(
+                    observation_id=restricted_observation_id,
+                    status=ObservationRunStatus.PENDING.value,
+                    provenance={},
+                    execution_context={},
+                )
+            )
+            await session.commit()
+
+        async with session_factory() as session:
+            parent = await session.scalar(
+                select(ObservationModel)
+                .where(ObservationModel.id == restricted_observation_id)
+                .options(selectinload(ObservationModel.alert_lenses))
+            )
+            assert parent is not None
+            await session.delete(parent)
+            with pytest.raises(IntegrityError):
+                await session.commit()
+            await session.rollback()
+        await assert_definition_and_alerts_exist(restricted_observation_id)
+
+        async with session_factory() as session:
+            with pytest.raises(IntegrityError):
+                await session.execute(
+                    delete(ObservationModel).where(ObservationModel.id == restricted_observation_id)
+                )
+                await session.commit()
+            await session.rollback()
+        await assert_definition_and_alerts_exist(restricted_observation_id)
+
+    asyncio.run(scenario())
+
+
 def test_runtime_cardinality_constraints_reject_duplicate_writes(
     session_factory: async_sessionmaker[AsyncSession],
 ) -> None:
@@ -413,3 +836,212 @@ def test_runtime_cardinality_constraints_reject_duplicate_writes(
             await session.rollback()
 
     asyncio.run(scenario())
+
+
+def test_lens_runs_allow_same_id_across_types_and_reject_same_type_duplicates(
+    session_factory: async_sessionmaker[AsyncSession],
+) -> None:
+    async def scenario() -> None:
+        repository = RuntimePersistenceRepository()
+        lens_id = f"shared-lens-{uuid4()}"
+        async with session_factory() as session:
+            observation = await _seed_observation(session)
+            observation_run = await repository.create_observation_run(
+                session, ObservationRunInput(observation_id=observation.id)
+            )
+            metric_lens_run = await repository.create_lens_run(
+                session,
+                observation_run,
+                LensRunInput(lens_id=lens_id, lens_type=LensType.METRIC),
+            )
+            alert_lens_run = await repository.create_lens_run(
+                session,
+                observation_run,
+                LensRunInput(lens_id=lens_id, lens_type=LensType.ALERT),
+            )
+            await repository.advance_lens_run(session, metric_lens_run, LensRunStatus.RUNNING)
+            await repository.advance_lens_run(session, metric_lens_run, LensRunStatus.COMPLETED)
+            await repository.advance_lens_run(session, alert_lens_run, LensRunStatus.RUNNING)
+            await repository.advance_lens_run(
+                session,
+                alert_lens_run,
+                LensRunStatus.FAILED,
+                reason=StructuredReason(code="data_source_unavailable"),
+            )
+            observation_run_id = observation_run.id
+            await session.commit()
+
+        async with session_factory() as session:
+            restored = await repository.get_observation_run(session, observation_run_id)
+            assert restored is not None
+            restored_by_type = {lens_run.lens_type: lens_run for lens_run in restored.lens_runs}
+            assert set(restored_by_type) == {LensType.METRIC.value, LensType.ALERT.value}
+            assert restored_by_type[LensType.METRIC.value].status == LensRunStatus.COMPLETED.value
+            assert restored_by_type[LensType.ALERT.value].status == LensRunStatus.FAILED.value
+            assert restored_by_type[LensType.ALERT.value].reason == {
+                "code": "data_source_unavailable",
+                "component": None,
+            }
+
+            session.add(
+                LensRunModel(
+                    observation_run_id=observation_run_id,
+                    lens_id=lens_id,
+                    lens_type=LensType.METRIC.value,
+                    status=LensRunStatus.PENDING.value,
+                    provenance={},
+                    execution_context={},
+                )
+            )
+            with pytest.raises(IntegrityError):
+                await session.flush()
+            await session.rollback()
+
+        async with session_factory() as session:
+            restored = await repository.get_observation_run(session, observation_run_id)
+            assert restored is not None
+            assert {(lens_run.lens_type, lens_run.lens_id) for lens_run in restored.lens_runs} == {
+                (LensType.METRIC.value, lens_id),
+                (LensType.ALERT.value, lens_id),
+            }
+
+    asyncio.run(scenario())
+
+
+def test_final_migration_upgrades_and_guards_unsafe_downgrade(
+    postgres_url: str,
+    session_factory: async_sessionmaker[AsyncSession],
+) -> None:
+    config = Config(str(_BACKEND_ROOT / "alembic.ini"))
+    config.set_main_option("script_location", str(_BACKEND_ROOT / "migrations"))
+    config.set_main_option("sqlalchemy.url", postgres_url)
+
+    async def assert_constraint_and_alert_table(
+        *, expected_constraint: tuple[str, list[str]], alert_table_exists: bool
+    ) -> None:
+        async with session_factory() as session:
+            connection = await session.connection()
+            constraints = await connection.run_sync(
+                lambda connection: inspect(connection).get_unique_constraints("lens_runs")
+            )
+            table_names = await connection.run_sync(
+                lambda connection: inspect(connection).get_table_names()
+            )
+        assert expected_constraint in [
+            (constraint["name"], constraint["column_names"]) for constraint in constraints
+        ]
+        assert ("alert_lens_definitions" in table_names) is alert_table_exists
+
+    async def create_unsafe_same_id_rows() -> tuple[UUID, UUID, UUID]:
+        repository = RuntimePersistenceRepository()
+        async with session_factory() as session:
+            observation = await _seed_observation(session)
+            observation_run = await repository.create_observation_run(
+                session, ObservationRunInput(observation_id=observation.id)
+            )
+            for lens_type in (LensType.METRIC, LensType.ALERT):
+                await repository.create_lens_run(
+                    session,
+                    observation_run,
+                    LensRunInput(lens_id="unsafe-downgrade-id", lens_type=lens_type),
+                )
+            alert = AlertLensModel(
+                observation_id=observation.id,
+                lens_id="unsafe-alert-definition",
+                lens_type="alert",
+                name="Unsafe downgrade alert",
+                source="jira_track_and_release",
+                selector_query="project = UNSAFE",
+                analysis_objectives=[],
+                reference_periods=[],
+                position=0,
+            )
+            session.add(alert)
+            await session.commit()
+            return observation.id, observation_run.id, alert.id
+
+    async def remove_cross_type_duplicate_rows() -> None:
+        async with session_factory() as session:
+            await session.execute(
+                text(
+                    """
+                    DELETE FROM lens_runs
+                    WHERE (observation_run_id, lens_id) IN (
+                        SELECT observation_run_id, lens_id
+                        FROM lens_runs
+                        GROUP BY observation_run_id, lens_id
+                        HAVING COUNT(DISTINCT lens_type) > 1
+                    )
+                    """
+                )
+            )
+            await session.commit()
+
+    async def assert_unsafe_rows_preserved(
+        observation_id: UUID, observation_run_id: UUID, alert_id: UUID
+    ) -> None:
+        async with session_factory() as session:
+            alert = await session.get(AlertLensModel, alert_id)
+            assert alert is not None and alert.observation_id == observation_id
+            assert (
+                await session.scalar(
+                    select(func.count())
+                    .select_from(ObservationRunModel)
+                    .where(ObservationRunModel.id == observation_run_id)
+                )
+                == 1
+            )
+            assert (
+                await session.scalar(
+                    text(
+                        "SELECT count(*) FROM lens_runs "
+                        "WHERE observation_run_id = :observation_run_id"
+                    ).bindparams(observation_run_id=observation_run_id)
+                )
+                == 2
+            )
+
+    asyncio.run(
+        assert_constraint_and_alert_table(
+            expected_constraint=(
+                "uq_lens_runs_observation_run_id_lens_type_lens_id",
+                ["observation_run_id", "lens_type", "lens_id"],
+            ),
+            alert_table_exists=True,
+        )
+    )
+    unsafe_identity = asyncio.run(create_unsafe_same_id_rows())
+    with pytest.raises(RuntimeError, match="Cannot downgrade"):
+        command.downgrade(config, "20260823_01")
+    asyncio.run(assert_unsafe_rows_preserved(*unsafe_identity))
+    asyncio.run(
+        assert_constraint_and_alert_table(
+            expected_constraint=(
+                "uq_lens_runs_observation_run_id_lens_type_lens_id",
+                ["observation_run_id", "lens_type", "lens_id"],
+            ),
+            alert_table_exists=True,
+        )
+    )
+
+    asyncio.run(remove_cross_type_duplicate_rows())
+    command.downgrade(config, "20260823_01")
+    asyncio.run(
+        assert_constraint_and_alert_table(
+            expected_constraint=(
+                "lens_runs_observation_run_id_lens_id_key",
+                ["observation_run_id", "lens_id"],
+            ),
+            alert_table_exists=False,
+        )
+    )
+    command.upgrade(config, "head")
+    asyncio.run(
+        assert_constraint_and_alert_table(
+            expected_constraint=(
+                "uq_lens_runs_observation_run_id_lens_type_lens_id",
+                ["observation_run_id", "lens_type", "lens_id"],
+            ),
+            alert_table_exists=True,
+        )
+    )

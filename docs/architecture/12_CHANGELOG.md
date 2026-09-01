@@ -4,17 +4,19 @@
 
 Фиксиран exact Alert Lens definition/API/persistence contract преди `add-alert-lens-definition`:
 
-- `alert_lenses` е nested collection в съществуващия Observation Definition aggregate; няма standalone Alert Lens CRUD lifecycle за MVP;
+- съществуващото публично `lenses` поле се запазва като Metric Lens collection; не се въвежда breaking rename/alias `metric_lenses`; `alert_lenses` се добавя като отделна nested collection;
+- няма standalone Alert Lens CRUD lifecycle; `add-alert-lens-definition` не добавя нов public Observation Definition update/delete endpoint;
 - Observation Definition може да бъде Metric-only, Alert-only или mixed, но изисква поне един Lens общо;
-- update semantics са snapshot/replacement; липсващо `alert_lenses` на input означава `[]`, а canonical read винаги връща collection-а;
+- липсващо `alert_lenses` на input означава `[]`, а canonical read запазва `lenses` и винаги връща `alert_lenses`; future aggregate updates използват snapshot/replacement semantics;
 - Lens ID uniqueness е type-local; еднакъв `lens_id` между Metric и Alert е допустим;
-- Relationship participant validation остава Metric-only и resolve-ва само срещу `metric_lenses`;
+- Relationship participant validation остава Metric-only и resolve-ва само срещу `lenses`;
 - Alert Lens serialized contract включва `id`, literal `type=alert`, required `name`, optional `description`, strict supported `source`, opaque `selector.query`, optional `analysis_objectives` и optional `reference_periods`;
 - MVP `source` е само `jira_track_and_release`; query се валидира само за non-whitespace и иначе се пази без trim/normalize/parse/rewrite;
 - `analysis_objectives` е ordered duplicate-free opaque intent list; `reference_periods` е ordered duplicate-free `0..N` list със същия canonical offset primitive като Metrics и без implicit defaults;
+- exact serialized `reference_periods` shape е същият като при Metric Lens: ordered list от canonical offset strings (например `["1d", "7d"]`), без `{offset: ...}` wrapper;
 - unknown Alert definition input fields се игнорират и не се persist/read-ват;
 - Alert definitions използват dedicated owned child persistence с explicit scalar fields + structured ordered list storage, без generic polymorphic Lens refactor;
-- snapshot removal физически изтрива Alert definition row; Observation delete cascade-ва към Alert Lens definitions в aggregate transaction;
+- future snapshot removal физически изтрива Alert definition row; parent deletion cascade-ва към Alert Lens definitions на repository/database ниво; тези ownership invariants не изискват нови public update/delete endpoints;
 - добавени ADR-161..ADR-163; обновени Observation/Lens concept, Alert concept, backlog и glossary.
 
 ## 6.3 — 2026-08-26
