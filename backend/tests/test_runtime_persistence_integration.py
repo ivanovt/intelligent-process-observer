@@ -697,6 +697,90 @@ def test_invalid_current_subset_persists_correlated_partial(
     asyncio.run(scenario())
 
 
+def test_current_incompleteness_precedes_reference_and_persists_once(
+    session_factory: async_sessionmaker[AsyncSession],
+) -> None:
+    class Provider:
+        reference_requested = False
+
+        async def acquire(
+            self, scope: AlertProviderScope, window: AlertAnalysisWindow
+        ) -> AlertRecordsAvailable:
+            if window.from_ == datetime(2026, 9, 1, tzinfo=UTC):
+                return AlertRecordsAvailable(
+                    source=scope.source,
+                    records=(
+                        _nonzero_alert_record(occurrences=1),
+                        {"id": "invalid", "started_at": "invalid"},
+                    ),
+                )
+            self.reference_requested = True
+            raise RuntimeError("reference unavailable")
+
+    class Agent:
+        async def complete(self, request: object) -> AlertAgentCompletion:
+            return AlertAgentCompletion(findings=(), overall_importance="low")
+
+    async def scenario() -> None:
+        repository = RuntimePersistenceRepository()
+        provider = Provider()
+        async with session_factory() as session:
+            observation = await _seed_observation(session)
+            run = await repository.create_observation_run(
+                session, ObservationRunInput(observation_id=observation.id)
+            )
+            await repository.advance_observation_run(session, run, ObservationRunStatus.RUNNING)
+            lens_run = await repository.create_lens_run(
+                session, run, LensRunInput(lens_id="precedence-alert", lens_type=LensType.ALERT)
+            )
+            await repository.advance_lens_run(session, lens_run, LensRunStatus.RUNNING)
+            context = AlertLensExecutionContext(
+                identity=AlertIdentity(
+                    observation_id=observation.id,
+                    observation_run_id=run.id,
+                    lens_id=lens_run.lens_id,
+                    lens_run_id=lens_run.id,
+                ),
+                provider_scope=AlertProviderScope(source="fake-alert-provider", query="precedence"),
+                analysis_window=AlertAnalysisWindow(
+                    **{
+                        "from": datetime(2026, 9, 1, tzinfo=UTC),
+                        "to": datetime(2026, 9, 1, 1, tzinfo=UTC),
+                    }
+                ),
+                lens_name="Precedence alerts",
+                reference_periods=("1d",),
+            )
+            outcome = await AlertAnalysisPipeline(provider=provider, agent=Agent()).analyze(context)
+            assert provider.reference_requested
+            assert outcome.status is LensRunStatus.PARTIAL
+            assert outcome.reason is not None and outcome.reason.model_dump() == {
+                "code": "invalid_records",
+                "component": "current_normalization",
+            }
+            assert "reference_unavailable" not in str(outcome.artifact.payload)
+            await persist_alert_terminal(session, lens_run, outcome, repository)
+            run_id, lens_run_id = run.id, lens_run.id
+            await session.commit()
+
+        async with session_factory() as session:
+            restored = await repository.get_observation_run(session, run_id)
+            assert restored is not None
+            persisted = next(item for item in restored.lens_runs if item.id == lens_run_id)
+            assert persisted.status == "partial"
+            assert persisted.reason == {
+                "code": "invalid_records",
+                "component": "current_normalization",
+            }
+            assert persisted.analysis_result is not None
+            assert persisted.analysis_result.status == "partial"
+            assert persisted.analysis_result.payload["reason"] == persisted.reason
+            assert persisted.analysis_result.payload["identity"]["lens_run_id"] == str(lens_run_id)
+            assert "reference_unavailable" not in str(persisted.analysis_result.payload)
+
+    asyncio.run(scenario())
+
+
 def test_all_references_unavailable_persists_usable_reference_partial(
     session_factory: async_sessionmaker[AsyncSession],
 ) -> None:
