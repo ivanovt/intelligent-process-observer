@@ -6,13 +6,13 @@ from collections.abc import Callable
 from datetime import UTC, datetime
 
 from app.alerts.contracts import (
-    AlertActivity,
+    AlertAgentCompletion,
     AlertLensExecutionContext,
     AlertMandatoryEvidence,
     AlertResultProvenance,
-    AlertStatusDistribution,
     AlertTerminalOutcome,
-    CompletedZeroAlertAnalysisResult,
+    CanonicalAlertRecord,
+    CompletedAlertAnalysisResult,
 )
 from app.infrastructure.persistence.runtime_contracts import (
     LensAnalysisResultInput,
@@ -30,23 +30,55 @@ class AlertResultBuilder:
 
     def completed_zero(
         self, context: AlertLensExecutionContext, evidence: AlertMandatoryEvidence
-    ) -> tuple[CompletedZeroAlertAnalysisResult, AlertTerminalOutcome]:
+    ) -> tuple[CompletedAlertAnalysisResult, AlertTerminalOutcome]:
         """Build the completed zero-record result and its correlated generic envelope."""
+        return self.completed(
+            context,
+            (),
+            evidence,
+            AlertAgentCompletion(findings=(), overall_importance="low"),
+            zero=True,
+        )
 
-        if evidence.record_count != 0 or evidence.occurrence_count != 0:
-            raise ValueError("zero-record builder requires zero mandatory evidence")
+    def completed(
+        self,
+        context: AlertLensExecutionContext,
+        records: tuple[CanonicalAlertRecord, ...],
+        evidence: AlertMandatoryEvidence,
+        completion: AlertAgentCompletion,
+        *,
+        zero: bool = False,
+    ) -> tuple[CompletedAlertAnalysisResult, AlertTerminalOutcome]:
+        """Build the completed strict artifact from canonical records and bounded output."""
+        if zero:
+            completion = completion.model_copy(update={"overall_importance": "none"})
+        if evidence.record_count != len(records):
+            raise ValueError("evidence record_count must match canonical records")
+        allowed = {
+            "alert_activity",
+            "status_distribution",
+            "duration_statistics",
+            "provider_importance_distribution",
+        } | {f"alerts.{record.id}" for record in records}
+        if any(
+            ref not in allowed for finding in completion.findings for ref in finding.evidence_refs
+        ):
+            raise ValueError("finding evidence ref does not resolve to this Alert result")
         provenance = AlertResultProvenance(
             source_provider=context.provider_scope.source, generated_at=self._clock()
         )
-        result = CompletedZeroAlertAnalysisResult(
+        result = CompletedAlertAnalysisResult(
             identity=context.identity,
             analysis_timestamp=context.analysis_window.to,
             analysis_window=context.analysis_window,
-            alert_activity=AlertActivity(
-                record_count=evidence.record_count,
-                occurrence_count=evidence.occurrence_count,
-            ),
-            status_distribution=AlertStatusDistribution(**evidence.status_counts),
+            alerts=records,
+            alert_activity=evidence.alert_activity,
+            status_distribution=evidence.status_distribution,
+            duration_statistics=evidence.duration_statistics,
+            provider_importance_distribution=evidence.provider_importance_distribution,
+            comparisons=evidence.comparisons,
+            findings=completion.findings,
+            overall_importance=completion.overall_importance,
             provenance=provenance,
         )
         payload = result.model_dump(mode="json", by_alias=True, exclude_none=True)

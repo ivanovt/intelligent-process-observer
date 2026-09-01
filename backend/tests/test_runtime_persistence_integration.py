@@ -1,3 +1,4 @@
+# ruff: noqa: E501
 from __future__ import annotations
 
 import asyncio
@@ -17,9 +18,13 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_asyn
 from sqlalchemy.orm import selectinload
 
 from app.alerts.contracts import (
+    AlertAgentCompletion,
     AlertAnalysisWindow,
+    AlertFinding,
     AlertIdentity,
     AlertLensExecutionContext,
+    AlertProviderImportance,
+    AlertProviderRecord,
     AlertProviderScope,
     AlertRecordsAvailable,
 )
@@ -304,6 +309,132 @@ def test_alert_zero_record_walking_skeleton_persists_completed_result(
             assert "provider_importance_distribution" not in artifact.payload
 
     asyncio.run(scenario())
+
+
+def _nonzero_alert_record(*, occurrences: int) -> AlertProviderRecord:
+    return AlertProviderRecord(
+        id="ALERT-77",
+        title="Persisted alert",
+        description="canonical",
+        started_at=datetime(2026, 8, 31, 23, tzinfo=UTC),
+        ended_at=None,
+        source_status="Open",
+        provider_importance=AlertProviderImportance(type="priority", value="Highest"),
+        occurrence_count=occurrences,
+        source_ref="jira:ALERT-77",
+    )
+
+
+def _assert_nonzero_alert_persists(
+    session_factory: async_sessionmaker[AsyncSession], *, occurrences: int
+) -> None:
+    class Provider:
+        async def acquire(
+            self, scope: AlertProviderScope, window: AlertAnalysisWindow
+        ) -> AlertRecordsAvailable:
+            return AlertRecordsAvailable(
+                source=scope.source, records=(_nonzero_alert_record(occurrences=occurrences),)
+            )
+
+    class Agent:
+        def __init__(self) -> None:
+            self.calls = 0
+
+        async def complete(self, request: object) -> AlertAgentCompletion:
+            self.calls += 1
+            assert (
+                request.lens_name == "Persisted alerts"
+                and request.lens_description == "exact bounded description"
+            )
+            assert (
+                request.current_records[0].id == "ALERT-77"
+                and request.mandatory_evidence.occurrence_count == occurrences
+            )
+            assert set(request.model_dump()) == {
+                "lens_name",
+                "lens_description",
+                "current_records",
+                "mandatory_evidence",
+                "comparisons",
+            }
+            return AlertAgentCompletion(
+                findings=(
+                    AlertFinding(
+                        id="persisted", statement="grounded", evidence_refs=("alerts.ALERT-77",)
+                    ),
+                ),
+                overall_importance="high",
+            )
+
+    async def scenario() -> None:
+        repository, agent = RuntimePersistenceRepository(), Agent()
+        async with session_factory() as session:
+            observation = await _seed_observation(session)
+            run = await repository.create_observation_run(
+                session, ObservationRunInput(observation_id=observation.id)
+            )
+            await repository.advance_observation_run(session, run, ObservationRunStatus.RUNNING)
+            lens_run = await repository.create_lens_run(
+                session, run, LensRunInput(lens_id="persisted-alerts", lens_type=LensType.ALERT)
+            )
+            await repository.advance_lens_run(session, lens_run, LensRunStatus.RUNNING)
+            context = AlertLensExecutionContext(
+                identity=AlertIdentity(
+                    observation_id=observation.id,
+                    observation_run_id=run.id,
+                    lens_id=lens_run.lens_id,
+                    lens_run_id=lens_run.id,
+                ),
+                provider_scope=AlertProviderScope(
+                    source="fake-alert-provider", query="opaque query"
+                ),
+                analysis_window=AlertAnalysisWindow(
+                    **{
+                        "from": datetime(2026, 9, 1, tzinfo=UTC),
+                        "to": datetime(2026, 9, 1, 1, tzinfo=UTC),
+                    }
+                ),
+                lens_name="Persisted alerts",
+                lens_description="exact bounded description",
+            )
+            outcome = await AlertAnalysisPipeline(provider=Provider(), agent=agent).analyze(context)
+            await persist_alert_terminal(session, lens_run, outcome, repository)
+            run_id, lens_run_id = run.id, lens_run.id
+            await session.commit()
+        assert agent.calls == 1
+        async with session_factory() as session:
+            restored = await repository.get_observation_run(session, run_id)
+            assert restored is not None
+            artifact = next(
+                item for item in restored.lens_runs if item.id == lens_run_id
+            ).analysis_result
+            assert artifact is not None and artifact.status == "completed"
+            assert artifact.payload["alerts"][0]["id"] == "ALERT-77"
+            assert artifact.payload["alerts"][0]["source_ref"] == "jira:ALERT-77"
+            assert artifact.payload["alert_activity"] == {
+                "record_count": 1,
+                "occurrence_count": occurrences,
+            }
+            assert artifact.payload["findings"] == [
+                {"id": "persisted", "statement": "grounded", "evidence_refs": ["alerts.ALERT-77"]}
+            ]
+            assert artifact.payload["overall_importance"] == "high" and "query" not in str(
+                artifact.payload
+            )
+
+    asyncio.run(scenario())
+
+
+def test_nonzero_zero_occurrence_invokes_agent_with_exact_projection_and_persists(
+    session_factory: async_sessionmaker[AsyncSession],
+) -> None:
+    _assert_nonzero_alert_persists(session_factory, occurrences=0)
+
+
+def test_representative_nonzero_alert_result_round_trips_strictly(
+    session_factory: async_sessionmaker[AsyncSession],
+) -> None:
+    _assert_nonzero_alert_persists(session_factory, occurrences=3)
 
 
 def test_runtime_persistence_round_trip_and_artifact_absence(
