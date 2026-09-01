@@ -37,7 +37,13 @@ The architecture backlog predates some implementation-stack decisions made for t
 - Existing architecture documents are intentionally retained in Bulgarian and remain normative.
 - Do not translate or duplicate the architecture package unless explicitly requested.
 
-## 4. Context-loading policy
+## 4. Code documentation
+
+- Document every public class and interface with a concise docstring explaining its purpose and function.
+- Document every public method that forms part of an interface with a concise docstring explaining its purpose and function.
+- Keep docstrings minimal and behavior-focused; do not restate the implementation line by line.
+
+## 5. Context-loading policy
 
 For a small, mechanical, unambiguous change:
 
@@ -54,7 +60,7 @@ For an OpenSpec or behavioral change:
 
 If a conflict, missing architectural decision, or unresolved `Open`/`Deferred` item blocks correct implementation, stop and report it. Do not invent the missing decision.
 
-## 5. Change classification
+## 6. Change classification
 
 Use the lightweight two-track model.
 
@@ -85,7 +91,7 @@ Use OpenSpec for any new or changed behavior, including:
 
 When uncertain whether a change is behavioral, prefer proposing the classification to the user instead of guessing.
 
-## 6. OpenSpec governance
+## 7. OpenSpec governance
 
 The project uses the OpenSpec `core` profile.
 
@@ -148,7 +154,7 @@ feature/<change-id>
 
 Do not archive an incomplete or unapproved change merely to make validation pass.
 
-## 7. Architecture-document safety
+## 8. Architecture-document safety
 
 Treat `docs/architecture/` and ADRs as read-only by default.
 
@@ -163,7 +169,7 @@ If implementation requires an architectural change:
 
 Never change architecture documentation silently to fit an implementation.
 
-## 8. Git safety
+## 9. Git safety
 
 The normal branch model is:
 
@@ -191,7 +197,7 @@ Explicit user approval is required before an agent may:
 
 Pull requests are squash-merged into protected `main` after required CI passes.
 
-## 9. Dependency policy
+## 10. Dependency policy
 
 Do not add, remove, or replace dependencies without explicit user approval.
 
@@ -205,7 +211,7 @@ You may propose a dependency change. The proposal should state:
 
 Only modify `pyproject.toml`, `package.json`, or related lockfiles for dependency changes after approval.
 
-## 10. Database and migration safety
+## 11. Database and migration safety
 
 Within an already approved schema change, agents may:
 
@@ -221,7 +227,7 @@ Explicit approval is required before destructive database operations, including:
 
 Do not invent domain tables during infrastructure/bootstrap work.
 
-## 11. Approved implementation stack
+## 12. Approved implementation stack
 
 ### Backend
 
@@ -247,7 +253,7 @@ Do not add a UI library, Tailwind, a frontend test framework, a Python formatter
 
 The application is a modular monolith. Deterministic orchestration remains plain Python/`asyncio` unless a later explicitly approved decision changes that. PydanticAI is the approved MVP agent-framework integration mechanism (ADR-152); it must not replace framework-neutral domain contracts, deterministic orchestration, or domain-owned execution constraints. Add its production dependency only within the approved scope of the first production agent feature that requires it.
 
-## 12. Canonical local commands
+## 13. Canonical local commands
 
 Use the root `Makefile` as the canonical command interface:
 
@@ -274,7 +280,7 @@ Before requesting a pull request, run `make check` and report any failures accur
 - frontend production build;
 - strict OpenSpec structural validation.
 
-## 13. Secrets and environment files
+## 14. Secrets and environment files
 
 - Root `.env` is local-only and must not be committed.
 - Root `.env.example` documents backend/PostgreSQL configuration.
@@ -282,7 +288,7 @@ Before requesting a pull request, run `make check` and report any failures accur
 - `frontend/.env.example` documents browser-visible `VITE_*` values.
 - Never put secrets in `VITE_*` variables or client-side source.
 
-## 14. Nested AGENTS.md maintenance
+## 15. Nested AGENTS.md maintenance
 
 Start with this root file only.
 
