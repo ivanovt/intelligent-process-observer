@@ -100,7 +100,7 @@ parallel implementation.
 | Slice | Goal | Depends on | Risk | Status | Commit | Handoff |
 |---|---|---|---|---|---|---|
 | VS-01 | Persist a zero-record completed Alert walking skeleton | none | high-risk | COMPLETE | d1dc5b3, 5933bb5, af65a93 | `implementation/VS-01-handoff.md` |
-| VS-02 | Persist representative non-zero deterministic evidence and fake-agent findings | VS-01 | high-risk | READY | - | - |
+| VS-02 | Persist representative non-zero deterministic evidence and fake-agent findings | VS-01 | high-risk | IN_PROGRESS | - | - |
 | VS-03 | Add independent references, invalid subsets, partial precedence, and partial persistence | VS-02 | high-risk | PLANNED | - | - |
 | VS-04 | Persist every mandatory failure with no Alert artifact | VS-03 | high-risk | PLANNED | - | - |
 | VS-05 | Execute the bounded optional registry and retain only allowed failure traces | VS-03 | high-risk | PLANNED | - | - |
@@ -1118,3 +1118,5 @@ here.
   `implementation/VS-01-handoff.md`. All VS01-AC obligations and the high-risk gate
   passed. Approved tasks remain unchecked because every task portion touched by VS-01
   continues in later slices. VS-02 is now `READY`.
+- 2026-09-01 — VS-02 assigned to a fresh Slice Implementer. Active assignment:
+  `/root/vs02_implementer`; baseline commit: `48c0f0d`.
