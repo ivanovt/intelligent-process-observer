@@ -1100,5 +1100,9 @@ here.
   `implementation/VS-01-handoff.md`. Coordinator independently reran the required
   PostgreSQL proof with the existing local test service (`1 passed`), alongside the
   Implementer's recorded focused, nearby-regression, full-backend, and Ruff evidence.
-  Change-map deviation disposition: `N/A` (none reported or observed). Candidate is
-  ready for required independent high-risk slice review.
+  Change-map deviation disposition was `N/A` (none reported or observed). The required
+  high-risk review returned `SLICE CHANGES REQUIRED`: a correctable in-scope strict
+  zero-result projection defect and an evidence-recording inconsistency require a
+  focused correction before a new deviation disposition and re-review.
+- 2026-09-01 — VS-01 corrective assignment: `/root/vs01_correction`; baseline commit:
+  `4c6940d`. VS-01 remains `IN_PROGRESS`.
