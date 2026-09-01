@@ -20,7 +20,7 @@ the intentionally deferred Jira transport and production-model configuration.
 | Acceptance ID | Full command / observable assertion | Result |
 | --- | --- | --- |
 | VS09-AC01 | `tests/test_runtime_persistence_integration.py::test_alert_transition_flush_artifact_flush_and_commit_failures_roll_back_all_writes` injects transition flush, artifact flush, and caller commit failures; each re-raises and a fresh session sees the original `running` LensRun and no artifact. | PASS (PostgreSQL) |
-| VS09-AC02 | `tests/test_runtime_persistence_integration.py::test_alert_terminal_outcome_correlation_matrix` reloads completed, current-normalization partial, reference-periods partial, and failed runs; usable artifacts match status/reason and failure has no artifact. | PASS (PostgreSQL) |
+| VS09-AC02 | `tests/test_runtime_persistence_integration.py::test_alert_terminal_outcome_correlation_matrix` reloads completed, current-normalization partial, reference-periods partial, and failures `current_query_failed`, `current_query_timeout`, `invalid_records`, `deterministic_analysis_failed`, `agent_failed`, `agent_timeout`, and `result_validation_failed/alert_result_builder`; usable artifacts exactly match terminal status/reason and failures have no artifact. | PostgreSQL rerun pending configured test URL |
 | VS09-AC03 | Service `test_pre_transaction_work_finishes_before_persistence_composition` and PostgreSQL `test_alert_pipeline_phase_order_keeps_long_work_outside_transaction` record all long analysis phases before transaction open, then terminal write and commit. | PASS (service + PostgreSQL) |
 | VS09-AC04 | Focused fake/injected Alert suite passed (`49 passed`); final merge-base import/scope/dependency/clean-tree scan is recorded below after the atomic commit. | PASS |
 | VS09-AC06 | `tests/test_runtime_persistence_integration.py::test_alert_persistence_composer_rejects_every_mismatched_artifact_atomically` independently mutates type, status, identity, and partial reason; each raises and a fresh session retains `running` with no artifact. | PASS (PostgreSQL) |
@@ -34,7 +34,7 @@ No frozen requirement, scenario, or task changed.
 
 ## Verification
 
-- Focused PostgreSQL VS-09 nodes — `4 passed` (one existing Alembic configuration warning).
+- Original focused PostgreSQL VS-09 nodes — `4 passed` (one existing Alembic configuration warning). The corrected AC02 matrix requires rerun with the configured PostgreSQL test URL; the available local container rejected the documented default credentials.
 - Focused Alert suite — `49 passed`.
 - `openspec validate add-alerts-analysis-pipeline --strict` — passed.
 - `git diff --check` — passed.
@@ -51,7 +51,9 @@ No frozen requirement, scenario, or task changed.
 Terminal Alert writes remain caller-transaction-owned: persistence advances the existing
 LensRun, conditionally writes one artifact, and flushes without committing.
 
-Commit SHA: `HEAD` (atomic VS-09 implementation commit).
+Implementation commit SHA: `4a1b03f`.
+
+Correction commit SHA: `ccb06a9`.
 
 Plan change requested: none.
 
