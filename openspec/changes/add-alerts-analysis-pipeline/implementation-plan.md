@@ -1172,6 +1172,9 @@ here.
 - 2026-09-01 — VS-07 candidate `9e634a6`; Coordinator independently reran focused
   tests (`29 passed`), PostgreSQL (`1 passed`), and Ruff. Change-map deviation
   disposition: `N/A`; candidate awaits high-risk review.
+- 2026-09-01 — VS-07 review requires correction: route zero-record builder rejection
+  through the approved failed outcome and complete every frozen one-field invariant
+  matrix case. VS-07 remains `IN_PROGRESS`.
 - 2026-09-01 — VS-03 accepted after corrected proof verification and `SLICE REVIEW PASS`.
   VS-04 and VS-05 are dependency-ready; VS-04 is next in the requested sequence.
 - 2026-09-01 — VS-04 assigned to fresh Slice Implementer `/root/vs04_implementer`.
