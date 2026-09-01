@@ -1106,3 +1106,9 @@ here.
   focused correction before a new deviation disposition and re-review.
 - 2026-09-01 — VS-01 corrective assignment: `/root/vs01_correction`; baseline commit:
   `4c6940d`. VS-01 remains `IN_PROGRESS`.
+- 2026-09-01 — Corrective commits `5933bb5` (strict zero-result projection and proof)
+  and `af65a93` (handoff provenance correction) address the first high-risk review.
+  Coordinator independently verified focused unit/service (`5 passed`), PostgreSQL
+  (`1 passed`), and Ruff checks. Change-map deviation disposition: `N/A` (no map
+  deviation; correction restores an approved VS-01 obligation). Candidate is ready for
+  bounded re-review of the two reported findings.
