@@ -1153,6 +1153,9 @@ here.
 - 2026-09-01 — Correction `6413361` seals registry admission and adds the technical
   proof; Coordinator reran PostgreSQL (`1 passed`) and strict boundary checks (`2
   passed`). Deviation disposition: `N/A`; candidate awaits bounded re-review.
+- 2026-09-01 — Re-review found mutable evaluator injection; correction `c3030c6`
+  defensively binds the validated mapping and adds regression proof. Candidate awaits
+  final bounded re-review.
 - 2026-09-01 — VS-03 accepted after corrected proof verification and `SLICE REVIEW PASS`.
   VS-04 and VS-05 are dependency-ready; VS-04 is next in the requested sequence.
 - 2026-09-01 — VS-04 assigned to fresh Slice Implementer `/root/vs04_implementer`.
