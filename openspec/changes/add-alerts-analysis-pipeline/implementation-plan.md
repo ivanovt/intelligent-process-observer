@@ -1214,6 +1214,11 @@ here.
   template modifications in the feature diff are outside the approved Alert-pipeline
   scope. Execution is stopped pending human triage to split, explicitly approve, or
   otherwise resolve that unrelated scope. No archive, push, PR, or merge was performed.
+- 2026-09-01 — Post-review corrective assignment for IR-001: `/root/ir001_corrector`
+  will require non-empty `AlertFinding.evidence_refs`, preserve malformed agent-completion
+  mapping to `agent_failed`, add builder defense-in-depth, and add focused contract,
+  pipeline/adapter, and builder proofs. This is a user-authorized local correction; no
+  frozen plan structure or normative behavior is changed.
 - 2026-09-01 — VS-03 accepted after corrected proof verification and `SLICE REVIEW PASS`.
   VS-04 and VS-05 are dependency-ready; VS-04 is next in the requested sequence.
 - 2026-09-01 — VS-04 assigned to fresh Slice Implementer `/root/vs04_implementer`.
