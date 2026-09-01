@@ -1137,3 +1137,5 @@ here.
   for high-risk review.
 - 2026-09-01 — VS-03 high-risk review requires focused proof correction for VS03-AC01,
   VS03-AC02, and VS03-AC04; VS-03 remains `IN_PROGRESS`.
+- 2026-09-01 — Coordinator verification of the corrected candidate found the frozen
+  VS03-AC05 PostgreSQL node absent; a focused proof correction is required.
