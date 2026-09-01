@@ -509,6 +509,16 @@ def test_postgresql_mixed_definition_order_navigation_and_late_failure_are_atomi
                 ],
                 "relationships": [
                     {
+                        "id": "pressure-shared",
+                        "name": "Pressure and shared metric",
+                        "participants": ["pressure", "shared"],
+                        "conditions": {},
+                        "expected": {
+                            "pressure": {"trend": {"direction": "increasing"}},
+                            "shared": {"variability": {"state": "low"}},
+                        },
+                    },
+                    {
                         "id": "shared-pressure",
                         "name": "Shared metric and pressure",
                         "participants": ["shared", "pressure"],
@@ -517,7 +527,7 @@ def test_postgresql_mixed_definition_order_navigation_and_late_failure_are_atomi
                             "shared": {"trend": {"direction": "increasing"}},
                             "pressure": {"variability": {"state": "low"}},
                         },
-                    }
+                    },
                 ],
             }
         )
@@ -534,6 +544,10 @@ def test_postgresql_mixed_definition_order_navigation_and_late_failure_are_atomi
             alert = await service.get_alert_lens(session, observation_id, "shared")
             assert [lens.id for lens in restored.lenses] == ["shared", "pressure"]
             assert [lens.id for lens in restored.alert_lenses] == ["alert-second", "shared"]
+            assert [relationship.id for relationship in restored.relationships] == [
+                "pressure-shared",
+                "shared-pressure",
+            ]
             assert restored.alert_lenses[0].selector.query == " project = REL-2 "
             assert restored.alert_lenses[0].analysis_objectives == ["Second", "First"]
             assert restored.alert_lenses[0].reference_periods == ["7d", "1d"]

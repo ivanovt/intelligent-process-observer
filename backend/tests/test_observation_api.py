@@ -227,6 +227,27 @@ def test_alert_only_create_and_follow_alert_link_ignores_unknown_input() -> None
     assert "ignored" not in alert.json()
 
 
+def test_unknown_nested_alert_lens_returns_404_without_changing_definition_state() -> None:
+    service = StubObservationService()
+    app.dependency_overrides[get_service] = service_override(service)
+    app.dependency_overrides[get_session] = no_database_session
+    definition_before = service.definition.model_dump()
+    try:
+        response = request(
+            "GET",
+            f"/api/v1/observations/{service.observation_id}/alert-lenses/unknown-alert",
+        )
+    finally:
+        app.dependency_overrides.clear()
+
+    assert response.status_code == 404
+    assert response.json() == {
+        "code": "alert_lens_not_found",
+        "message": "Alert Lens definition was not found",
+    }
+    assert service.definition.model_dump() == definition_before
+
+
 @pytest.mark.parametrize(
     "alert_patch",
     [
