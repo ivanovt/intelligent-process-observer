@@ -34,9 +34,8 @@ tests/test_runtime_persistence_integration.py` and the matching `ruff format --c
 passed.
 
 Local test-service provenance (ephemeral; no URL or credentials recorded): the AC04
-command was run with the developer-provided `IPO_ALERTS_TEST_DATABASE_URL` exported into
-the parameterized `IPO_TEST_DATABASE_URL` command context above. This is the canonical
-rerunnable command; the local service value is intentionally not committed.
+parameterized command was exercised against an existing local test service discovered
+during Coordinator verification. Its URL and credentials are intentionally not committed.
 
 Important files/contracts changed: `CompletedZeroAlertAnalysisResult`,
 `AlertResultProvenance`, and `AlertAnalysisWindow` now project contract-v1.0 names and
