@@ -351,11 +351,16 @@ def test_current_acquisition_failures_map_exact_reason_and_stop() -> None:
             (RuntimeError("thrown error"), "current_query_failed"),
             (TimeoutError("thrown timeout"), "current_query_timeout"),
         )
+
+        def fail_analyzer(records: object) -> object:
+            raise AssertionError("current acquisition failures must not invoke the analyzer")
+
         for response, expected in cases:
             outcome = await AlertAnalysisPipeline(
                 provider=Provider(response),
                 agent=FailOnCallAgent(),
                 result_builder=FailOnUseBuilder(),
+                analyzer=fail_analyzer,
             ).analyze(_context())
             _assert_failed(outcome, expected)
 

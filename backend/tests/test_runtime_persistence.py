@@ -418,7 +418,7 @@ def test_terminal_lifecycle_operations_persist_structured_reasons() -> None:
             reason=StructuredReason(code="optional_analysis_failed"),
         )
     )
-    assert lens_run.reason == {"code": "optional_analysis_failed"}
+    assert lens_run.reason == {"code": "optional_analysis_failed", "component": None}
 
 
 def test_missing_artifact_is_distinct_from_valid_empty_optional_sections() -> None:

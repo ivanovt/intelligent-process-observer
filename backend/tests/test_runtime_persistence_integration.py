@@ -358,7 +358,7 @@ def test_every_mandatory_alert_failure_has_no_result_artifact(
             for lens_run_id, reason in lens_runs:
                 persisted = by_id[lens_run_id]
                 assert persisted.status == "failed" and persisted.analysis_result is None
-                assert persisted.reason == reason.model_dump(mode="json", exclude_none=True)
+                assert persisted.reason == reason.model_dump(mode="json")
 
     asyncio.run(scenario())
 
@@ -378,6 +378,9 @@ def test_current_acquisition_failures_persist_exact_reason_without_artifact(
     class Agent:
         async def complete(self, request: object) -> object:
             raise AssertionError("agent must not run")
+
+    def fail_analyzer(records: object) -> object:
+        raise AssertionError("current acquisition failures must not invoke the analyzer")
 
     async def scenario() -> None:
         repository = RuntimePersistenceRepository()
@@ -416,7 +419,7 @@ def test_current_acquisition_failures_persist_exact_reason_without_artifact(
                     lens_name="Failure",
                 )
                 outcome = await AlertAnalysisPipeline(
-                    provider=Provider(response), agent=Agent()
+                    provider=Provider(response), agent=Agent(), analyzer=fail_analyzer
                 ).analyze(context)
                 await persist_alert_terminal(session, lens_run, outcome, repository)
                 persisted.append((lens_run.id, code))
@@ -427,7 +430,7 @@ def test_current_acquisition_failures_persist_exact_reason_without_artifact(
             assert restored is not None
             by_id = {item.id: item for item in restored.lens_runs}
             for lens_run_id, code in persisted:
-                assert by_id[lens_run_id].reason == {"code": code}
+                assert by_id[lens_run_id].reason == {"code": code, "component": None}
                 assert by_id[lens_run_id].analysis_result is None
 
     asyncio.run(scenario())
@@ -548,7 +551,10 @@ def test_mandatory_analysis_failure_is_terminal_without_artifact(
         _persist_failed_alert_pipeline(session_factory, Provider(), analyzer=fail_analyzer)
     )
     assert analyzer_calls == 1
-    assert status == "failed" and reason == {"code": "deterministic_analysis_failed"}
+    assert status == "failed" and reason == {
+        "code": "deterministic_analysis_failed",
+        "component": None,
+    }
     assert not has_artifact
 
 
