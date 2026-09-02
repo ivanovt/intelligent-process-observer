@@ -37,4 +37,4 @@
 - Known limitations: PostgreSQL proof remains environment-skipped until a PostgreSQL test URL/service is configured.
 - Plan change requested: none.
 - Shared knowledge candidates: none.
-- Commit SHA: PENDING — this handoff is included in the same atomic correction commit; the final SHA is reported to the Coordinator.
+- Commit SHA: `2ab06d5` (`fix: restore alert reference stage order`).
