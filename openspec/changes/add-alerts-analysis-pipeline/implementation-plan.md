@@ -1244,6 +1244,10 @@ here.
   analysis errors must map to `deterministic_analysis_failed`, and the PostgreSQL
   phase-order proof must execute configured reference preparation. Correction remains
   in progress.
+- 2026-09-02 — IR-002 corrective commits `7e565e1` and `fb4c9b1` restore reference
+  deterministic-failure mapping and configured-reference PostgreSQL phase-order proof.
+  Coordinator reran focused pipeline tests (`28 passed`), PostgreSQL (`1 passed`), Ruff,
+  and diff check. Deviation disposition: `N/A`; candidate awaits bounded re-review.
 - 2026-09-01 — VS-03 accepted after corrected proof verification and `SLICE REVIEW PASS`.
   VS-04 and VS-05 are dependency-ready; VS-04 is next in the requested sequence.
 - 2026-09-01 — VS-04 assigned to fresh Slice Implementer `/root/vs04_implementer`.
