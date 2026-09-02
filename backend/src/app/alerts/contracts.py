@@ -433,6 +433,8 @@ class CompletedAlertAnalysisResult(StrictAlertModel):
 
     @model_validator(mode="after")
     def validate_invariants(self) -> CompletedAlertAnalysisResult:
+        if len({alert.id for alert in self.alerts}) != len(self.alerts):
+            raise ValueError("current alert ids must be unique")
         if len(self.alerts) != self.alert_activity.record_count:
             raise ValueError("record_count must equal alerts length")
         effective_occurrences = sum(

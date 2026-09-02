@@ -13,12 +13,14 @@ from app.alerts.contracts import (
     AlertFinding,
     AlertIdentity,
     AlertLensExecutionContext,
+    AlertOccurrenceComparison,
     AlertProviderFailure,
     AlertProviderImportance,
     AlertProviderRecord,
     AlertProviderScope,
     AlertProviderTimeout,
     AlertRecordsAvailable,
+    AlertReferenceComparison,
 )
 from app.alerts.pipeline import AlertAnalysisPipeline
 from app.alerts.result_builder import AlertResultBuilder
@@ -1017,6 +1019,46 @@ def test_representative_builder_failures_map_exact_reason() -> None:
             _context()
         )
         _assert_failed(outcome, "agent_failed")
+
+    asyncio.run(scenario())
+
+
+def test_contextual_builder_comparison_failure_maps_to_artifact_free_terminal_outcome() -> None:
+    class UnconfiguredComparisonBuilder(AlertResultBuilder):
+        def _validate_completed_result(self, result: object, context: object) -> object:
+            current = result.alert_activity.occurrence_count
+            comparison = AlertReferenceComparison(
+                offset="1d",
+                occurrence_comparison=AlertOccurrenceComparison(
+                    current=current,
+                    reference=0,
+                    delta=current,
+                    direction="increased" if current else "unchanged",
+                ),
+            )
+            return super()._validate_completed_result(
+                result.model_copy(update={"comparisons": (comparison,)}), context
+            )
+
+    async def scenario() -> None:
+        outcome = await AlertAnalysisPipeline(
+            provider=RecordsProvider(
+                (
+                    _record(
+                        "valid",
+                        started=datetime(2026, 9, 1, tzinfo=UTC),
+                        ended=None,
+                        occurrences=1,
+                    ),
+                )
+            ),
+            agent=CapturingAgent(),
+            result_builder=UnconfiguredComparisonBuilder(),
+        ).analyze(_context())
+
+        _assert_failed(outcome, "result_validation_failed")
+        assert outcome.reason.component == "alert_result_builder"
+        assert outcome.artifact is None
 
     asyncio.run(scenario())
 

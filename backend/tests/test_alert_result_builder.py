@@ -50,7 +50,7 @@ def _assembled(
     omit_duration: bool = False,
     omit_importance: bool = False,
 ):
-    context = _context()
+    context = _context().model_copy(update={"reference_periods": ("1d",)})
     records = normalize_current(
         type(
             "Response",
@@ -74,7 +74,7 @@ def _assembled(
         context.analysis_window.to,
     )
     evidence = analyze_current(records[:1])
-    reference = compare_occurrences("1d / Ж", evidence, evidence)
+    reference = compare_occurrences("1d", evidence, evidence)
     return (
         context,
         records,
@@ -107,7 +107,6 @@ def test_all_canonical_evidence_target_forms_resolve() -> None:
     alert_id = encode_dynamic_segment("id / % Ж")
     importance_type = encode_dynamic_segment("type / Ж")
     importance_value = encode_dynamic_segment("value % space")
-    offset = encode_dynamic_segment("1d / Ж")
     refs = (
         f"alert://current/{alert_id}",
         "alert://aggregate/alert_activity/record_count",
@@ -119,7 +118,7 @@ def test_all_canonical_evidence_target_forms_resolve() -> None:
         "alert://aggregate/duration_statistics/max_seconds",
         "alert://aggregate/duration_statistics/average_seconds",
         f"alert://aggregate/provider_importance/{importance_type}/{importance_value}",
-        f"alert://comparison/{offset}",
+        "alert://comparison/1d",
     )
     result = _build(refs)
     assert all(ref.isascii() for ref in refs)
@@ -175,7 +174,7 @@ def test_builder_rejects_unavailable_unresolved_transient_or_ambiguous_targets()
         ("alert://current/missing", {}),
         ("alert://comparison/missing", {}),
         ("alert://aggregate/provider_importance/missing/value", {}),
-        ("alert://comparison/1d%20%2F%20%D0%96", {"duplicate_comparison": True}),
+        ("alert://comparison/1d", {"duplicate_comparison": True}),
         ("alert://current/id%20%2F%20%25%20%D0%96", {"duplicate_current": True}),
         ("alert://optional/recurrence", {}),
         ("alert://aggregate/duration_statistics/min_seconds", {"omit_duration": True}),
@@ -186,6 +185,72 @@ def test_builder_rejects_unavailable_unresolved_transient_or_ambiguous_targets()
     ):
         with pytest.raises(EvidenceReferenceError):
             _build((reference,), **kwargs)
+
+
+def test_builder_rejects_duplicate_current_ids_without_findings() -> None:
+    context, records, _ = _assembled()
+    duplicate_records = (records[0], records[0])
+    evidence = analyze_current(duplicate_records)
+
+    with pytest.raises(ValueError, match="current alert ids must be unique"):
+        AlertResultBuilder().completed(
+            context,
+            duplicate_records,
+            evidence,
+            AlertAgentCompletion(findings=(), overall_importance="high"),
+        )
+
+
+def test_builder_rejects_comparisons_without_configured_references() -> None:
+    _, records, evidence = _assembled()
+    comparison = compare_occurrences("1d", evidence, evidence)
+
+    with pytest.raises(ValueError, match="configured reference order"):
+        AlertResultBuilder().completed(
+            _context(),
+            records,
+            evidence.model_copy(update={"comparisons": (comparison,)}),
+            AlertAgentCompletion(findings=(), overall_importance="high"),
+        )
+
+
+def test_builder_rejects_unconfigured_duplicate_or_out_of_order_comparisons() -> None:
+    context, records, evidence = _assembled()
+    context = context.model_copy(update={"reference_periods": ("1d", "7d")})
+    one_day = compare_occurrences("1d", evidence, evidence)
+    seven_days = compare_occurrences("7d", evidence, evidence)
+    unconfigured = compare_occurrences("14d", evidence, evidence)
+
+    for comparisons in (
+        (unconfigured,),
+        (one_day, one_day),
+        (seven_days, one_day),
+    ):
+        with pytest.raises(ValueError, match="configured reference order"):
+            AlertResultBuilder().completed(
+                context,
+                records,
+                evidence.model_copy(update={"comparisons": comparisons}),
+                AlertAgentCompletion(findings=(), overall_importance="high"),
+            )
+
+
+def test_builder_accepts_ordered_configured_comparison_subset_when_refs_unavailable() -> None:
+    context, records, evidence = _assembled()
+    context = context.model_copy(update={"reference_periods": ("1d", "7d", "14d")})
+    comparisons = (
+        compare_occurrences("1d", evidence, evidence),
+        compare_occurrences("14d", evidence, evidence),
+    )
+
+    result, _ = AlertResultBuilder().completed(
+        context,
+        records,
+        evidence.model_copy(update={"comparisons": comparisons}),
+        AlertAgentCompletion(findings=(), overall_importance="high"),
+    )
+
+    assert result.comparisons == comparisons
 
 
 def _payload(result: object) -> dict[str, object]:

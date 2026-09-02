@@ -225,8 +225,8 @@ class AlertResultBuilder:
             raise ValueError("result provenance must match provider scope")
         offsets = tuple(comparison.offset for comparison in result.comparisons)
         configured = context.reference_periods
-        if len(offsets) != len(set(offsets)) or (
-            configured and offsets != tuple(offset for offset in configured if offset in offsets)
+        if len(offsets) != len(set(offsets)) or offsets != tuple(
+            offset for offset in configured if offset in offsets
         ):
             raise ValueError("comparisons must be unique and in configured reference order")
 
