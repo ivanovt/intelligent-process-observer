@@ -1257,6 +1257,12 @@ here.
   `0cf0da9`, then restored to `main` versions on this feature branch by `3d83489`.
   The Alert feature diff no longer contains those paths. No archive, push, PR, or merge
   was performed; a fresh whole-change review remains required.
+- 2026-09-02 — Fresh whole-change review confirms IR-003 is resolved and the governance
+  paths are absent from the Alert feature diff, but reports unresolved MEDIUM IR-004 and
+  IR-005: the strict builder does not unconditionally recheck duplicate final current
+  IDs when findings are empty, and permits comparisons when no reference offsets are
+  configured. Final integration/archive readiness is blocked pending human triage and
+  targeted correction; no archive, push, PR, or merge was performed.
 - 2026-09-01 — VS-03 accepted after corrected proof verification and `SLICE REVIEW PASS`.
   VS-04 and VS-05 are dependency-ready; VS-04 is next in the requested sequence.
 - 2026-09-01 — VS-04 assigned to fresh Slice Implementer `/root/vs04_implementer`.
