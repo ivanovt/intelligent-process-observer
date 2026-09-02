@@ -1,13 +1,11 @@
 # Implementation Plan — add-jira-alert-provider
 
-**Status:** DRAFT — AWAITING INDEPENDENT SLICE-PLAN REVIEW
+**Status:** HUMAN_APPROVED — PRE-EXECUTION READINESS IN PROGRESS
 **Artifact type:** Non-normative execution plan
 **Approved OpenSpec change:** `add-jira-alert-provider`
 **Implementation branch:** `feature/add-jira-alert-provider`
 **Planning-workflow baseline:** six-slice acceptance/change-map revision 2 (slice graph unchanged)
-**Planning-baseline SHA:** `PENDING` — Coordinator-owned mutable execution metadata;
-set only by the pre-execution readiness protocol after this plan is independently
-reviewed and human-approved
+**Planning-baseline SHA:** `3e988b0380d1b7cf51127a78e2dca386266c5dbb`
 
 ## Approval state
 
@@ -979,8 +977,12 @@ acceptance obligations, proof-level changes, or redesign decisions here.
   untracked. After this plan is independently reviewed and human-approved, the
   Coordinator must execute the frozen pre-execution readiness protocol above; no slice
   may start from this current state.
-- Planning-baseline SHA: `PENDING`.
-- Unrelated roadmap preservation location and hashes: `PENDING`.
+- Planning-baseline SHA: `3e988b0380d1b7cf51127a78e2dca386266c5dbb`.
+- Unrelated roadmap preservation: local branch `docs/mvp-implementation-roadmap`, commit
+  `01a19597db9c933e5b16324f3f1f7d84cf18725c`; `MVP_IMPLEMENTATION_ROADMAP.md`
+  SHA-256 `2f4778799ccc633d0e9c3c7ba7a14c8f3afc7a2b7ca57bfdc0055e71c41dc401`.
+  The `Zone.Identifier` sidecar was absent when readiness execution resumed and is not
+  present in either commit or the feature worktree.
 - Planning-baseline metadata commit and empty-porcelain/integrity evidence: `PENDING`.
 - Default execution order is VS-01 through VS-06 with no concurrent slice dispatch.
 - VS-01 through VS-05 are high-risk because they implement credential/trusted-target,
