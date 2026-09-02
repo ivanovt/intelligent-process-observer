@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import base64
 import math
+from datetime import datetime
 
 import httpx
 
@@ -11,9 +12,11 @@ from app.alerts.contracts import (
     AlertAnalysisWindow,
     AlertProviderFailure,
     AlertProviderOutcome,
+    AlertProviderRecord,
     AlertProviderScope,
     AlertRecordsAvailable,
 )
+from app.alerts.evidence_refs import encode_dynamic_segment
 from app.infrastructure.jira.configuration import JiraAlertProviderSettings
 
 _FIELDS = ["summary", "created", "resolutiondate", "status", "priority"]
@@ -34,7 +37,7 @@ class HttpxJiraAlertProvider:
     async def acquire(
         self, scope: AlertProviderScope, window: AlertAnalysisWindow
     ) -> AlertProviderOutcome:
-        """Acquire one terminal empty Jira page for the frozen provider scope and window."""
+        """Acquire one terminal Jira page for the frozen provider scope and window."""
         if scope.source != "jira_track_and_release":
             return AlertProviderFailure(diagnostic="source_not_supported")
         request_body = {
@@ -66,9 +69,10 @@ class HttpxJiraAlertProvider:
         issues = payload.get("issues")
         if not isinstance(issues, list):
             return AlertProviderFailure(diagnostic="response_invalid")
-        if issues:
-            return AlertProviderFailure(diagnostic="response_not_supported")
-        return AlertRecordsAvailable(source=scope.source)
+        return AlertRecordsAvailable(
+            source=scope.source,
+            records=tuple(self._map_issue(issue) for issue in issues),
+        )
 
     def _basic_authorization(self) -> str:
         credentials = (
@@ -79,6 +83,58 @@ class HttpxJiraAlertProvider:
 
     @staticmethod
     def _jql(selector: str, window: AlertAnalysisWindow) -> str:
+        """Build the Jira candidate predicate without changing the opaque selector."""
         start = math.floor(window.from_.timestamp() * 1000)
         end = math.ceil(window.to.timestamp() * 1000)
         return f"({selector}) AND created < {end} AND (resolved IS EMPTY OR resolved > {start})"
+
+    def _map_issue(self, issue: object) -> AlertProviderRecord | dict[str, object]:
+        """Project one Jira issue into a record or a minimal normalization input."""
+        if not isinstance(issue, dict):
+            return {}
+        fields = issue.get("fields")
+        if not isinstance(fields, dict):
+            return self._minimal_record(issue, {})
+        record = self._minimal_record(issue, fields)
+        for field in ("started_at", "ended_at"):
+            if isinstance(record.get(field), str):
+                try:
+                    record[field] = datetime.fromisoformat(record[field].replace("Z", "+00:00"))
+                except ValueError:
+                    pass
+        key = issue.get("key")
+        if isinstance(key, str) and key:
+            record["source_ref"] = (
+                f"{self._settings.canonical_origin}/browse/{encode_dynamic_segment(key)}"
+            )
+        priority = fields.get("priority")
+        if (
+            isinstance(priority, dict)
+            and isinstance(priority.get("name"), str)
+            and priority["name"]
+        ):
+            record["provider_importance"] = {"type": "priority", "value": priority["name"]}
+        try:
+            return AlertProviderRecord.model_validate(record)
+        except ValueError:
+            return record
+
+    @staticmethod
+    def _minimal_record(
+        issue: dict[object, object], fields: dict[object, object]
+    ) -> dict[str, object]:
+        """Keep only canonical-mappable values from one malformed Jira issue."""
+        record: dict[str, object] = {}
+        if "key" in issue:
+            record["id"] = issue["key"]
+        for jira_field, canonical_field in (
+            ("summary", "title"),
+            ("created", "started_at"),
+            ("resolutiondate", "ended_at"),
+        ):
+            if jira_field in fields:
+                record[canonical_field] = fields[jira_field]
+        status = fields.get("status")
+        if isinstance(status, dict) and "name" in status:
+            record["source_status"] = status["name"]
+        return record

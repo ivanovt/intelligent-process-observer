@@ -7,11 +7,14 @@ from uuid import uuid4
 import httpx
 
 from app.alerts.contracts import (
+    AlertAgentCompletion,
     AlertAnalysisWindow,
+    AlertFinding,
     AlertIdentity,
     AlertLensExecutionContext,
     AlertProviderScope,
 )
+from app.alerts.normalization import normalize_current
 from app.alerts.pipeline import AlertAnalysisPipeline
 from app.infrastructure.jira.adapter import HttpxJiraAlertProvider
 from app.infrastructure.jira.configuration import JiraAlertProviderSettings
@@ -106,3 +109,252 @@ def test_composed_provider_completes_existing_zero_record_pipeline() -> None:
     )
     assert outcome.status.value == "completed"
     assert outcome.artifact.payload["alert_activity"]["record_count"] == 0
+
+
+def _issue(
+    key: str = "IPO-1",
+    *,
+    created: str = "2026-08-31T23:00:00.000+00:00",
+    resolved: str | None = "2026-09-01T00:30:00.000+00:00",
+    status: str = "In Progress",
+    priority: str | None = "Highest",
+) -> dict[str, object]:
+    fields: dict[str, object] = {
+        "summary": "Lifecycle issue",
+        "created": created,
+        "resolutiondate": resolved,
+        "status": {"name": status},
+    }
+    if priority is not None:
+        fields["priority"] = {"name": priority}
+    return {"key": key, "fields": fields}
+
+
+def test_jql_bounds_form_a_candidate_superset_and_normalization_owns_exact_overlap() -> None:
+    requests: list[httpx.Request] = []
+    window = AlertAnalysisWindow(
+        **{
+            "from": datetime(2026, 9, 1, 0, 0, 0, 500, tzinfo=UTC),
+            "to": datetime(2026, 9, 1, 1, 0, 0, 500, tzinfo=UTC),
+        }
+    )
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        requests.append(request)
+        return httpx.Response(
+            200,
+            json={
+                "isLast": True,
+                "issues": [
+                    _issue("candidate-only", resolved="2026-09-01T00:00:00.000+00:00"),
+                    _issue("overlap", resolved="2026-09-01T00:00:00.001+00:00"),
+                ],
+            },
+        )
+
+    outcome = asyncio.run(_provider(handler).acquire(_scope(), window))
+    assert json.loads(requests[0].content)["jql"] == (
+        "(project = IPO) AND created < 1788224400001 "
+        "AND (resolved IS EMPTY OR resolved > 1788220800000)"
+    )
+    assert "status" not in json.loads(requests[0].content)["jql"].lower()
+    assert [record.id for record in normalize_current(outcome, window, window.to)] == ["overlap"]
+
+
+def test_issue_mapping_preserves_approved_native_lifecycle_fields() -> None:
+    def handler(_: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, json={"isLast": True, "issues": [_issue()]})
+
+    outcome = asyncio.run(_provider(handler).acquire(_scope(), _window()))
+    record = outcome.records[0]
+    assert record.id == "IPO-1"
+    assert record.title == "Lifecycle issue"
+    assert record.started_at == datetime(2026, 8, 31, 23, tzinfo=UTC)
+    assert record.ended_at == datetime(2026, 9, 1, 0, 30, tzinfo=UTC)
+    assert record.source_status == "In Progress"
+    assert record.provider_importance.model_dump() == {"type": "priority", "value": "Highest"}
+    assert record.description is None and record.occurrence_count is None
+
+
+def test_malformed_issues_remain_minimal_record_level_normalization_inputs() -> None:
+    def handler(_: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            200,
+            json={
+                "isLast": True,
+                "issues": [
+                    _issue(),
+                    "not-an-issue",
+                    {"key": "bad", "fields": "not-an-object", "large": "x" * 1000},
+                    {"key": None, "fields": {"summary": "bad", "created": "not-a-date"}},
+                ],
+            },
+        )
+
+    outcome = asyncio.run(_provider(handler).acquire(_scope(), _window()))
+    assert outcome.records[1:] == (
+        {},
+        {"id": "bad"},
+        {"id": None, "title": "bad", "started_at": "not-a-date"},
+    )
+    assert [record.id for record in normalize_current(outcome, _window(), _window().to)] == [
+        "IPO-1"
+    ]
+
+
+def test_source_ref_is_canonical_and_independent_of_input_path() -> None:
+    def handler(_: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, json={"isLast": True, "issues": [_issue("IPO / Ю")]})
+
+    root = HttpxJiraAlertProvider(
+        JiraAlertProviderSettings(
+            site_url="https://foo.atlassian.net", email="bot@example.invalid", api_token="token"
+        ),
+        transport=httpx.MockTransport(handler),
+    )
+    for provider in (root, _provider(handler)):
+        outcome = asyncio.run(provider.acquire(_scope(), _window()))
+        assert (
+            outcome.records[0].source_ref == "https://foo.atlassian.net/browse/IPO%20%2F%20%D0%AE"
+        )
+
+
+class _CapturingAgent:
+    def __init__(self) -> None:
+        self.requests: list[object] = []
+
+    async def complete(self, request: object) -> AlertAgentCompletion:
+        self.requests.append(request)
+        return AlertAgentCompletion(
+            findings=(
+                AlertFinding(
+                    id="finding",
+                    statement="Observed canonical record",
+                    evidence_refs=("alert://aggregate/alert_activity/record_count",),
+                ),
+            ),
+            overall_importance="low",
+        )
+
+
+def _context(*, references: tuple[str, ...] = ()) -> AlertLensExecutionContext:
+    return AlertLensExecutionContext(
+        identity=AlertIdentity(
+            observation_id=uuid4(), observation_run_id=uuid4(), lens_id="jira", lens_run_id=uuid4()
+        ),
+        provider_scope=_scope(),
+        analysis_window=_window(),
+        lens_name="Jira",
+        reference_periods=references,
+    )
+
+
+def test_real_provider_preserves_latest_reference_lifecycle_behind_existing_port() -> None:
+    requests: list[httpx.Request] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        requests.append(request)
+        if len(requests) == 1:
+            return httpx.Response(200, json={"isLast": True, "issues": [_issue("current")]})
+        return httpx.Response(
+            200,
+            json={
+                "isLast": True,
+                "issues": [_issue("reference", resolved="2026-09-01T00:30:00.000+00:00")],
+            },
+        )
+
+    agent = _CapturingAgent()
+    outcome = asyncio.run(
+        AlertAnalysisPipeline(provider=_provider(handler), agent=agent).analyze(
+            _context(references=("1h",))
+        )
+    )
+    assert outcome.status.value == "completed"
+    assert len(requests) == 2
+    bodies = [json.loads(request.content) for request in requests]
+    assert all(body["fields"] == bodies[0]["fields"] for body in bodies)
+    assert bodies[0]["jql"] != bodies[1]["jql"]
+    assert outcome.artifact.payload["comparisons"] == [
+        {
+            "offset": "1h",
+            "occurrence_comparison": {
+                "current": 1,
+                "reference": 1,
+                "delta": 0,
+                "direction": "unchanged",
+            },
+        }
+    ]
+    assert [record.id for record in agent.requests[0].current_records] == ["current"]
+
+
+def test_jira_query_error_uses_existing_current_and_reference_semantics() -> None:
+    requests: list[httpx.Request] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        requests.append(request)
+        return httpx.Response(400, json={"errorMessages": ["ORDER BY is invalid here"]})
+
+    failed = asyncio.run(
+        AlertAnalysisPipeline(provider=_provider(handler), agent=_CapturingAgent()).analyze(
+            _context().model_copy(
+                update={
+                    "provider_scope": AlertProviderScope(
+                        source="jira_track_and_release", query="project = IPO ORDER BY created DESC"
+                    )
+                }
+            )
+        )
+    )
+    assert failed.status.value == "failed" and failed.reason.code == "current_query_failed"
+    assert json.loads(requests[0].content)["jql"].startswith(
+        "(project = IPO ORDER BY created DESC)"
+    )
+
+    calls = 0
+
+    def mixed_handler(_: httpx.Request) -> httpx.Response:
+        nonlocal calls
+        calls += 1
+        return httpx.Response(
+            200 if calls == 1 else 400,
+            json={"isLast": True, "issues": [_issue()]}
+            if calls == 1
+            else {"errorMessages": ["bad"]},
+        )
+
+    partial = asyncio.run(
+        AlertAnalysisPipeline(provider=_provider(mixed_handler), agent=_CapturingAgent()).analyze(
+            _context(references=("1h",))
+        )
+    )
+    assert partial.status.value == "partial" and partial.reason.code == "reference_unavailable"
+
+
+def test_successful_stale_or_empty_view_is_not_reconciled_or_failed() -> None:
+    requests: list[httpx.Request] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        requests.append(request)
+        return httpx.Response(200, json={"isLast": True, "issues": []})
+
+    outcome = asyncio.run(_provider(handler).acquire(_scope(), _window()))
+    assert outcome.records == ()
+    assert "reconcileIssues" not in json.loads(requests[0].content)
+
+
+def test_jira_transport_stays_outside_agent_and_alert_result() -> None:
+    def handler(_: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            200, json={"isLast": True, "issues": [_issue()], "raw": {"secret": "no"}}
+        )
+
+    agent = _CapturingAgent()
+    outcome = asyncio.run(
+        AlertAnalysisPipeline(provider=_provider(handler), agent=agent).analyze(_context())
+    )
+    assert outcome.status.value == "completed"
+    assert "raw" not in str(agent.requests[0])
+    assert "raw" not in str(outcome.artifact.payload)
+    assert "token" not in str(agent.requests[0]) + str(outcome.artifact.payload)
