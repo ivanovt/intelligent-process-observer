@@ -262,7 +262,7 @@ for parallel execution.
 
 | Slice | Goal | Depends on | Risk | Status | Commit | Handoff |
 |---|---|---|---|---|---|---|
-| VS-01 | Compose a credential-safe Jira provider and complete an empty single-page walking skeleton | none | high-risk | READY | — | `implementation/VS-01-handoff.md` |
+| VS-01 | Compose a credential-safe Jira provider and complete an empty single-page walking skeleton | none | high-risk | IN_PROGRESS | — | `implementation/VS-01-handoff.md` |
 | VS-02 | Map Jira lifecycle records through exact current/reference pipeline semantics | VS-01 | high-risk | PLANNED | — | `implementation/VS-02-handoff.md` |
 | VS-03 | Exhaust cursor pages and fail closed at the approved record cap | VS-02 | high-risk | PLANNED | — | `implementation/VS-03-handoff.md` |
 | VS-04 | Enforce cancellable hard attempt and acquisition deadlines | VS-03 | high-risk | PLANNED | — | `implementation/VS-04-handoff.md` |
@@ -997,3 +997,6 @@ acceptance obligations, proof-level changes, or redesign decisions here.
 - Every implementer uses a fresh context, reads the exact context pack and accepted
   predecessor handoff, runs focused verification/self-review, creates one atomic commit
   by default, and writes the repository-standard handoff.
+- VS-01 assignment (2026-09-02): readiness gate accepted by the Coordinator against
+  planning baseline `3e988b0380d1b7cf51127a78e2dca386266c5dbb`; a fresh Slice Implementer
+  is active. No implementation commit is accepted yet.
