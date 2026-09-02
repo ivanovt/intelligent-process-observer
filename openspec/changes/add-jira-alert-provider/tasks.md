@@ -30,7 +30,7 @@
   epoch-millisecond candidate bounds, and immutable scope/window values; strip accepted
   `/jira` from REST targeting, keep exact overlap filtering in existing normalization,
   and omit `reconcileIssues`.
-- [ ] 2.2 Implement strict response decoding and Jira issue-to-provider-record mapping:
+- [x] 2.2 Implement strict response decoding and Jira issue-to-provider-record mapping:
   key, summary, created, resolution date, source status, native priority, source
   reference, latest-known reference lifecycle, intentional description/occurrence
   omission, and minimal malformed individual records for existing `invalid_records`
@@ -57,7 +57,7 @@
   current/reference bounds, sub-millisecond candidate-superset behavior, no status
   predicate, exact post-map overlap filtering, omitted `reconcileIssues`, and
   unsupported selector query-error mapping.
-- [ ] 3.2 Add adapter tests for all mapped field combinations, malformed record and
+- [x] 3.2 Add adapter tests for all mapped field combinations, malformed record and
   missing-key preservation through `invalid_records`, usable/malformed mixed pages,
   native priority/status preservation, source-reference safety, latest-known resolved
   reference records, and absence of full Jira payload leakage.
