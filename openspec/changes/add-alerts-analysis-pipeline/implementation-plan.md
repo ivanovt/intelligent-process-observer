@@ -1226,11 +1226,10 @@ here.
 - 2026-09-01 — IR-001 accepted after high-risk review and bounded findings verification:
   `RESOLVED`, no regressions. Accepted correction commits: `a81ff7d`, `185795d`.
   The change awaits fresh whole-change implementation review; it remains unarchived.
-- 2026-09-01 — Fresh whole-change review confirms IR-001 is resolved but reports
-  unresolved MEDIUM IR-002: repository-wide workflow skill, project-knowledge, and
-  OpenSpec-template modifications remain outside the approved Alert-pipeline scope.
-  Archive readiness is blocked pending human triage to split, remove, or explicitly
-  approve that scope; no archive, push, PR, or merge was performed.
+- 2026-09-01 — Fresh whole-change review confirmed IR-001 is resolved but reported
+  repository-wide workflow skill, project-knowledge, and OpenSpec-template modifications
+  outside the approved Alert-pipeline scope. This scope item was superseded by the
+  2026-09-02 IR-003 extraction record below.
 - 2026-09-02 — Post-review corrective assignment for IR-002:
   `/root/ir002_corrector` will restore the approved reference-before-deterministic-
   analysis stage order and phase-order proofs while preserving existing supplementary
@@ -1252,11 +1251,12 @@ here.
   `RESOLVED`, no regressions. Accepted correction commits: `2ab06d5`, `9f5172b`,
   `7e565e1`, `fb4c9b1`. The change awaits a fresh whole-change implementation review;
   it remains unarchived.
-- 2026-09-02 — Fresh whole-change review confirms IR-001 and IR-002 are resolved but
-  reports unresolved MEDIUM IR-003: repository-wide workflow skills, project knowledge,
-  and generic OpenSpec templates in the feature diff remain outside the approved Alert
-  pipeline scope. Archive readiness is blocked pending human triage to split, remove, or
-  explicitly approve that scope; no archive, push, PR, or merge was performed.
+- 2026-09-02 — IR-003 resolved without discarding reusable governance intent. The eight
+  out-of-scope paths introduced on this feature branch by `f537604` and `5721d17` were
+  preserved separately on local branch `chore/extract-alert-workflow-governance` in
+  `0cf0da9`, then restored to `main` versions on this feature branch by `3d83489`.
+  The Alert feature diff no longer contains those paths. No archive, push, PR, or merge
+  was performed; a fresh whole-change review remains required.
 - 2026-09-01 — VS-03 accepted after corrected proof verification and `SLICE REVIEW PASS`.
   VS-04 and VS-05 are dependency-ready; VS-04 is next in the requested sequence.
 - 2026-09-01 — VS-04 assigned to fresh Slice Implementer `/root/vs04_implementer`.
