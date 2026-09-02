@@ -1268,6 +1268,10 @@ here.
   configured-comparison correlation unconditional builder invariants, with the specified
   direct-builder and terminal mapping proofs. This is a user-authorized local correction;
   no frozen plan structure or normative behavior is changed.
+- 2026-09-02 — IR-004/IR-005 correction commits `68990e6` and `36576c7`; Coordinator
+  independently reran the full focused Alert suite (`58 passed`), Ruff, formatting, and
+  diff check. Change-map deviation disposition: `N/A`; candidate awaits independent
+  high-risk correction review.
 - 2026-09-01 — VS-03 accepted after corrected proof verification and `SLICE REVIEW PASS`.
   VS-04 and VS-05 are dependency-ready; VS-04 is next in the requested sequence.
 - 2026-09-01 — VS-04 assigned to fresh Slice Implementer `/root/vs04_implementer`.
