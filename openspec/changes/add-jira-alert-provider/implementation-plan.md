@@ -265,7 +265,7 @@ for parallel execution.
 | VS-01 | Compose a credential-safe Jira provider and complete an empty single-page walking skeleton | none | high-risk | COMPLETE | `4def7ae5757adfcb8a58b7e91e0b4262d1cd54f9`; correction `fba99306837f42066277d52b54277cb416f32a38` | `implementation/VS-01-handoff.md` |
 | VS-02 | Map Jira lifecycle records through exact current/reference pipeline semantics | VS-01 | high-risk | COMPLETE | `bc2f6eadc68fd06118cd7b9cedf2639df910d175`; correction `d8cd598e6246a2314fa4611a3f18c16e734dcefb` | `implementation/VS-02-handoff.md` |
 | VS-03 | Exhaust cursor pages and fail closed at the approved record cap | VS-02 | high-risk | COMPLETE | `e79ac3dbe97817e0e259d3f42930222814109777`; correction `897dd862ee40af4b5843ce32691efd3867bf8e0d` | `implementation/VS-03-handoff.md` |
-| VS-04 | Enforce cancellable hard attempt and acquisition deadlines | VS-03 | high-risk | IN_PROGRESS | — | `implementation/VS-04-handoff.md` |
+| VS-04 | Enforce cancellable hard attempt and acquisition deadlines | VS-03 | high-risk | COMPLETE | `558c1d21fb28f78e5938c3e465101b0fd3b832f1` | `implementation/VS-04-handoff.md` |
 | VS-05 | Apply exact bounded retry and failure classification semantics | VS-04 | high-risk | PLANNED | — | `implementation/VS-05-handoff.md` |
 | VS-06 | Complete operator documentation and whole-change conformance | VS-05 | normal | PLANNED | — | `implementation/VS-06-handoff.md` |
 
@@ -1021,3 +1021,10 @@ acceptance obligations, proof-level changes, or redesign decisions here.
   direct regression. VS03-AC01 through VS03-AC04 passed. No candidate shared knowledge.
 - VS-04 assignment (2026-09-02): VS-03 prerequisite is accepted; a fresh Slice
   Implementer is active. No implementation commit is accepted yet.
+- VS-04 accepted (2026-09-02): implementation `558c1d21fb28f78e5938c3e465101b0fd3b832f1`;
+  focused independent verification passed (53 tests, Ruff, format, diff check), and
+  independent high-risk review returned `SLICE REVIEW PASS`. VS04-AC01 through VS04-AC05
+  passed. No candidate shared knowledge.
+- Execution stop (2026-09-02): user-directed execution boundary reached after accepted
+  VS-04. VS-05 and VS-06 remain `PLANNED`; no worker is active. Await explicit user
+  confirmation before dispatching VS-05.

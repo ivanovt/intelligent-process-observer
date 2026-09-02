@@ -40,7 +40,7 @@
 - [x] 2.3 Implement cursor-token pagination with 100-item pages, a 1,000-record
   fail-closed cap, required boolean `isLast`, new non-empty token requirements for
   non-terminal pages, terminal-envelope consistency, and repeated-token detection.
-- [ ] 2.4 Implement provider-owned hard monotonic deadlines of 15 seconds for the
+- [x] 2.4 Implement provider-owned hard monotonic deadlines of 15 seconds for the
   complete HTTP attempt/body read and 60 seconds for the complete acquire across pages,
   attempts, reads, and waits; ensure in-flight operations are cancellable and cleaned
   up, retain HTTPX phase timeouts only as defense in depth, and preserve typed timeout
