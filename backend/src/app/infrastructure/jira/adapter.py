@@ -37,7 +37,7 @@ class HttpxJiraAlertProvider:
     async def acquire(
         self, scope: AlertProviderScope, window: AlertAnalysisWindow
     ) -> AlertProviderOutcome:
-        """Acquire one terminal Jira page for the frozen provider scope and window."""
+        """Acquire all bounded Jira pages for the frozen provider scope and window."""
         if scope.source != "jira_track_and_release":
             return AlertProviderFailure(diagnostic="source_not_supported")
         request_body = {
@@ -45,34 +45,63 @@ class HttpxJiraAlertProvider:
             "fields": _FIELDS,
             "maxResults": 100,
         }
+        records: list[AlertProviderRecord | dict[str, object]] = []
+        seen_tokens: set[str] = set()
+        next_page_token: str | None = None
         try:
             async with httpx.AsyncClient(
                 transport=self._transport, follow_redirects=False
             ) as client:
-                response = await client.post(
-                    f"{self._settings.canonical_origin}/rest/api/2/search/jql",
-                    json=request_body,
-                    headers={"Authorization": self._basic_authorization()},
-                )
+                while True:
+                    if next_page_token is None:
+                        page_request = request_body
+                    else:
+                        page_request = {**request_body, "nextPageToken": next_page_token}
+                    response = await client.post(
+                        f"{self._settings.canonical_origin}/rest/api/2/search/jql",
+                        json=page_request,
+                        headers={"Authorization": self._basic_authorization()},
+                    )
+                    if response.status_code < 200 or response.status_code >= 300:
+                        return AlertProviderFailure(
+                            diagnostic=f"http_status_{response.status_code}"
+                        )
+                    try:
+                        payload = response.json()
+                    except ValueError:
+                        return AlertProviderFailure(diagnostic="response_invalid")
+                    page = self._validated_page(payload, seen_tokens)
+                    if page is None:
+                        return AlertProviderFailure(diagnostic="response_invalid")
+                    issues, is_last, next_page_token = page
+                    if len(records) + len(issues) > 1000:
+                        return AlertProviderFailure(diagnostic="response_invalid")
+                    records.extend(self._map_issue(issue) for issue in issues)
+                    if len(records) == 1000 and not is_last:
+                        return AlertProviderFailure(diagnostic="response_invalid")
+                    if is_last:
+                        return AlertRecordsAvailable(source=scope.source, records=tuple(records))
         except httpx.RequestError:
             return AlertProviderFailure(diagnostic="transport_error")
-        if response.status_code < 200 or response.status_code >= 300:
-            return AlertProviderFailure(diagnostic=f"http_status_{response.status_code}")
-        try:
-            payload = response.json()
-        except ValueError:
-            return AlertProviderFailure(diagnostic="response_invalid")
-        if not isinstance(payload, dict) or payload.get("isLast") is not True:
-            return AlertProviderFailure(diagnostic="response_invalid")
-        if payload.get("nextPageToken"):
-            return AlertProviderFailure(diagnostic="response_invalid")
+
+    @staticmethod
+    def _validated_page(
+        payload: object, seen_tokens: set[str]
+    ) -> tuple[list[object], bool, str | None] | None:
+        """Validate one Jira cursor envelope before retaining any of its issues."""
+        if not isinstance(payload, dict):
+            return None
+        is_last = payload.get("isLast")
         issues = payload.get("issues")
-        if not isinstance(issues, list):
-            return AlertProviderFailure(diagnostic="response_invalid")
-        return AlertRecordsAvailable(
-            source=scope.source,
-            records=tuple(self._map_issue(issue) for issue in issues),
-        )
+        if not isinstance(is_last, bool) or not isinstance(issues, list):
+            return None
+        token = payload.get("nextPageToken")
+        if is_last:
+            return (issues, True, None) if not token else None
+        if not isinstance(token, str) or not token or token in seen_tokens:
+            return None
+        seen_tokens.add(token)
+        return issues, False, token
 
     def _basic_authorization(self) -> str:
         credentials = (

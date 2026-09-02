@@ -397,3 +397,135 @@ def test_jira_transport_stays_outside_agent_and_alert_result() -> None:
     assert "raw" not in str(agent.requests[0])
     assert "raw" not in str(outcome.artifact.payload)
     assert "token" not in str(agent.requests[0]) + str(outcome.artifact.payload)
+
+
+def test_cursor_pagination_exhausts_all_pages_with_stable_request_scope() -> None:
+    requests: list[dict[str, object]] = []
+    pages = [
+        {"isLast": False, "nextPageToken": "first", "issues": [_issue("one")]},
+        {"isLast": False, "nextPageToken": "second", "issues": [_issue("two")]},
+        {"isLast": True, "issues": [_issue("three")]},
+    ]
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        requests.append(json.loads(request.content))
+        return httpx.Response(200, json=pages[len(requests) - 1])
+
+    outcome = asyncio.run(_provider(handler).acquire(_scope(), _window()))
+    assert [record.id for record in outcome.records] == ["one", "two", "three"]
+    assert [body.get("nextPageToken") for body in requests] == [None, "first", "second"]
+    assert all(body["jql"] == requests[0]["jql"] for body in requests)
+    assert all(body["fields"] == requests[0]["fields"] for body in requests)
+    assert all(body["maxResults"] == 100 for body in requests)
+
+
+def test_inconsistent_pagination_envelopes_fail_without_truncated_success() -> None:
+    cases = (
+        {"issues": []},
+        {"isLast": "false", "issues": []},
+        {"isLast": False, "issues": []},
+        {"isLast": False, "nextPageToken": "", "issues": []},
+        {"isLast": True, "nextPageToken": "unexpected", "issues": []},
+        {"isLast": True, "issues": {}},
+    )
+    for page in cases:
+        requests: list[httpx.Request] = []
+
+        def handler(
+            request: httpx.Request,
+            page: dict[str, object] = page,
+            requests: list[httpx.Request] = requests,
+        ) -> httpx.Response:
+            requests.append(request)
+            return httpx.Response(200, json=page)
+
+        outcome = asyncio.run(_provider(handler).acquire(_scope(), _window()))
+        assert outcome.state == "failed"
+        assert len(requests) == 1
+
+    requests = []
+    pages = [
+        {"isLast": False, "nextPageToken": "again", "issues": [_issue("one")]},
+        {"isLast": False, "nextPageToken": "again", "issues": [_issue("two")]},
+    ]
+
+    def repeated_handler(request: httpx.Request) -> httpx.Response:
+        requests.append(request)
+        return httpx.Response(200, json=pages[len(requests) - 1])
+
+    outcome = asyncio.run(_provider(repeated_handler).acquire(_scope(), _window()))
+    assert outcome.state == "failed"
+    assert len(requests) == 2
+
+
+def test_volume_cap_accepts_only_exact_terminal_one_thousand() -> None:
+    exact_pages = [
+        {
+            "isLast": False,
+            "nextPageToken": str(index),
+            "issues": [_issue(f"i-{index}-{row}") for row in range(100)],
+        }
+        for index in range(9)
+    ] + [{"isLast": True, "issues": [_issue(f"i-9-{row}") for row in range(100)]}]
+    exact_requests: list[httpx.Request] = []
+
+    def exact_handler(request: httpx.Request) -> httpx.Response:
+        exact_requests.append(request)
+        return httpx.Response(200, json=exact_pages[len(exact_requests) - 1])
+
+    exact = asyncio.run(_provider(exact_handler).acquire(_scope(), _window()))
+    assert len(exact.records) == 1000
+    assert len(exact_requests) == 10
+
+    for page in (
+        {"isLast": True, "issues": [_issue(str(row)) for row in range(1001)]},
+        {
+            "isLast": False,
+            "nextPageToken": "more",
+            "issues": [_issue(str(row)) for row in range(1000)],
+        },
+    ):
+        requests: list[httpx.Request] = []
+
+        def handler(
+            request: httpx.Request,
+            page: dict[str, object] = page,
+            requests: list[httpx.Request] = requests,
+        ) -> httpx.Response:
+            requests.append(request)
+            return httpx.Response(200, json=page)
+
+        outcome = asyncio.run(_provider(handler).acquire(_scope(), _window()))
+        assert outcome.state == "failed"
+        assert len(requests) == 1
+
+
+def test_pagination_failures_use_existing_current_and_reference_paths() -> None:
+    current_failure = asyncio.run(
+        AlertAnalysisPipeline(
+            provider=_provider(lambda _: httpx.Response(200, json={"isLast": False, "issues": []})),
+            agent=_CapturingAgent(),
+        ).analyze(_context())
+    )
+    assert current_failure.status.value == "failed"
+    assert current_failure.reason.code == "current_query_failed"
+
+    calls = 0
+
+    def reference_failure(_: httpx.Request) -> httpx.Response:
+        nonlocal calls
+        calls += 1
+        return httpx.Response(
+            200,
+            json={"isLast": True, "issues": [_issue()]}
+            if calls == 1
+            else {"isLast": False, "issues": []},
+        )
+
+    reference = asyncio.run(
+        AlertAnalysisPipeline(
+            provider=_provider(reference_failure), agent=_CapturingAgent()
+        ).analyze(_context(references=("1h",)))
+    )
+    assert reference.status.value == "partial"
+    assert reference.reason.code == "reference_unavailable"
