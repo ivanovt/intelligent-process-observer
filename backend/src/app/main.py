@@ -6,6 +6,8 @@ from fastapi import FastAPI, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 
+from app.core.settings import get_settings
+from app.infrastructure.jira import JiraAlertProviderResolver
 from app.infrastructure.persistence.database import create_database_engine, create_session_factory
 from app.infrastructure.prometheus.adapter import HttpxPrometheusQueryAdapter
 from app.observations.api import router
@@ -19,6 +21,9 @@ async def lifespan(app: FastAPI):
     app.state.session_factory = create_session_factory(engine)
     app.state.observation_service = ObservationDefinitionService()
     app.state.prometheus_adapter = HttpxPrometheusQueryAdapter()
+    app.state.jira_alert_provider_resolver = JiraAlertProviderResolver(
+        get_settings().jira_alert_provider_raw
+    )
     yield
     await engine.dispose()
 
