@@ -7,7 +7,7 @@ from inspect import signature
 
 from pydantic import ValidationError
 
-from app.alerts.analyzer import analyze_current
+from app.alerts.analyzer import analyze_current, compare_occurrences
 from app.alerts.contracts import (
     AlertAgentCompletion,
     AlertAgentRequest,
@@ -18,7 +18,7 @@ from app.alerts.contracts import (
 )
 from app.alerts.normalization import normalize_current_with_rejections
 from app.alerts.ports import AlertAnalysisAgent, AlertProvider
-from app.alerts.references import acquire_comparisons
+from app.alerts.references import acquire_prepared_references
 from app.alerts.result_builder import AlertResultBuilder
 from app.alerts.tools import AlertOptionalToolRegistry, unsuccessful_trace
 from app.infrastructure.persistence.runtime_contracts import LensRunStatus, StructuredReason
@@ -78,18 +78,21 @@ class AlertAnalysisPipeline:
         )
         if response.records and not records:
             return self._failed("invalid_records", "current_normalization")
+        self._record_phase("reference_acquisition")
+        prepared_references, reference_unavailable = await acquire_prepared_references(
+            self._provider,
+            context.provider_scope,
+            context.analysis_window,
+            context.reference_periods,
+        )
         self._record_phase("mandatory_analysis")
         try:
             evidence = self._analyzer(records)
         except Exception:
             return self._failed("deterministic_analysis_failed")
-        self._record_phase("reference_acquisition")
-        comparisons, reference_unavailable = await acquire_comparisons(
-            self._provider,
-            context.provider_scope,
-            context.analysis_window,
-            evidence,
-            context.reference_periods,
+        comparisons = tuple(
+            compare_occurrences(offset, evidence, analyze_current(reference_records))
+            for offset, reference_records in prepared_references
         )
         evidence = evidence.model_copy(update={"comparisons": comparisons})
         self._record_phase("zero_record_gate")

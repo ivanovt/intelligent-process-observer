@@ -404,18 +404,37 @@ def test_all_invalid_current_stops_before_analysis() -> None:
 
 def test_mandatory_analysis_failure_stops_agent_and_builder() -> None:
     async def scenario() -> None:
-        outcome = await AlertAnalysisPipeline(
-            provider=RecordsProvider(
-                (
-                    _record(
-                        "valid", started=datetime(2026, 9, 1, tzinfo=UTC), ended=None, occurrences=1
+        context = _context().model_copy(update={"reference_periods": ("1d",)})
+        provider = OffsetProvider(
+            {
+                context.analysis_window.from_: AlertRecordsAvailable(
+                    source="fixture-source",
+                    records=(
+                        _record(
+                            "valid",
+                            started=datetime(2026, 9, 1, tzinfo=UTC),
+                            ended=None,
+                            occurrences=1,
+                        ),
                     ),
-                )
-            ),
+                ),
+                datetime(2026, 8, 31, tzinfo=UTC): AlertRecordsAvailable(source="fixture-source"),
+            }
+        )
+
+        def fail_after_reference_acquisition(records: object) -> object:
+            assert [call[1].from_ for call in provider.calls] == [
+                context.analysis_window.from_,
+                datetime(2026, 8, 31, tzinfo=UTC),
+            ]
+            raise RuntimeError("mandatory failure")
+
+        outcome = await AlertAnalysisPipeline(
+            provider=provider,
             agent=FailOnCallAgent(),
             result_builder=FailOnUseBuilder(),
-            analyzer=lambda _: (_ for _ in ()).throw(RuntimeError("mandatory failure")),
-        ).analyze(_context())
+            analyzer=fail_after_reference_acquisition,
+        ).analyze(context)
         _assert_failed(outcome, "deterministic_analysis_failed")
 
     asyncio.run(scenario())
@@ -1083,8 +1102,8 @@ def test_pre_transaction_work_finishes_before_persistence_composition() -> None:
         assert phases == [
             "provider_acquisition",
             "current_normalization",
-            "mandatory_analysis",
             "reference_acquisition",
+            "mandatory_analysis",
             "zero_record_gate",
             "agent_completion",
             "optional_tool_execution",

@@ -4,13 +4,11 @@ from __future__ import annotations
 
 from datetime import timedelta
 
-from app.alerts.analyzer import analyze_current, compare_occurrences
 from app.alerts.contracts import (
     AlertAnalysisWindow,
-    AlertMandatoryEvidence,
     AlertProviderScope,
     AlertRecordsAvailable,
-    AlertReferenceComparison,
+    CanonicalAlertRecord,
 )
 from app.alerts.normalization import normalize_current_with_rejections
 from app.alerts.ports import AlertProvider
@@ -23,15 +21,14 @@ def reference_window(current: AlertAnalysisWindow, offset: str) -> AlertAnalysis
     return AlertAnalysisWindow(**{"from": current.from_ - shift, "to": current.to - shift})
 
 
-async def acquire_comparisons(
+async def acquire_prepared_references(
     provider: AlertProvider,
     scope: AlertProviderScope,
     current_window: AlertAnalysisWindow,
-    current_evidence: AlertMandatoryEvidence,
     offsets: tuple[str, ...],
-) -> tuple[tuple[AlertReferenceComparison, ...], bool]:
-    """Acquire each offset independently, omitting unavailable or unusable references."""
-    comparisons: list[AlertReferenceComparison] = []
+) -> tuple[tuple[tuple[str, tuple[CanonicalAlertRecord, ...]], ...], bool]:
+    """Acquire and normalize each configured reference period independently."""
+    prepared_references: list[tuple[str, tuple[CanonicalAlertRecord, ...]]] = []
     unavailable = False
     for offset in offsets:
         window = reference_window(current_window, offset)
@@ -47,5 +44,5 @@ async def acquire_comparisons(
         if rejected or (response.records and not records):
             unavailable = True
             continue
-        comparisons.append(compare_occurrences(offset, current_evidence, analyze_current(records)))
-    return tuple(comparisons), unavailable
+        prepared_references.append((offset, records))
+    return tuple(prepared_references), unavailable

@@ -470,8 +470,8 @@ def test_alert_zero_record_walking_skeleton_persists_completed_result(
         assert phases == [
             "provider_acquisition",
             "current_normalization",
-            "mandatory_analysis",
             "reference_acquisition",
+            "mandatory_analysis",
             "zero_record_gate",
             "result_build",
             "transaction_open",
@@ -2612,8 +2612,8 @@ def test_alert_pipeline_phase_order_keeps_long_work_outside_transaction(
         assert phases == [
             "provider_acquisition",
             "current_normalization",
-            "mandatory_analysis",
             "reference_acquisition",
+            "mandatory_analysis",
             "zero_record_gate",
             "result_build",
             "transaction_open",
