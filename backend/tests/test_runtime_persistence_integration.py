@@ -974,7 +974,7 @@ def test_all_canonical_evidence_target_forms_round_trip(
         "id / % Ж",
         "type / Ж",
         "value % space",
-        "1d / Ж",
+        "1d",
     )
     refs = (
         f"alert://current/{encode_dynamic_segment(identifier)}",
@@ -1018,6 +1018,7 @@ def test_all_canonical_evidence_target_forms_round_trip(
                     }
                 ),
                 lens_name="canonical refs",
+                reference_periods=(offset,),
             )
             records = normalize_current(
                 type(
