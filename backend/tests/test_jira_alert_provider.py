@@ -426,6 +426,10 @@ def test_inconsistent_pagination_envelopes_fail_without_truncated_success() -> N
         {"isLast": False, "issues": []},
         {"isLast": False, "nextPageToken": "", "issues": []},
         {"isLast": True, "nextPageToken": "unexpected", "issues": []},
+        {"isLast": True, "nextPageToken": 0, "issues": []},
+        {"isLast": True, "nextPageToken": False, "issues": []},
+        {"isLast": True, "nextPageToken": [], "issues": []},
+        {"isLast": True, "nextPageToken": {}, "issues": []},
         {"isLast": True, "issues": {}},
     )
     for page in cases:
@@ -456,6 +460,23 @@ def test_inconsistent_pagination_envelopes_fail_without_truncated_success() -> N
     outcome = asyncio.run(_provider(repeated_handler).acquire(_scope(), _window()))
     assert outcome.state == "failed"
     assert len(requests) == 2
+
+
+def test_terminal_pagination_accepts_only_absent_null_or_empty_string_token() -> None:
+    pages = (
+        {"isLast": True, "issues": []},
+        {"isLast": True, "nextPageToken": None, "issues": []},
+        {"isLast": True, "nextPageToken": "", "issues": []},
+    )
+    for page in pages:
+        outcome = asyncio.run(
+            _provider(lambda _, page=page: httpx.Response(200, json=page)).acquire(
+                _scope(), _window()
+            )
+        )
+
+        assert outcome.source == "jira_track_and_release"
+        assert outcome.records == ()
 
 
 def test_volume_cap_accepts_only_exact_terminal_one_thousand() -> None:

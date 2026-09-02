@@ -97,7 +97,9 @@ class HttpxJiraAlertProvider:
             return None
         token = payload.get("nextPageToken")
         if is_last:
-            return (issues, True, None) if not token else None
+            if token is not None and (not isinstance(token, str) or token != ""):
+                return None
+            return issues, True, None
         if not isinstance(token, str) or not token or token in seen_tokens:
             return None
         seen_tokens.add(token)
