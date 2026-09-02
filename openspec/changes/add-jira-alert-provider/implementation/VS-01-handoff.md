@@ -22,19 +22,19 @@ VS01-AC01 through VS01-AC07 at their VS-01 configuration, composition, empty-req
 
 `cd backend && uv run ruff format --check ...` — passed.
 
-`cd backend && uv run pytest tests/test_jira_alert_provider.py tests/test_jira_alert_provider_configuration.py tests/test_health.py tests/test_alert_analysis_pipeline.py` — 53 passed.
+`cd backend && uv run pytest tests/test_jira_alert_provider.py tests/test_jira_alert_provider_configuration.py tests/test_health.py tests/test_alert_analysis_pipeline.py -q` — 54 passed.
 
 `git diff --check` — passed.
 
 ## Downstream invariants
 
-The raw configuration is parsed only after source selection; all application-used Jira resolutions are provider objects, never typed outcomes. The `/jira` browser path never enters derived REST targets. Credentials are generated only for the request Authorization header and never included in diagnostics.
+The raw configuration is parsed only after source selection; all application-used Jira resolutions are provider objects, never typed outcomes. The `/jira` browser path never enters derived REST targets. The bot email and API token are both `SecretStr` values; credentials are generated only for the request Authorization header and never included in settings/provider representations or diagnostics.
 
 ## Known limitations within approved scope
 
 Only terminal empty pages are successful in this slice. Non-empty records, pagination, deadlines, retries, and comprehensive response mapping are intentionally deferred to the following approved slices.
 
-Commit SHA: `HEAD` (resolve as the commit containing this handoff).
+Correction commit SHA: `HEAD` (resolve as the commit containing this handoff).
 
 Plan change requested: none.
 

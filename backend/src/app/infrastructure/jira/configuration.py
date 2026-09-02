@@ -6,7 +6,7 @@ import json
 import re
 from urllib.parse import urlsplit
 
-from pydantic import BaseModel, ConfigDict, Field, SecretStr, field_validator
+from pydantic import BaseModel, ConfigDict, SecretStr, field_validator
 
 _SITE_LABEL = re.compile(r"^[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?$")
 
@@ -17,7 +17,7 @@ class JiraAlertProviderSettings(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
 
     site_url: str
-    email: str = Field(min_length=1)
+    email: SecretStr
     api_token: SecretStr
 
     @field_validator("site_url")
@@ -29,9 +29,9 @@ class JiraAlertProviderSettings(BaseModel):
 
     @field_validator("email")
     @classmethod
-    def require_non_blank_email(cls, value: str) -> str:
+    def require_non_blank_email(cls, value: SecretStr) -> SecretStr:
         """Require a non-blank ordinary-user account email."""
-        if not value.strip():
+        if not value.get_secret_value().strip():
             raise ValueError("email must not be blank")
         return value
 

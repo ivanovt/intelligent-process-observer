@@ -72,8 +72,9 @@ class HttpxJiraAlertProvider:
 
     def _basic_authorization(self) -> str:
         credentials = (
-            f"{self._settings.email}:{self._settings.api_token.get_secret_value()}".encode()
-        )
+            f"{self._settings.email.get_secret_value()}:"
+            f"{self._settings.api_token.get_secret_value()}"
+        ).encode()
         return f"Basic {base64.b64encode(credentials).decode('ascii')}"
 
     @staticmethod

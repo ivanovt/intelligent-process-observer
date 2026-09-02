@@ -1,4 +1,5 @@
 import asyncio
+import json
 from datetime import UTC, datetime
 
 import pytest
@@ -7,7 +8,10 @@ from app.alerts.contracts import AlertAnalysisWindow, AlertProviderScope, AlertP
 from app.core.settings import Settings
 from app.infrastructure.jira.adapter import HttpxJiraAlertProvider
 from app.infrastructure.jira.composition import JiraAlertProviderResolver, UnavailableAlertProvider
-from app.infrastructure.jira.configuration import canonical_jira_origin
+from app.infrastructure.jira.configuration import (
+    JiraAlertProviderSettings,
+    canonical_jira_origin,
+)
 
 
 def _scope(source: str = "jira_track_and_release") -> AlertProviderScope:
@@ -89,6 +93,32 @@ def test_configuration_is_closed_and_secret_safe() -> None:
     assert isinstance(outcome, AlertProviderUnavailable)
     assert outcome.diagnostic == "configuration_invalid"
     assert "sentinel" not in repr(provider)
+
+
+def test_settings_provider_repr_and_diagnostics_do_not_leak_credentials() -> None:
+    email = "sentinel-email@example.invalid"
+    token = "sentinel-api-token"
+    settings = JiraAlertProviderSettings(
+        site_url="https://foo.atlassian.net",
+        email=email,
+        api_token=token,
+    )
+    provider = HttpxJiraAlertProvider(settings)
+    unavailable = JiraAlertProviderResolver(
+        json.dumps(
+            {
+                "site_url": "https://foo.atlassian.net",
+                "email": email,
+                "api_token": token,
+                "unsupported": True,
+            }
+        )
+    ).resolve(_scope())
+    outcome = asyncio.run(unavailable.acquire(_scope(), _window()))
+
+    for rendered in (repr(settings), repr(provider), repr(outcome), outcome.diagnostic):
+        assert email not in rendered
+        assert token not in rendered
 
 
 def test_jira_provider_resolution_is_isolated_to_jira_track_and_release_source() -> None:
