@@ -130,6 +130,16 @@ All new development-facing repository content is written in English:
 
 The existing architecture package remains in Bulgarian. Do not create a second English mirror unless that is explicitly approved later.
 
+## 5.1 Alert pipeline integration boundary
+
+The Alert pipeline receives a provider and an analysis agent through framework-neutral
+ports. Production composition supplies those dependencies and opens the caller-owned
+transaction only after provider acquisition, normalization, deterministic analysis,
+optional tools, agent work, and result construction finish. The terminal persistence
+composer then advances the existing LensRun and conditionally writes its artifact; it
+flushes but never commits. Jira transport, credentials, field mapping, and production
+model/provider selection remain intentionally deferred and must not be added as defaults.
+
 ## 6. Initial bootstrap workflow
 
 The repository bootstrap is a one-time workspace change and is not itself an OpenSpec change.
