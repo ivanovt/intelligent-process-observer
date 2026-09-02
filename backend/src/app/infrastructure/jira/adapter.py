@@ -107,13 +107,6 @@ class HttpxJiraAlertProvider:
             record["source_ref"] = (
                 f"{self._settings.canonical_origin}/browse/{encode_dynamic_segment(key)}"
             )
-        priority = fields.get("priority")
-        if (
-            isinstance(priority, dict)
-            and isinstance(priority.get("name"), str)
-            and priority["name"]
-        ):
-            record["provider_importance"] = {"type": "priority", "value": priority["name"]}
         try:
             return AlertProviderRecord.model_validate(record)
         except ValueError:
@@ -137,4 +130,12 @@ class HttpxJiraAlertProvider:
         status = fields.get("status")
         if isinstance(status, dict) and "name" in status:
             record["source_status"] = status["name"]
+        if "priority" in fields:
+            priority = fields["priority"]
+            record["provider_importance"] = {
+                "type": "priority",
+                "value": priority["name"]
+                if isinstance(priority, dict) and "name" in priority
+                else None,
+            }
         return record

@@ -202,6 +202,45 @@ def test_malformed_issues_remain_minimal_record_level_normalization_inputs() -> 
     ]
 
 
+def test_present_malformed_priority_remains_an_invalid_normalization_input() -> None:
+    empty_name = _issue("empty-priority", priority="")
+    non_string_name = _issue("numeric-priority")
+    non_string_name["fields"]["priority"] = {"name": 1}  # type: ignore[index]
+    missing_name = _issue("missing-priority")
+    missing_name["fields"]["priority"] = {}  # type: ignore[index]
+    non_object = _issue("non-object-priority")
+    non_object["fields"]["priority"] = "Highest"  # type: ignore[index]
+
+    def handler(_: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            200,
+            json={
+                "isLast": True,
+                "issues": [_issue(), empty_name, non_string_name, missing_name, non_object],
+            },
+        )
+
+    outcome = asyncio.run(_provider(handler).acquire(_scope(), _window()))
+    malformed_records = outcome.records[1:]
+    assert [record["provider_importance"] for record in malformed_records] == [
+        {"type": "priority", "value": ""},
+        {"type": "priority", "value": 1},
+        {"type": "priority", "value": None},
+        {"type": "priority", "value": None},
+    ]
+    assert [record.id for record in normalize_current(outcome, _window(), _window().to)] == [
+        "IPO-1"
+    ]
+
+
+def test_absent_optional_priority_is_omitted() -> None:
+    def handler(_: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, json={"isLast": True, "issues": [_issue(priority=None)]})
+
+    outcome = asyncio.run(_provider(handler).acquire(_scope(), _window()))
+    assert outcome.records[0].provider_importance is None
+
+
 def test_source_ref_is_canonical_and_independent_of_input_path() -> None:
     def handler(_: httpx.Request) -> httpx.Response:
         return httpx.Response(200, json={"isLast": True, "issues": [_issue("IPO / Ю")]})

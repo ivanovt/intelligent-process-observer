@@ -9,6 +9,9 @@
   candidate bounds; the existing Alert normalizer remains the strict overlap owner.
 - Malformed individual issues become compact canonical-mappable dictionaries, allowing
   existing `invalid_records` handling to retain usable records in the same acquisition.
+- A present malformed `fields.priority` now remains a compact invalid
+  `provider_importance` input for application normalization; only a truly absent optional
+  priority is omitted.
 - Current and reference acquisitions continue to use the unchanged pipeline outcome
   semantics. Jira query errors therefore fail current acquisition and make a reference
   unavailable; successful empty or stale pages remain successful.
@@ -27,11 +30,13 @@ VS02-AC01 through VS02-AC08.
 
 ## Verification
 
-`cd backend && uv run ruff format --check src/app/infrastructure/jira tests/test_jira_alert_provider.py` — passed.
+Correction verification:
+
+`cd backend && uv run pytest tests/test_jira_alert_provider.py tests/test_alert_analysis_pipeline.py tests/test_alert_contracts.py -q` — 46 passed.
 
 `cd backend && uv run ruff check src/app/infrastructure/jira tests/test_jira_alert_provider.py` — passed.
 
-`cd backend && uv run pytest tests/test_jira_alert_provider.py tests/test_alert_analysis_pipeline.py tests/test_alert_contracts.py -q` — 45 passed.
+`cd backend && uv run ruff format --check src/app/infrastructure/jira tests/test_jira_alert_provider.py` — passed.
 
 `git diff --check` — passed.
 
@@ -47,7 +52,9 @@ agent/result record projections.
 This slice accepts one terminal page only. Cursor continuation/volume cap, hard
 deadlines, and retry behavior remain deferred to VS-03 through VS-05.
 
-Commit SHA: `HEAD` (the atomic slice commit containing this handoff).
+Commit SHA: `bc2f6eadc68fd06118cd7b9cedf2639df910d175` (the original VS-02 slice commit).
+
+Correction commit SHA: `HEAD` (the atomic correction commit containing this evidence).
 
 Plan change requested: none.
 
