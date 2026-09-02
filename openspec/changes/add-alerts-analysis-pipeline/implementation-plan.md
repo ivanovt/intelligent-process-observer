@@ -1240,6 +1240,10 @@ here.
   independently reran focused pipeline tests (`27 passed`), real PostgreSQL phase-order
   proof (`1 passed`), and Ruff. Change-map deviation disposition: `N/A`; candidate
   awaits independent high-risk correction review.
+- 2026-09-02 — IR-002 high-risk review requires correction: reference deterministic
+  analysis errors must map to `deterministic_analysis_failed`, and the PostgreSQL
+  phase-order proof must execute configured reference preparation. Correction remains
+  in progress.
 - 2026-09-01 — VS-03 accepted after corrected proof verification and `SLICE REVIEW PASS`.
   VS-04 and VS-05 are dependency-ready; VS-04 is next in the requested sequence.
 - 2026-09-01 — VS-04 assigned to fresh Slice Implementer `/root/vs04_implementer`.
