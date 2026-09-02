@@ -1231,6 +1231,11 @@ here.
   OpenSpec-template modifications remain outside the approved Alert-pipeline scope.
   Archive readiness is blocked pending human triage to split, remove, or explicitly
   approve that scope; no archive, push, PR, or merge was performed.
+- 2026-09-02 — Post-review corrective assignment for IR-002:
+  `/root/ir002_corrector` will restore the approved reference-before-deterministic-
+  analysis stage order and phase-order proofs while preserving existing supplementary
+  reference and terminal-failure semantics. This is a user-authorized local correction;
+  no frozen plan structure or normative behavior is changed.
 - 2026-09-01 — VS-03 accepted after corrected proof verification and `SLICE REVIEW PASS`.
   VS-04 and VS-05 are dependency-ready; VS-04 is next in the requested sequence.
 - 2026-09-01 — VS-04 assigned to fresh Slice Implementer `/root/vs04_implementer`.
