@@ -88,13 +88,13 @@ class AlertAnalysisPipeline:
         self._record_phase("mandatory_analysis")
         try:
             evidence = self._analyzer(records)
+            comparisons = tuple(
+                compare_occurrences(offset, evidence, analyze_current(reference_records))
+                for offset, reference_records in prepared_references
+            )
+            evidence = evidence.model_copy(update={"comparisons": comparisons})
         except Exception:
             return self._failed("deterministic_analysis_failed")
-        comparisons = tuple(
-            compare_occurrences(offset, evidence, analyze_current(reference_records))
-            for offset, reference_records in prepared_references
-        )
-        evidence = evidence.model_copy(update={"comparisons": comparisons})
         self._record_phase("zero_record_gate")
         if not evidence.record_count:
             self._record_phase("result_build")

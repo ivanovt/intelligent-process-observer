@@ -440,6 +440,66 @@ def test_mandatory_analysis_failure_stops_agent_and_builder() -> None:
     asyncio.run(scenario())
 
 
+def test_reference_analysis_failure_stops_agent_and_builder() -> None:
+    class Builder:
+        def __init__(self) -> None:
+            self.calls = 0
+
+        def usable(self, *args: object, **kwargs: object) -> object:
+            self.calls += 1
+            raise AssertionError("deterministic reference failures must not build a result")
+
+    async def scenario() -> None:
+        context = _context().model_copy(update={"reference_periods": ("1d",)})
+        mixed_reference_records = (
+            _record(
+                "reference-priority",
+                started=datetime(2026, 8, 31, tzinfo=UTC),
+                ended=None,
+                occurrences=1,
+            ),
+            _record(
+                "reference-severity",
+                started=datetime(2026, 8, 31, tzinfo=UTC),
+                ended=None,
+                occurrences=1,
+            ).model_copy(
+                update={
+                    "provider_importance": AlertProviderImportance(type="severity", value="High")
+                }
+            ),
+        )
+        provider = OffsetProvider(
+            {
+                context.analysis_window.from_: AlertRecordsAvailable(
+                    source="fixture-source",
+                    records=(
+                        _record(
+                            "current",
+                            started=datetime(2026, 9, 1, tzinfo=UTC),
+                            ended=None,
+                            occurrences=1,
+                        ),
+                    ),
+                ),
+                datetime(2026, 8, 31, tzinfo=UTC): AlertRecordsAvailable(
+                    source="fixture-source", records=mixed_reference_records
+                ),
+            }
+        )
+        agent, builder = FailOnCallAgent(), Builder()
+
+        outcome = await AlertAnalysisPipeline(
+            provider=provider, agent=agent, result_builder=builder
+        ).analyze(context)
+
+        _assert_failed(outcome, "deterministic_analysis_failed")
+        assert agent.calls == 0
+        assert builder.calls == 0
+
+    asyncio.run(scenario())
+
+
 def test_required_agent_failures_are_rejected_before_builder() -> None:
     class Agent:
         def __init__(self, response: object) -> None:

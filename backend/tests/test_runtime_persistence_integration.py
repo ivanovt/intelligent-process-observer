@@ -2587,17 +2587,30 @@ def test_alert_pipeline_phase_order_keeps_long_work_outside_transaction(
             session_factory, f"phase-order-{uuid4()}"
         )
         phases: list[str] = []
+        context = context.model_copy(update={"reference_periods": ("1d",)})
 
         class EmptyProvider:
             async def acquire(self, scope: object, window: object) -> AlertRecordsAvailable:
+                phases.append(
+                    "provider_current"
+                    if window == context.analysis_window
+                    else "provider_reference"
+                )
                 return AlertRecordsAvailable(source="terminal-proof")
 
         class UnusedAgent:
             async def complete(self, *args: object) -> object:
                 raise AssertionError("zero record path must not invoke agent")
 
+        def recording_analyzer(records: object) -> object:
+            phases.append("analyzer")
+            return analyze_current(records)
+
         outcome = await AlertAnalysisPipeline(
-            provider=EmptyProvider(), agent=UnusedAgent(), record_phase=phases.append
+            provider=EmptyProvider(),
+            agent=UnusedAgent(),
+            record_phase=phases.append,
+            analyzer=recording_analyzer,
         ).analyze(context)
         repository = RuntimePersistenceRepository()
         async with session_factory() as session:
@@ -2611,9 +2624,12 @@ def test_alert_pipeline_phase_order_keeps_long_work_outside_transaction(
             phases.append("transaction_commit")
         assert phases == [
             "provider_acquisition",
+            "provider_current",
             "current_normalization",
             "reference_acquisition",
+            "provider_reference",
             "mandatory_analysis",
+            "analyzer",
             "zero_record_gate",
             "result_build",
             "transaction_open",
