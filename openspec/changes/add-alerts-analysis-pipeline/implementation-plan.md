@@ -1252,6 +1252,11 @@ here.
   `RESOLVED`, no regressions. Accepted correction commits: `2ab06d5`, `9f5172b`,
   `7e565e1`, `fb4c9b1`. The change awaits a fresh whole-change implementation review;
   it remains unarchived.
+- 2026-09-02 — Fresh whole-change review confirms IR-001 and IR-002 are resolved but
+  reports unresolved MEDIUM IR-003: repository-wide workflow skills, project knowledge,
+  and generic OpenSpec templates in the feature diff remain outside the approved Alert
+  pipeline scope. Archive readiness is blocked pending human triage to split, remove, or
+  explicitly approve that scope; no archive, push, PR, or merge was performed.
 - 2026-09-01 — VS-03 accepted after corrected proof verification and `SLICE REVIEW PASS`.
   VS-04 and VS-05 are dependency-ready; VS-04 is next in the requested sequence.
 - 2026-09-01 — VS-04 assigned to fresh Slice Implementer `/root/vs04_implementer`.
