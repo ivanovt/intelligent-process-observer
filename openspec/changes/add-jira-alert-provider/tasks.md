@@ -37,7 +37,7 @@
   normalization; construct `source_ref` from the canonical site origin plus
   `/browse/<strictly-percent-encoded-key>` with no `/jira`; document the approved MVP
   lifecycle interpretation.
-- [ ] 2.3 Implement cursor-token pagination with 100-item pages, a 1,000-record
+- [x] 2.3 Implement cursor-token pagination with 100-item pages, a 1,000-record
   fail-closed cap, required boolean `isLast`, new non-empty token requirements for
   non-terminal pages, terminal-envelope consistency, and repeated-token detection.
 - [ ] 2.4 Implement provider-owned hard monotonic deadlines of 15 seconds for the

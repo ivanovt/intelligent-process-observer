@@ -264,8 +264,8 @@ for parallel execution.
 |---|---|---|---|---|---|---|
 | VS-01 | Compose a credential-safe Jira provider and complete an empty single-page walking skeleton | none | high-risk | COMPLETE | `4def7ae5757adfcb8a58b7e91e0b4262d1cd54f9`; correction `fba99306837f42066277d52b54277cb416f32a38` | `implementation/VS-01-handoff.md` |
 | VS-02 | Map Jira lifecycle records through exact current/reference pipeline semantics | VS-01 | high-risk | COMPLETE | `bc2f6eadc68fd06118cd7b9cedf2639df910d175`; correction `d8cd598e6246a2314fa4611a3f18c16e734dcefb` | `implementation/VS-02-handoff.md` |
-| VS-03 | Exhaust cursor pages and fail closed at the approved record cap | VS-02 | high-risk | IN_PROGRESS | — | `implementation/VS-03-handoff.md` |
-| VS-04 | Enforce cancellable hard attempt and acquisition deadlines | VS-03 | high-risk | PLANNED | — | `implementation/VS-04-handoff.md` |
+| VS-03 | Exhaust cursor pages and fail closed at the approved record cap | VS-02 | high-risk | COMPLETE | `e79ac3dbe97817e0e259d3f42930222814109777`; correction `897dd862ee40af4b5843ce32691efd3867bf8e0d` | `implementation/VS-03-handoff.md` |
+| VS-04 | Enforce cancellable hard attempt and acquisition deadlines | VS-03 | high-risk | IN_PROGRESS | — | `implementation/VS-04-handoff.md` |
 | VS-05 | Apply exact bounded retry and failure classification semantics | VS-04 | high-risk | PLANNED | — | `implementation/VS-05-handoff.md` |
 | VS-06 | Complete operator documentation and whole-change conformance | VS-05 | normal | PLANNED | — | `implementation/VS-06-handoff.md` |
 
@@ -1013,4 +1013,11 @@ acceptance obligations, proof-level changes, or redesign decisions here.
   required malformed-present-priority preservation; bounded verifier IR-001 resolved it
   with no direct regression. VS02-AC01 through VS02-AC08 passed. No candidate shared knowledge.
 - VS-03 assignment (2026-09-02): VS-02 prerequisite is accepted; a fresh Slice
+  Implementer is active. No implementation commit is accepted yet.
+- VS-03 accepted (2026-09-02): implementation `e79ac3dbe97817e0e259d3f42930222814109777`
+  and correction `897dd862ee40af4b5843ce32691efd3867bf8e0d`; focused independent
+  verification passed (48 tests, Ruff, format, diff check). Initial high-risk review
+  required stricter terminal token typing; bounded verifier IR-001 resolved it with no
+  direct regression. VS03-AC01 through VS03-AC04 passed. No candidate shared knowledge.
+- VS-04 assignment (2026-09-02): VS-03 prerequisite is accepted; a fresh Slice
   Implementer is active. No implementation commit is accepted yet.
