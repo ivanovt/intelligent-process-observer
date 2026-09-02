@@ -1,15 +1,15 @@
 ## 1. Configuration and composition boundary
 
-- [ ] 1.1 Add only a raw optional serialized Jira provider value to global application
+- [x] 1.1 Add only a raw optional serialized Jira provider value to global application
   Settings so absent or malformed Jira-specific configuration cannot fail Settings
   construction or unrelated application startup.
-- [ ] 1.2 Add the Jira composition-owned strict parser/validator and fixed safe
+- [x] 1.2 Add the Jira composition-owned strict parser/validator and fixed safe
   `not_configured`/`configuration_invalid` unavailable providers; construct the real
   provider only for a complete valid site URL, dedicated ordinary Atlassian user email,
   and classic/unscoped secret API token, without exposing raw configuration, token,
   Authorization value, or validation details; add no scoped-token, Service-Account,
   Cloud-ID, gateway, or OAuth fields/discovery.
-- [ ] 1.3 Implement the exact credential-safe Jira Cloud site URL contract:
+- [x] 1.3 Implement the exact credential-safe Jira Cloud site URL contract:
   HTTPS, one valid ASCII site label under `.atlassian.net`, no userinfo/port/query/
   fragment/IP, and only root or `/jira`; derive one pathless canonical site origin from
   every accepted form for independent REST and issue-navigation construction, disable

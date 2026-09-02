@@ -262,8 +262,8 @@ for parallel execution.
 
 | Slice | Goal | Depends on | Risk | Status | Commit | Handoff |
 |---|---|---|---|---|---|---|
-| VS-01 | Compose a credential-safe Jira provider and complete an empty single-page walking skeleton | none | high-risk | IN_PROGRESS | — | `implementation/VS-01-handoff.md` |
-| VS-02 | Map Jira lifecycle records through exact current/reference pipeline semantics | VS-01 | high-risk | PLANNED | — | `implementation/VS-02-handoff.md` |
+| VS-01 | Compose a credential-safe Jira provider and complete an empty single-page walking skeleton | none | high-risk | COMPLETE | `4def7ae5757adfcb8a58b7e91e0b4262d1cd54f9`; correction `fba99306837f42066277d52b54277cb416f32a38` | `implementation/VS-01-handoff.md` |
+| VS-02 | Map Jira lifecycle records through exact current/reference pipeline semantics | VS-01 | high-risk | IN_PROGRESS | — | `implementation/VS-02-handoff.md` |
 | VS-03 | Exhaust cursor pages and fail closed at the approved record cap | VS-02 | high-risk | PLANNED | — | `implementation/VS-03-handoff.md` |
 | VS-04 | Enforce cancellable hard attempt and acquisition deadlines | VS-03 | high-risk | PLANNED | — | `implementation/VS-04-handoff.md` |
 | VS-05 | Apply exact bounded retry and failure classification semantics | VS-04 | high-risk | PLANNED | — | `implementation/VS-05-handoff.md` |
@@ -1000,3 +1000,10 @@ acceptance obligations, proof-level changes, or redesign decisions here.
 - VS-01 assignment (2026-09-02): readiness gate accepted by the Coordinator against
   planning baseline `3e988b0380d1b7cf51127a78e2dca386266c5dbb`; a fresh Slice Implementer
   is active. No implementation commit is accepted yet.
+- VS-01 accepted (2026-09-02): implementation `4def7ae5757adfcb8a58b7e91e0b4262d1cd54f9`
+  and correction `fba99306837f42066277d52b54277cb416f32a38`; focused independent
+  verification passed (54 tests, Ruff, format, diff check). Initial high-risk review
+  required an email-redaction correction; bounded verifier IR-001 resolved it with no
+  direct regression. VS01-AC01 through VS01-AC07 passed. No candidate shared knowledge.
+- VS-02 assignment (2026-09-02): VS-01 prerequisite is accepted; a fresh Slice
+  Implementer is active. No implementation commit is accepted yet.
