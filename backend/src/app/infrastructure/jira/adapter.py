@@ -2,8 +2,11 @@
 
 from __future__ import annotations
 
+import asyncio
 import base64
 import math
+import time
+from collections.abc import Awaitable, Callable
 from datetime import datetime
 
 import httpx
@@ -14,12 +17,17 @@ from app.alerts.contracts import (
     AlertProviderOutcome,
     AlertProviderRecord,
     AlertProviderScope,
+    AlertProviderTimeout,
     AlertRecordsAvailable,
 )
 from app.alerts.evidence_refs import encode_dynamic_segment
 from app.infrastructure.jira.configuration import JiraAlertProviderSettings
 
 _FIELDS = ["summary", "created", "resolutiondate", "status", "priority"]
+_ATTEMPT_DEADLINE_SECONDS = 15.0
+_ACQUISITION_DEADLINE_SECONDS = 60.0
+
+_DeadlineRunner = Callable[[Awaitable[httpx.Response], float], Awaitable[httpx.Response]]
 
 
 class HttpxJiraAlertProvider:
@@ -30,9 +38,13 @@ class HttpxJiraAlertProvider:
         settings: JiraAlertProviderSettings,
         *,
         transport: httpx.AsyncBaseTransport | None = None,
+        monotonic: Callable[[], float] = time.monotonic,
+        run_with_deadline: _DeadlineRunner | None = None,
     ) -> None:
         self._settings = settings
         self._transport = transport
+        self._monotonic = monotonic
+        self._run_with_deadline = run_with_deadline or self._default_deadline_runner
 
     async def acquire(
         self, scope: AlertProviderScope, window: AlertAnalysisWindow
@@ -48,19 +60,22 @@ class HttpxJiraAlertProvider:
         records: list[AlertProviderRecord | dict[str, object]] = []
         seen_tokens: set[str] = set()
         next_page_token: str | None = None
+        acquisition_deadline = self._monotonic() + _ACQUISITION_DEADLINE_SECONDS
         try:
             async with httpx.AsyncClient(
                 transport=self._transport, follow_redirects=False
             ) as client:
                 while True:
+                    remaining = acquisition_deadline - self._monotonic()
+                    if remaining < _ATTEMPT_DEADLINE_SECONDS:
+                        return AlertProviderTimeout(diagnostic="deadline_exceeded")
                     if next_page_token is None:
                         page_request = request_body
                     else:
                         page_request = {**request_body, "nextPageToken": next_page_token}
-                    response = await client.post(
-                        f"{self._settings.canonical_origin}/rest/api/2/search/jql",
-                        json=page_request,
-                        headers={"Authorization": self._basic_authorization()},
+                    response = await self._run_with_deadline(
+                        self._complete_attempt(client, page_request),
+                        min(_ATTEMPT_DEADLINE_SECONDS, remaining),
                     )
                     if response.status_code < 200 or response.status_code >= 300:
                         return AlertProviderFailure(
@@ -81,8 +96,35 @@ class HttpxJiraAlertProvider:
                         return AlertProviderFailure(diagnostic="response_invalid")
                     if is_last:
                         return AlertRecordsAvailable(source=scope.source, records=tuple(records))
+        except TimeoutError:
+            return AlertProviderTimeout(diagnostic="deadline_exceeded")
         except httpx.RequestError:
             return AlertProviderFailure(diagnostic="transport_error")
+
+    @staticmethod
+    async def _default_deadline_runner(
+        operation: Awaitable[httpx.Response], deadline_seconds: float
+    ) -> httpx.Response:
+        """Run one complete HTTP operation under its hard wall-clock deadline."""
+        return await asyncio.wait_for(operation, timeout=deadline_seconds)
+
+    async def _complete_attempt(
+        self, client: httpx.AsyncClient, page_request: dict[str, object]
+    ) -> httpx.Response:
+        """Send one page request and read its complete body before returning it."""
+        async with client.stream(
+            "POST",
+            f"{self._settings.canonical_origin}/rest/api/2/search/jql",
+            json=page_request,
+            headers={"Authorization": self._basic_authorization()},
+        ) as response:
+            content = await response.aread()
+            return httpx.Response(
+                response.status_code,
+                headers=response.headers,
+                content=content,
+                request=response.request,
+            )
 
     @staticmethod
     def _validated_page(

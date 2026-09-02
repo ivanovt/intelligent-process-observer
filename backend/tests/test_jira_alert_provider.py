@@ -550,3 +550,206 @@ def test_pagination_failures_use_existing_current_and_reference_paths() -> None:
     )
     assert reference.status.value == "partial"
     assert reference.reason.code == "reference_unavailable"
+
+
+class _ControlledClock:
+    def __init__(self, now: float = 0.0) -> None:
+        self.now = now
+
+    def __call__(self) -> float:
+        return self.now
+
+
+class _CancellationObservableStream(httpx.AsyncByteStream):
+    def __init__(self) -> None:
+        self.started = asyncio.Event()
+        self.release = asyncio.Event()
+        self.closed = False
+        self.cancelled = False
+
+    async def __aiter__(self):
+        self.started.set()
+        try:
+            yield b'{"isLast":true,"issues":['
+            await self.release.wait()
+            yield b"]}"
+        except asyncio.CancelledError:
+            self.cancelled = True
+            raise
+
+    async def aclose(self) -> None:
+        self.closed = True
+
+
+def test_hard_attempt_deadline_cancels_slow_progress_body_and_cleans_up() -> None:
+    clock = _ControlledClock()
+    stream = _CancellationObservableStream()
+
+    async def handler(_: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, stream=stream)
+
+    async def deadline_runner(operation, deadline: float) -> httpx.Response:
+        assert deadline == 15
+        task = asyncio.create_task(operation)
+        await stream.started.wait()
+        clock.now += deadline
+        task.cancel()
+        try:
+            await task
+        except asyncio.CancelledError:
+            pass
+        raise TimeoutError
+
+    provider = HttpxJiraAlertProvider(
+        JiraAlertProviderSettings(
+            site_url="https://foo.atlassian.net", email="bot@example.invalid", api_token="token"
+        ),
+        transport=httpx.MockTransport(handler),
+        monotonic=clock,
+        run_with_deadline=deadline_runner,
+    )
+    outcome = asyncio.run(provider.acquire(_scope(), _window()))
+    assert outcome.state == "timeout"
+    assert stream.cancelled and stream.closed
+
+
+def test_hard_acquire_deadline_spans_pages_and_stops_new_work() -> None:
+    clock = _ControlledClock()
+    requests: list[httpx.Request] = []
+    stream = _CancellationObservableStream()
+
+    async def handler(request: httpx.Request) -> httpx.Response:
+        requests.append(request)
+        if len(requests) == 1:
+            return httpx.Response(
+                200, json={"isLast": False, "nextPageToken": "next", "issues": []}
+            )
+        return httpx.Response(200, stream=stream)
+
+    calls = 0
+
+    async def deadline_runner(operation, deadline: float) -> httpx.Response:
+        nonlocal calls
+        calls += 1
+        assert deadline == 15
+        if calls == 1:
+            response = await operation
+            clock.now = 45
+            return response
+        task = asyncio.create_task(operation)
+        await stream.started.wait()
+        clock.now = 60
+        task.cancel()
+        try:
+            await task
+        except asyncio.CancelledError:
+            pass
+        raise TimeoutError
+
+    provider = HttpxJiraAlertProvider(
+        JiraAlertProviderSettings(
+            site_url="https://foo.atlassian.net", email="bot@example.invalid", api_token="token"
+        ),
+        transport=httpx.MockTransport(handler),
+        monotonic=clock,
+        run_with_deadline=deadline_runner,
+    )
+    outcome = asyncio.run(provider.acquire(_scope(), _window()))
+    assert outcome.state == "timeout"
+    assert len(requests) == 2
+    assert stream.cancelled and stream.closed
+
+
+def test_attempt_requires_a_complete_fifteen_second_remaining_budget() -> None:
+    calls = 0
+    times = iter((0.0, 45.001))
+
+    def clock() -> float:
+        return next(times)
+
+    def handler(_: httpx.Request) -> httpx.Response:
+        nonlocal calls
+        calls += 1
+        return httpx.Response(200, json={"isLast": True, "issues": []})
+
+    provider = HttpxJiraAlertProvider(
+        JiraAlertProviderSettings(
+            site_url="https://foo.atlassian.net", email="bot@example.invalid", api_token="token"
+        ),
+        transport=httpx.MockTransport(handler),
+        monotonic=clock,
+    )
+    outcome = asyncio.run(provider.acquire(_scope(), _window()))
+    assert outcome.state == "timeout"
+    assert calls == 0
+
+    exact_calls = 0
+    exact_times = iter((0.0, 45.0))
+
+    def exact_clock() -> float:
+        return next(exact_times)
+
+    def exact_handler(_: httpx.Request) -> httpx.Response:
+        nonlocal exact_calls
+        exact_calls += 1
+        return httpx.Response(200, json={"isLast": True, "issues": []})
+
+    exact_provider = HttpxJiraAlertProvider(
+        JiraAlertProviderSettings(
+            site_url="https://foo.atlassian.net", email="bot@example.invalid", api_token="token"
+        ),
+        transport=httpx.MockTransport(exact_handler),
+        monotonic=exact_clock,
+    )
+    exact_outcome = asyncio.run(exact_provider.acquire(_scope(), _window()))
+    assert exact_outcome.records == ()
+    assert exact_calls == 1
+
+
+def test_current_hard_deadline_preserves_timeout_reason() -> None:
+    async def deadline_runner(operation, _: float) -> httpx.Response:
+        operation.close()
+        raise TimeoutError
+
+    provider = HttpxJiraAlertProvider(
+        JiraAlertProviderSettings(
+            site_url="https://foo.atlassian.net", email="bot@example.invalid", api_token="token"
+        ),
+        transport=httpx.MockTransport(lambda _: httpx.Response(200)),
+        run_with_deadline=deadline_runner,
+    )
+    outcome = asyncio.run(
+        AlertAnalysisPipeline(provider=provider, agent=_CapturingAgent()).analyze(_context())
+    )
+    assert outcome.status.value == "failed"
+    assert outcome.reason.code == "current_query_timeout"
+    assert outcome.artifact is None
+
+
+def test_reference_hard_deadline_degrades_only_reference() -> None:
+    calls = 0
+
+    async def deadline_runner(operation, _: float) -> httpx.Response:
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            return await operation
+        operation.close()
+        raise TimeoutError
+
+    provider = HttpxJiraAlertProvider(
+        JiraAlertProviderSettings(
+            site_url="https://foo.atlassian.net", email="bot@example.invalid", api_token="token"
+        ),
+        transport=httpx.MockTransport(
+            lambda _: httpx.Response(200, json={"isLast": True, "issues": [_issue()]})
+        ),
+        run_with_deadline=deadline_runner,
+    )
+    outcome = asyncio.run(
+        AlertAnalysisPipeline(provider=provider, agent=_CapturingAgent()).analyze(
+            _context(references=("1h",))
+        )
+    )
+    assert outcome.status.value == "partial"
+    assert outcome.reason.code == "reference_unavailable"
