@@ -1,6 +1,6 @@
 # Implementation Plan — add-jira-alert-provider
 
-**Status:** HUMAN_APPROVED — PRE-EXECUTION READINESS IN PROGRESS
+**Status:** HUMAN_APPROVED — READY FOR EXECUTION
 **Artifact type:** Non-normative execution plan
 **Approved OpenSpec change:** `add-jira-alert-provider`
 **Implementation branch:** `feature/add-jira-alert-provider`
@@ -262,7 +262,7 @@ for parallel execution.
 
 | Slice | Goal | Depends on | Risk | Status | Commit | Handoff |
 |---|---|---|---|---|---|---|
-| VS-01 | Compose a credential-safe Jira provider and complete an empty single-page walking skeleton | none | high-risk | PLANNED | — | `implementation/VS-01-handoff.md` |
+| VS-01 | Compose a credential-safe Jira provider and complete an empty single-page walking skeleton | none | high-risk | READY | — | `implementation/VS-01-handoff.md` |
 | VS-02 | Map Jira lifecycle records through exact current/reference pipeline semantics | VS-01 | high-risk | PLANNED | — | `implementation/VS-02-handoff.md` |
 | VS-03 | Exhaust cursor pages and fail closed at the approved record cap | VS-02 | high-risk | PLANNED | — | `implementation/VS-03-handoff.md` |
 | VS-04 | Enforce cancellable hard attempt and acquisition deadlines | VS-03 | high-risk | PLANNED | — | `implementation/VS-04-handoff.md` |
@@ -983,7 +983,12 @@ acceptance obligations, proof-level changes, or redesign decisions here.
   SHA-256 `2f4778799ccc633d0e9c3c7ba7a14c8f3afc7a2b7ca57bfdc0055e71c41dc401`.
   The `Zone.Identifier` sidecar was absent when readiness execution resumed and is not
   present in either commit or the feature worktree.
-- Planning-baseline metadata commit and empty-porcelain/integrity evidence: `PENDING`.
+- Planning-baseline metadata commit: `61f589507abff3436d4810355afda36723fad546`.
+  Readiness evidence passed on 2026-09-02: expected feature branch, empty staged diff,
+  empty porcelain, byte-identical `.openspec.yaml`/proposal/design/specs/tasks against
+  planning baseline `3e988b0380d1b7cf51127a78e2dca386266c5dbb` for both `HEAD` and
+  worktree, mutable-only implementation-plan diff, and strict OpenSpec validation.
+- VS-01 is `READY`; no implementation assignment has been created.
 - Default execution order is VS-01 through VS-06 with no concurrent slice dispatch.
 - VS-01 through VS-05 are high-risk because they implement credential/trusted-target,
   strict provider-contract, lifecycle/failure, pagination, cancellation, or retry
