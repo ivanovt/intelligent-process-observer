@@ -1263,6 +1263,11 @@ here.
   IDs when findings are empty, and permits comparisons when no reference offsets are
   configured. Final integration/archive readiness is blocked pending human triage and
   targeted correction; no archive, push, PR, or merge was performed.
+- 2026-09-02 — Post-review corrective assignment for IR-004 and IR-005:
+  `/root/ir004_ir005_corrector` will make final current-ID uniqueness and immutable
+  configured-comparison correlation unconditional builder invariants, with the specified
+  direct-builder and terminal mapping proofs. This is a user-authorized local correction;
+  no frozen plan structure or normative behavior is changed.
 - 2026-09-01 — VS-03 accepted after corrected proof verification and `SLICE REVIEW PASS`.
   VS-04 and VS-05 are dependency-ready; VS-04 is next in the requested sequence.
 - 2026-09-01 — VS-04 assigned to fresh Slice Implementer `/root/vs04_implementer`.
