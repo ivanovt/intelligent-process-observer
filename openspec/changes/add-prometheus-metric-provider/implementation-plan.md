@@ -365,7 +365,7 @@ VS-01 -> VS-02 -> VS-03 -> VS-04
 
 | Slice | Goal | Depends on | Risk | Status | Commit | Handoff |
 |---|---|---|---|---|---|---|
-| VS-01 | Source-safe transport-free walking skeleton through the existing Metric port | none | high-risk | PLANNED | - | - |
+| VS-01 | Source-safe transport-free walking skeleton through the existing Metric port | none | high-risk | IN_PROGRESS | - | - |
 | VS-02 | Complete bounded single-attempt request, mapping, and status classification | VS-01 | high-risk | PLANNED | - | - |
 | VS-03 | Hard deadlines, deterministic retries, and terminal resilience integration | VS-02 | high-risk | PLANNED | - | - |
 | VS-04 | Compatibility, operational documentation, and whole-change conformance | VS-03 | normal | PLANNED | - | - |
@@ -992,3 +992,5 @@ acceptance obligations, proof-level changes, or redesign decisions here.
   frozen-plan audits against `75b97960704af790b2d8c3e8b6ce84a9e400151a`; strict OpenSpec
   validation, branch verification, and the required clean-status assertion passed before
   execution metadata was recorded.
+- VS-01 active assignment (2026-09-03): delegated to a fresh Slice Implementer; no
+  predecessor handoff is required.
