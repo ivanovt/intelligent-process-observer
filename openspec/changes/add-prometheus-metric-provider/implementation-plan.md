@@ -1032,3 +1032,8 @@ acceptance obligations, proof-level changes, or redesign decisions here.
   admission anchored the acquisition budget too late. A fresh corrective implementer is
   active within the approved VS-03 resilience boundary; VS-03 remains `IN_PROGRESS` and
   VS-04 is not ready.
+- VS-03 corrective re-review (2026-09-04): `SLICE CHANGES REQUIRED` with one remaining
+  HIGH finding: a typed timeout may return while detached response/client cleanup is
+  still running. A fresh corrective implementer is active to restore the approved
+  resource-closure/no-post-deadline-work semantics without changing scope; VS-03 remains
+  `IN_PROGRESS` and VS-04 is not ready.
