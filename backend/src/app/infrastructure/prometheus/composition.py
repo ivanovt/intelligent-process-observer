@@ -134,19 +134,23 @@ class PrometheusMetricSeriesProvider:
     ) -> MetricSeriesAcquisitionOutcome:
         """Acquire one bounded range response for the selected configured source."""
 
+        acquisition_deadline = self._monotonic_clock() + _ACQUISITION_DEADLINE_SECONDS
         try:
             return await self._deadline_runner(
-                self._acquire_with_resilience(scope, window), _ACQUISITION_DEADLINE_SECONDS
+                self._acquire_with_resilience(scope, window, acquisition_deadline),
+                _ACQUISITION_DEADLINE_SECONDS,
             )
         except TimeoutError:
             return MetricSeriesAcquisitionTimeout(diagnostic=_ACQUISITION_TIMEOUT)
 
     async def _acquire_with_resilience(
-        self, scope: MetricProviderScope, window: MetricAnalysisWindow
+        self,
+        scope: MetricProviderScope,
+        window: MetricAnalysisWindow,
+        acquisition_deadline: float,
     ) -> MetricSeriesAcquisitionOutcome:
         """Resolve one source and run its immutable request through the retry policy."""
 
-        acquisition_deadline = self._monotonic_clock() + _ACQUISITION_DEADLINE_SECONDS
         source = self._sources.get(scope.source_id)
         if source is None:
             return MetricSeriesUnavailable(diagnostic=_SOURCE_UNAVAILABLE)
@@ -189,7 +193,9 @@ class PrometheusMetricSeriesProvider:
             return _AttemptConnectRetryEligible()
         except httpx.TransportError:
             return _AttemptFailure()
-        except (httpx.DecodingError, httpx.TooManyRedirects, httpx.InvalidURL, httpx.StreamError):
+        except (httpx.InvalidURL, httpx.StreamError):
+            return _AttemptFailure()
+        except httpx.HTTPError:
             return _AttemptFailure()
 
     @staticmethod
@@ -253,21 +259,29 @@ async def _run_with_deadline[Result](awaitable: Awaitable[Result], seconds: floa
             {task}, timeout=max(0.0, deadline - asyncio.get_running_loop().time())
         )
     except BaseException:
-        task.cancel()
-        try:
-            await task
-        except BaseException:
-            pass
+        _cancel_without_waiting(task)
         raise
     if task in done and asyncio.get_running_loop().time() < deadline:
         return task.result()
 
+    _cancel_without_waiting(task)
+    raise TimeoutError
+
+
+def _cancel_without_waiting(task: asyncio.Future[Any]) -> None:
+    """Request cancellation without allowing asynchronous cleanup to extend a deadline."""
+
     task.cancel()
+    task.add_done_callback(_consume_background_task_outcome)
+
+
+def _consume_background_task_outcome(task: asyncio.Future[Any]) -> None:
+    """Retrieve a detached cancellation outcome so cleanup errors are not unobserved."""
+
     try:
-        await task
+        task.exception()
     except BaseException:
         pass
-    raise TimeoutError
 
 
 def _authentication(

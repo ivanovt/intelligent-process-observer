@@ -163,6 +163,55 @@ def test_first_retry_admission_has_an_inclusive_wait_plus_attempt_boundary(
     assert waits == expected_waits
 
 
+@pytest.mark.parametrize(
+    ("pre_transport_elapsed", "expected_type", "expected_requests", "expected_waits"),
+    [
+        (34.500_001, MetricSeriesAcquisitionTimeout, 1, []),
+        (34.5, MetricSeriesAvailable, 2, [0.5]),
+    ],
+)
+def test_acquisition_budget_anchor_includes_pre_transport_work(
+    pre_transport_elapsed: float,
+    expected_type: type[object],
+    expected_requests: int,
+    expected_waits: list[float],
+) -> None:
+    clock = _Clock()
+    waits: list[float] = []
+    requests = 0
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        nonlocal requests
+        requests += 1
+        if requests == 1:
+            raise httpx.ConnectError("unavailable", request=request)
+        return httpx.Response(200, json=_success())
+
+    async def sleep(seconds: float) -> None:
+        waits.append(seconds)
+
+    provider = PrometheusMetricSeriesProvider(
+        [_source()],
+        client_factory=lambda: httpx.AsyncClient(transport=httpx.MockTransport(handler)),
+        monotonic_clock=clock,
+        sleep=sleep,
+        deadline_runner=_immediate_deadline,
+    )
+    logical_request = provider._logical_request
+
+    def delayed_logical_request(*args: object) -> _LogicalRangeQuery:
+        clock.value = pre_transport_elapsed
+        return logical_request(*args)  # type: ignore[arg-type]
+
+    provider._logical_request = delayed_logical_request  # type: ignore[method-assign]
+
+    outcome = asyncio.run(provider.acquire(_scope(), _window()))
+
+    assert isinstance(outcome, expected_type)
+    assert requests == expected_requests
+    assert waits == expected_waits
+
+
 @pytest.mark.parametrize("retry_kind", ["connect", 429, 500, 502, 504])
 def test_second_retry_admission_uses_its_exact_one_second_wait(retry_kind: str | int) -> None:
     clock = _Clock()
@@ -213,6 +262,15 @@ def test_second_retry_admission_uses_its_exact_one_second_wait(retry_kind: str |
         (httpx.UnsupportedProtocol("unsupported"), _AttemptFailure),
         (httpx.DecodingError("decode"), _AttemptFailure),
         (httpx.TooManyRedirects("redirect"), _AttemptFailure),
+        (httpx.RequestError("generic request error"), _AttemptFailure),
+        (
+            httpx.HTTPStatusError(
+                "raised status error",
+                request=httpx.Request("GET", "https://prometheus.example.test"),
+                response=httpx.Response(500),
+            ),
+            _AttemptFailure,
+        ),
         (httpx.InvalidURL("invalid"), _AttemptFailure),
         (httpx.StreamError("stream"), _AttemptFailure),
     ],
@@ -233,6 +291,42 @@ def test_httpx_exception_taxonomy_has_only_one_retryable_exception(
     )
 
     assert isinstance(result, expected)
+
+
+@pytest.mark.parametrize(
+    "error",
+    [
+        httpx.RequestError("generic request error"),
+        httpx.HTTPStatusError(
+            "raised status error",
+            request=httpx.Request("GET", "https://prometheus.example.test"),
+            response=httpx.Response(500),
+        ),
+    ],
+)
+def test_generic_httpx_errors_return_typed_failure_without_retry(error: Exception) -> None:
+    async def scenario() -> tuple[object, list[float], int]:
+        waits: list[float] = []
+        calls = 0
+        provider = PrometheusMetricSeriesProvider([_source()], deadline_runner=_immediate_deadline)
+
+        async def raise_error(_: _LogicalRangeQuery) -> object:
+            nonlocal calls
+            calls += 1
+            raise error
+
+        async def sleep(seconds: float) -> None:
+            waits.append(seconds)
+
+        provider._execute_one_attempt = raise_error  # type: ignore[method-assign]
+        provider._sleep = sleep
+        return await provider.acquire(_scope(), _window()), waits, calls
+
+    outcome, waits, calls = asyncio.run(scenario())
+
+    assert outcome == MetricSeriesAcquisitionFailure(diagnostic="prometheus_acquisition_failed")
+    assert waits == []
+    assert calls == 1
 
 
 def test_terminal_attempt_variants_never_sleep_or_retry() -> None:
@@ -392,3 +486,33 @@ def test_hard_local_deadline_wins_when_cancelled_work_raises_connect_error() -> 
 
     with pytest.raises(TimeoutError):
         asyncio.run(_run_with_deadline(race(), 0.01))
+
+
+def test_hard_deadline_return_does_not_wait_for_delayed_cancellation_cleanup() -> None:
+    async def scenario() -> None:
+        cleanup_started = asyncio.Event()
+        cleanup_release = asyncio.Event()
+        cleanup_finished = asyncio.Event()
+
+        async def delayed_cleanup() -> None:
+            try:
+                await asyncio.Event().wait()
+            except asyncio.CancelledError:
+                cleanup_started.set()
+                await cleanup_release.wait()
+                cleanup_finished.set()
+                raise
+
+        runner = asyncio.create_task(_run_with_deadline(delayed_cleanup(), 0.005))
+        try:
+            await asyncio.wait_for(cleanup_started.wait(), timeout=0.1)
+            done, _ = await asyncio.wait({runner}, timeout=0.02)
+            assert runner in done
+            with pytest.raises(TimeoutError):
+                await runner
+            assert cleanup_finished.is_set() is False
+        finally:
+            cleanup_release.set()
+            await asyncio.wait_for(cleanup_finished.wait(), timeout=0.1)
+
+    asyncio.run(scenario())
