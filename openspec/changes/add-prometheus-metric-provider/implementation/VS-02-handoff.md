@@ -25,7 +25,7 @@
 | VS02-AC05 | Exact 1 MiB body succeeds. For each `429`, `500`, `502`, and `504`, the same status's bounded malformed body yields private `retry_eligible`, while a declared over-cap body yields private terminal failure and closes its stream. The existing streamed over-cap `504` case also closes, proving both body-bound paths precede status. |
 | VS02-AC06/08 | Valid successful `infos` preserve available data while discarding text. Valid non-empty warnings and every malformed success annotation form fail closed; sentinel assertions prove annotations, provider errors, labels, samples, URLs, and credentials do not enter outcomes. |
 | VS02-AC07 | Strict matrix parameterizes both valid `timeout` and `canceled` envelopes over each retryable `429`/`500`/`502`/`504` status with separately warnings-only and infos-only valid annotation forms; every case yields private `_AttemptTimeout`, proving timeout/canceled wins over retry eligibility. It also covers absent/malformed `status`, `errorType`, or `error` including empty values; string-but-not-`error` statuses; malformed warning/infos error annotations (which yield terminal failure at `503` and retry eligibility at each retryable status); bare/malformed `503`; non-retryable `400`/`422`/`501`; and retryable statuses with a valid non-timeout error. All resulting private/public outcomes are fixed and omit provider text. |
-| VS02-AC09 | Real composed provider pipeline test records current plus ordered 1h/1d/1w windows, equal step `3`, successful surrounding references, and partial omission of the single failed reference. |
+| VS02-AC09 | A real composed-provider mock-transport pipeline test records exactly one empty-current request and proves an empty matrix reaches the existing pipeline as available-but-insufficient, producing the completed-insufficient result. The existing composition regression records current plus ordered 1h/1d/1w windows, equal step `3`, successful surrounding references, and partial omission of the single failed reference. |
 
 ## Files and verification
 
@@ -33,7 +33,7 @@
 - Tests: `backend/tests/test_prometheus_metric_provider.py`, focused updates to
   `test_prometheus_metric_provider_configuration.py` and
   `test_metric_analysis_pipeline.py`.
-- `cd backend && uv run pytest tests/test_prometheus_metric_provider.py tests/test_prometheus_metric_provider_configuration.py tests/test_metric_analysis_pipeline.py tests/test_prometheus_adapter.py -q` — **192 passed, 28 skipped** (existing PostgreSQL-gated tests).
+- `cd backend && uv run pytest tests/test_prometheus_metric_provider.py tests/test_prometheus_metric_provider_configuration.py tests/test_metric_analysis_pipeline.py tests/test_prometheus_adapter.py -q` — **193 passed, 28 skipped** (existing PostgreSQL-gated tests).
 - Targeted Ruff check and format check for the provider/focused VS-02 tests, and
   `git diff --check` — **passed**.
 
@@ -50,6 +50,8 @@ Initial implementation commit: `99bce0803fb8781151b085d06925d1edf3dacae2`
 Evidence correction commit: `d01a10477158d316b18eac43fc48abca5ddd01db`
 
 Final error-envelope evidence correction: `0d355201d94da59db062afbad794cbce96a98e67`
+
+Empty-current composed-provider evidence correction: `HEAD` (this atomic correction commit).
 
 Plan change requested: none.
 

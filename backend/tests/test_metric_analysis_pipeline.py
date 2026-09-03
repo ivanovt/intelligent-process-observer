@@ -1534,6 +1534,54 @@ def test_real_composed_provider_preserves_current_failure_result(
     }
 
 
+def test_real_composed_provider_empty_current_completes_insufficient() -> None:
+    requests: list[httpx.Request] = []
+
+    def response(request: httpx.Request) -> httpx.Response:
+        requests.append(request)
+        return httpx.Response(
+            200,
+            json={"status": "success", "data": {"resultType": "matrix", "result": []}},
+        )
+
+    source = PrometheusSourceSettings(
+        id="plant-prometheus",
+        name="Plant Prometheus",
+        base_url="https://prometheus.example.test/prometheus",
+        credentials=BearerTokenCredentials(type="bearer_token", token="sentinel"),
+    )
+    provider = PrometheusMetricSeriesProvider(
+        [source], client_factory=lambda: httpx.AsyncClient(transport=httpx.MockTransport(response))
+    )
+    execution_context = context()
+    agent = FakeAgent()
+    pipeline = MetricAnalysisPipeline(
+        provider=provider,
+        agent=agent,
+        history_reader=FakeHistoryReader(),
+        repository=RecordingRepository([]),
+        result_builder=MetricResultBuilder(lambda: WINDOW_START + timedelta(minutes=5)),
+    )
+
+    analysis = run(pipeline.analyze(execution_context))
+
+    assert len(requests) == 1
+    assert requests[0].url.path == "/prometheus/api/v1/query_range"
+    assert parse_qs(requests[0].content.decode(), strict_parsing=True) == {
+        "query": [execution_context.provider_scope.query],
+        "start": [WINDOW_START.isoformat().replace("+00:00", "Z")],
+        "end": [(WINDOW_START + timedelta(seconds=180)).isoformat().replace("+00:00", "Z")],
+        "step": ["3"],
+        "timeout": ["10s"],
+        "limit": ["2"],
+    }
+    assert isinstance(analysis.prepared, PreparedInsufficientSeries)
+    assert analysis.failure is None
+    assert len(agent.requests) == 1
+    assert analysis.terminal_result.status is LensRunStatus.COMPLETED
+    assert analysis.terminal_result.payload["data_quality"] == "insufficient"
+
+
 def test_real_provider_preserves_current_and_ordered_reference_windows() -> None:
     requests: list[httpx.Request] = []
 
