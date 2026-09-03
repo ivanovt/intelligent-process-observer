@@ -6,6 +6,7 @@ import asyncio
 import inspect
 from datetime import UTC, datetime, timedelta
 
+import httpx
 import pytest
 
 from app.core.settings import (
@@ -60,13 +61,25 @@ def _acquire(provider: PrometheusMetricSeriesProvider, source_id: str = "plant-p
     return asyncio.run(provider.acquire(_scope(source_id), _window()))
 
 
+def _provider(sources: list[PrometheusSourceSettings]) -> PrometheusMetricSeriesProvider:
+    def response(_: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            200, json={"status": "success", "data": {"resultType": "matrix", "result": []}}
+        )
+
+    return PrometheusMetricSeriesProvider(
+        sources,
+        client_factory=lambda: httpx.AsyncClient(transport=httpx.MockTransport(response)),
+    )
+
+
 def _accepts_port(provider: MetricSeriesProvider) -> MetricSeriesProvider:
     return provider
 
 
 def test_absent_or_unknown_source_is_exact_and_never_falls_back() -> None:
-    absent = PrometheusMetricSeriesProvider([])
-    configured = PrometheusMetricSeriesProvider(
+    absent = _provider([])
+    configured = _provider(
         [
             _source("https://first.example.test", source_id="first"),
             _source("https://second.example.test", source_id="second"),
@@ -77,9 +90,7 @@ def test_absent_or_unknown_source_is_exact_and_never_falls_back() -> None:
     assert _acquire(configured, "missing") == MetricSeriesUnavailable(
         diagnostic="prometheus_source_unavailable"
     )
-    assert _acquire(configured, "second") == MetricSeriesAcquisitionFailure(
-        diagnostic="prometheus_transport_not_implemented"
-    )
+    assert _acquire(configured, "second").source == "prometheus"
 
 
 @pytest.mark.parametrize(
@@ -95,12 +106,10 @@ def test_absent_or_unknown_source_is_exact_and_never_falls_back() -> None:
         "http://[::1]:9090/metrics",
     ],
 )
-def test_valid_production_targets_reach_only_the_transport_placeholder(base_url: str) -> None:
-    outcome = _acquire(PrometheusMetricSeriesProvider([_source(base_url)]))
+def test_valid_production_targets_reach_the_injected_transport(base_url: str) -> None:
+    outcome = _acquire(_provider([_source(base_url)]))
 
-    assert outcome == MetricSeriesAcquisitionFailure(
-        diagnostic="prometheus_transport_not_implemented"
-    )
+    assert outcome.samples == ()
 
 
 @pytest.mark.parametrize(
@@ -130,7 +139,7 @@ def test_valid_production_targets_reach_only_the_transport_placeholder(base_url:
     ],
 )
 def test_invalid_selected_target_is_rejected_before_any_transport(base_url: str) -> None:
-    outcome = _acquire(PrometheusMetricSeriesProvider([_source(base_url)]))
+    outcome = _acquire(_provider([_source(base_url)]))
 
     assert outcome == MetricSeriesAcquisitionFailure(diagnostic="prometheus_source_invalid")
 
@@ -149,7 +158,7 @@ def test_production_validation_does_not_change_shared_settings_or_leak_credentia
         credentials=BearerTokenCredentials(type="bearer_token", token=bearer),
     )
     settings = Settings(prometheus_sources=[selected, unselected])
-    provider = PrometheusMetricSeriesProvider(settings.prometheus_sources)
+    provider = _provider(settings.prometheus_sources)
 
     outcome = _acquire(provider)
     rendered = f"{outcome!r} {provider!r}"
@@ -160,13 +169,11 @@ def test_production_validation_does_not_change_shared_settings_or_leak_credentia
         assert protected not in rendered
 
 
-def test_provider_is_port_only_and_contains_no_http_client_path() -> None:
-    provider = PrometheusMetricSeriesProvider([_source("https://prometheus.example.test")])
-    source = inspect.getsource(PrometheusMetricSeriesProvider)
+def test_provider_is_port_only() -> None:
+    provider = _provider([_source("https://prometheus.example.test")])
 
     assert _accepts_port(provider) is provider
-    assert "httpx" not in source
-    assert "AsyncClient" not in source
+    assert "app.metrics" not in inspect.getsource(PrometheusMetricSeriesProvider)
 
 
 class _PreflightAdapter:
@@ -254,12 +261,8 @@ def test_shared_consumers_remain_compatible_for_valid_and_production_invalid_sou
             )
             with pytest.raises(RuntimeError, match="repository reached"):
                 await create_service.create(_Session(), definition)
-            outcome = await provider.acquire(_scope(), _window())
-            expected = (
-                "prometheus_source_invalid"
-                if "@" in base_url
-                else "prometheus_transport_not_implemented"
-            )
-            assert outcome.diagnostic == expected
+            if "@" in base_url:
+                outcome = await provider.acquire(_scope(), _window())
+                assert outcome.diagnostic == "prometheus_source_invalid"
 
     asyncio.run(exercise())

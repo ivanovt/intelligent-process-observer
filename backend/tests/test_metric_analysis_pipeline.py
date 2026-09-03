@@ -8,8 +8,10 @@ from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import ANY
+from urllib.parse import parse_qs
 from uuid import UUID, uuid4
 
+import httpx
 import pytest
 from alembic import command
 from alembic.config import Config
@@ -1530,6 +1532,75 @@ def test_real_composed_provider_preserves_current_failure_result(
             "message": "Current metric data acquisition failed.",
         },
     }
+
+
+def test_real_provider_preserves_current_and_ordered_reference_windows() -> None:
+    requests: list[httpx.Request] = []
+
+    def response(request: httpx.Request) -> httpx.Response:
+        requests.append(request)
+        if len(requests) == 3:
+            return httpx.Response(
+                400, json={"status": "error", "errorType": "bad_data", "error": "x"}
+            )
+        form = parse_qs(request.content.decode(), strict_parsing=True)
+        start = datetime.fromisoformat(form["start"][0].replace("Z", "+00:00"))
+        end = datetime.fromisoformat(form["end"][0].replace("Z", "+00:00"))
+        return httpx.Response(
+            200,
+            json={
+                "status": "success",
+                "data": {
+                    "resultType": "matrix",
+                    "result": [
+                        {
+                            "metric": {"private": "label"},
+                            "values": [
+                                [start.timestamp(), "10"],
+                                [(start + timedelta(seconds=60)).timestamp(), "20"],
+                                [end.timestamp(), "40"],
+                            ],
+                        }
+                    ],
+                },
+            },
+        )
+
+    source = PrometheusSourceSettings(
+        id="plant-prometheus",
+        name="Plant Prometheus",
+        base_url="https://prometheus.example.test/prometheus",
+        credentials=BearerTokenCredentials(type="bearer_token", token="sentinel"),
+    )
+    provider = PrometheusMetricSeriesProvider(
+        [source], client_factory=lambda: httpx.AsyncClient(transport=httpx.MockTransport(response))
+    )
+    execution_context = context(reference_periods=("1h", "1d", "1w"))
+    pipeline = MetricAnalysisPipeline(
+        provider=provider,
+        agent=FakeAgent(),
+        history_reader=FakeHistoryReader(),
+        repository=RecordingRepository([]),
+        result_builder=MetricResultBuilder(lambda: WINDOW_START + timedelta(minutes=5)),
+    )
+
+    analysis = run(pipeline.analyze(execution_context))
+
+    assert len(requests) == 4
+    assert [request.url.path for request in requests] == ["/prometheus/api/v1/query_range"] * 4
+    forms = [parse_qs(request.content.decode(), strict_parsing=True) for request in requests]
+    assert [form["step"] for form in forms] == [["3"]] * 4
+    assert [form["start"] for form in forms] == [
+        [WINDOW_START.isoformat().replace("+00:00", "Z")],
+        [(WINDOW_START - timedelta(hours=1)).isoformat().replace("+00:00", "Z")],
+        [(WINDOW_START - timedelta(days=1)).isoformat().replace("+00:00", "Z")],
+        [(WINDOW_START - timedelta(weeks=1)).isoformat().replace("+00:00", "Z")],
+    ]
+    assert [item["offset"] for item in analysis.terminal_result.payload["reference_periods"]] == [
+        "1h",
+        "1w",
+    ]
+    assert analysis.terminal_result.payload["status"]["state"] == "partial"
 
 
 def _provider_scope(*, source_id: str) -> MetricProviderScope:
