@@ -1,6 +1,6 @@
 # Implementation Plan — add-prometheus-metric-provider
 
-**Status:** APPROVED — EXECUTION IN PROGRESS
+**Status:** APPROVED — EXECUTION BLOCKED
 **Artifact type:** Non-normative execution plan
 **Approved OpenSpec change:** `add-prometheus-metric-provider`
 **Implementation branch:** `feature/add-prometheus-metric-provider`
@@ -367,7 +367,7 @@ VS-01 -> VS-02 -> VS-03 -> VS-04
 |---|---|---|---|---|---|---|
 | VS-01 | Source-safe transport-free walking skeleton through the existing Metric port | none | high-risk | COMPLETE | 1217266598aa5f20b902e9ae2edfe1da2ffed6c2 | `implementation/VS-01-handoff.md` |
 | VS-02 | Complete bounded single-attempt request, mapping, and status classification | VS-01 | high-risk | COMPLETE | `99bce08`, `d01a104`, `0d35520`, `ee4d364` | `implementation/VS-02-handoff.md` |
-| VS-03 | Hard deadlines, deterministic retries, and terminal resilience integration | VS-02 | high-risk | IN_PROGRESS | - | - |
+| VS-03 | Hard deadlines, deterministic retries, and terminal resilience integration | VS-02 | high-risk | BLOCKED | - | - |
 | VS-04 | Compatibility, operational documentation, and whole-change conformance | VS-03 | normal | PLANNED | - | - |
 
 ## Slice definitions
@@ -1037,3 +1037,12 @@ acceptance obligations, proof-level changes, or redesign decisions here.
   still running. A fresh corrective implementer is active to restore the approved
   resource-closure/no-post-deadline-work semantics without changing scope; VS-03 remains
   `IN_PROGRESS` and VS-04 is not ready.
+- VS-03 stop/escalation (2026-09-04): `SLICE BLOCKED BY CONTRACT CONFLICT`. The approved
+  hard 15-second attempt/50-second acquire deadline and no-post-deadline-work semantics
+  require an absolute return bound, while the same approved gate requires cancellation-
+  resistant response/client cleanup to complete before the typed timeout returns. For an
+  arbitrary cleanup operation that catches cancellation and awaits an unbounded external
+  operation, returning at the absolute deadline leaves cleanup active; awaiting closure
+  exceeds the deadline. The approved sources impose neither a priority nor a bounded/
+  cooperative transport-cleanup contract. Human source resolution is required before
+  any further VS-03 correction, re-planning, re-review, or VS-04 dispatch.
