@@ -25,6 +25,7 @@ from app.infrastructure.jira.configuration import JiraAlertProviderSettings
 
 _FIELDS = ["summary", "created", "resolutiondate", "status", "priority"]
 _ATTEMPT_DEADLINE_SECONDS = 15.0
+_MAX_RETRY_AFTER_SECONDS = int(_ATTEMPT_DEADLINE_SECONDS)
 _ACQUISITION_DEADLINE_SECONDS = 60.0
 _MAX_RETRIES_PER_PAGE = 2
 _RETRYABLE_STATUS_CODES = frozenset({429, 502, 503, 504})
@@ -172,7 +173,7 @@ class HttpxJiraAlertProvider:
             HttpxJiraAlertProvider._parse_retry_after(response) if response is not None else None
         )
         if parsed_delay is not None:
-            return float(parsed_delay) if parsed_delay <= _ATTEMPT_DEADLINE_SECONDS else None
+            return float(parsed_delay) if parsed_delay <= _MAX_RETRY_AFTER_SECONDS else None
         return 0.5 if retry_number == 1 else 1.0
 
     @staticmethod
@@ -184,8 +185,15 @@ class HttpxJiraAlertProvider:
         value = values[0].strip(b" \t")
         if not value or any(byte < ord("0") or byte > ord("9") for byte in value):
             return None
-        parsed = int(value, 10)
-        return parsed if parsed > 0 else None
+        significant_digits = value.lstrip(b"0")
+        if not significant_digits:
+            return None
+        maximum_digits = str(_MAX_RETRY_AFTER_SECONDS).encode("ascii")
+        if len(significant_digits) > len(maximum_digits) or (
+            len(significant_digits) == len(maximum_digits) and significant_digits > maximum_digits
+        ):
+            return _MAX_RETRY_AFTER_SECONDS + 1
+        return int(significant_digits, 10)
 
     @staticmethod
     async def _default_deadline_runner(

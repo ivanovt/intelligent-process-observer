@@ -10,6 +10,9 @@
   with only surrounding SP/HTAB stripped, selects its integer seconds through 15.
   Duplicate, combined, signed, fractional, date, zero, and other unusable forms use
   the fixed 0.5/1.0-second fallback; a usable value above 15 returns typed timeout.
+- The Retry-After cap comparison is bounded before integer conversion. Arbitrarily long
+  valid decimal values, including values with leading zeroes, therefore return typed
+  timeout without a conversion exception, wait, or retry.
 - A wait and its next full 15-second attempt must fit the single 60-second acquire
   deadline. The wait itself is cancellably bounded by remaining acquire time; no
   later retry or page starts after exhaustion.
@@ -31,7 +34,7 @@ VS05-AC01 through VS05-AC07.
 
 ## Verification
 
-`cd backend && uv run pytest tests/test_jira_alert_provider.py tests/test_alert_analysis_pipeline.py -q` — 59 passed.
+`cd backend && uv run pytest tests/test_jira_alert_provider.py tests/test_alert_analysis_pipeline.py -q` — 59 passed, including a 5,000-digit valid oversized Retry-After regression.
 
 `cd backend && uv run ruff check src/app/infrastructure/jira/adapter.py tests/test_jira_alert_provider.py` — passed.
 
@@ -53,7 +56,7 @@ VS05-AC01 through VS05-AC07.
 No operator documentation or final whole-change conformance work was added; those remain
 VS-06 responsibility.
 
-Commit SHA: `HEAD` (this atomic VS-05 commit).
+Commit SHA: `HEAD` (this atomic VS-05 correction commit).
 
 Plan change requested: none.
 

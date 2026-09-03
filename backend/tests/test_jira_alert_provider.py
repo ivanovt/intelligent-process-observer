@@ -795,6 +795,7 @@ def test_retry_after_raw_header_grammar_and_waits_are_exact() -> None:
         ([(b"Retry-After", b" \t005\t ")], [5.0]),
         ([(b"Retry-After", b"15")], [15.0]),
         ([(b"Retry-After", b"16")], []),
+        ([(b"Retry-After", b"9" * 5000)], []),
         ([(b"Retry-After", b"0")], [0.5]),
         ([(b"Retry-After", b"+5")], [0.5]),
         ([(b"Retry-After", b"1.5")], [0.5]),
@@ -824,7 +825,7 @@ def test_retry_after_raw_header_grammar_and_waits_are_exact() -> None:
             sleep=sleep,
         )
         outcome = asyncio.run(provider.acquire(_scope(), _window()))
-        if headers == [(b"Retry-After", b"16")]:
+        if expected_waits == []:
             assert outcome.state == "timeout" and calls == 1
         else:
             assert outcome.records == () and calls == 2
