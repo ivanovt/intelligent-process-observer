@@ -19,6 +19,7 @@ from app.infrastructure.prometheus.composition import (
     _AttemptRetryEligible,
     _AttemptTimeout,
     _classify_complete_response,
+    _LogicalRangeQuery,
 )
 from app.metrics.contracts import (
     MetricAnalysisWindow,
@@ -81,12 +82,43 @@ def test_default_client_disables_redirects_and_environment_proxies_with_tls_veri
     ("base_url", "seconds", "expected_path", "expected_step"),
     [
         ("https://prometheus.example.test", 0.5, "/api/v1/query_range", "1"),
+        ("https://prometheus.example.test/", 1.25, "/api/v1/query_range", "1"),
+        (
+            "https://prometheus.example.test/prometheus",
+            59.999,
+            "/prometheus/api/v1/query_range",
+            "1",
+        ),
         ("https://prometheus.example.test/", 60, "/api/v1/query_range", "1"),
         (
             "https://prometheus.example.test/prometheus",
             60.001,
             "/prometheus/api/v1/query_range",
             "2",
+        ),
+        (
+            "https://prometheus.example.test/prometheus",
+            119.999,
+            "/prometheus/api/v1/query_range",
+            "2",
+        ),
+        (
+            "https://prometheus.example.test/prometheus",
+            120,
+            "/prometheus/api/v1/query_range",
+            "2",
+        ),
+        (
+            "https://prometheus.example.test/prometheus",
+            120.001,
+            "/prometheus/api/v1/query_range",
+            "3",
+        ),
+        (
+            "https://prometheus.example.test/monitoring/prometheus/",
+            3599.999,
+            "/monitoring/prometheus/api/v1/query_range",
+            "60",
         ),
         (
             "https://prometheus.example.test/monitoring/prometheus/",
@@ -120,7 +152,8 @@ def test_one_attempt_posts_exact_immutable_range_request(
     assert request.url.path == expected_path
     assert request.url.query == b""
     assert request.headers["content-type"] == "application/x-www-form-urlencoded"
-    assert parse_qs(request.content.decode(), strict_parsing=True) == {
+    form = parse_qs(request.content.decode(), strict_parsing=True)
+    assert form == {
         "query": ["up{job='plant'}"],
         "start": [_START.isoformat().replace("+00:00", "Z")],
         "end": [(_START + timedelta(seconds=seconds)).isoformat().replace("+00:00", "Z")],
@@ -128,6 +161,7 @@ def test_one_attempt_posts_exact_immutable_range_request(
         "timeout": ["10s"],
         "limit": ["2"],
     }
+    assert math.floor(seconds / int(form["step"][0])) + 1 <= 61
 
 
 @pytest.mark.parametrize(
@@ -225,23 +259,48 @@ def test_unrepresentable_success_shapes_fail_closed(payload: dict) -> None:
     assert "provider-warning-sentinel" not in repr(outcome)
 
 
+def test_valid_success_infos_are_discarded_without_changing_available_data() -> None:
+    info_text = "provider-info-must-not-leak"
+    outcome = _acquire(
+        _provider(
+            _source(),
+            lambda _: httpx.Response(200, json=_success([], warnings=[], infos=[info_text])),
+        )
+    )
+
+    assert outcome == MetricSeriesAvailable(source="prometheus", samples=())
+    assert info_text not in repr(outcome)
+
+
+@pytest.mark.parametrize(
+    "annotations",
+    [
+        {"warnings": "not-an-array"},
+        {"warnings": ["valid", 1]},
+        {"infos": "not-an-array"},
+        {"infos": ["valid", 1]},
+        {"warnings": [], "infos": ["valid", 1]},
+    ],
+)
+def test_malformed_success_annotations_fail_closed_without_provider_text_leakage(
+    annotations: dict,
+) -> None:
+    outcome = _acquire(
+        _provider(_source(), lambda _: httpx.Response(200, json=_success([], **annotations)))
+    )
+
+    assert outcome == MetricSeriesAcquisitionFailure(diagnostic="prometheus_acquisition_failed")
+    assert "valid" not in repr(outcome)
+
+
 @pytest.mark.parametrize("status_code", [429, 500, 502, 504])
-def test_complete_malformed_retryable_status_is_private_retry_eligible(status_code: int) -> None:
-    result = _classify_complete_response(status_code, b"not-json")
+def test_retryable_status_body_precedence_pairs_bounded_malformed_and_oversized_body(
+    status_code: int,
+) -> None:
+    bounded = _classify_complete_response(status_code, b"not-json")
 
-    assert result == _AttemptRetryEligible(status_code=status_code)
+    assert bounded == _AttemptRetryEligible(status_code=status_code)
 
-
-def test_timeout_and_canceled_error_envelopes_win_before_status_retry_policy() -> None:
-    payload = json.dumps(
-        {"status": "error", "errorType": "timeout", "error": "provider-secret", "warnings": []}
-    ).encode()
-
-    assert isinstance(_classify_complete_response(503, payload), _AttemptTimeout)
-    assert isinstance(_classify_complete_response(503, b'{"status":"error"}'), _AttemptFailure)
-
-
-def test_oversized_declared_response_fails_before_retryable_status_and_closes() -> None:
     closed = False
 
     class ClosingStream(httpx.AsyncByteStream):
@@ -254,15 +313,102 @@ def test_oversized_declared_response_fails_before_retryable_status_and_closes() 
 
     def handler(_: httpx.Request) -> httpx.Response:
         return httpx.Response(
-            429,
+            status_code,
             headers={"content-length": str(1024 * 1024 + 1)},
             stream=ClosingStream(),
         )
 
-    outcome = _acquire(_provider(_source(), handler))
+    oversized = asyncio.run(
+        _provider(_source(), handler)._execute_one_attempt(
+            _LogicalRangeQuery(
+                url="https://prometheus.example.test/api/v1/query_range",
+                form=(),
+                headers=(),
+                auth=None,
+            )
+        )
+    )
 
-    assert outcome == MetricSeriesAcquisitionFailure(diagnostic="prometheus_acquisition_failed")
+    assert oversized == _AttemptFailure()
     assert closed is True
+
+
+@pytest.mark.parametrize("error_type", ["timeout", "canceled"])
+def test_valid_timeout_and_canceled_error_envelopes_with_annotations_win_before_status_policy(
+    error_type: str,
+) -> None:
+    provider_text = "provider-text-must-not-leak"
+    payload = json.dumps(
+        {
+            "status": "error",
+            "errorType": error_type,
+            "error": provider_text,
+            "warnings": [provider_text],
+            "infos": [provider_text],
+        }
+    ).encode()
+
+    result = _classify_complete_response(503, payload)
+
+    assert result == _AttemptTimeout()
+    assert provider_text not in repr(result)
+
+
+@pytest.mark.parametrize(
+    "payload",
+    [
+        {"errorType": "timeout", "error": "provider-text-must-not-leak"},
+        {"status": 1, "errorType": "timeout", "error": "provider-text-must-not-leak"},
+        {"status": "error", "error": "provider-text-must-not-leak"},
+        {"status": "error", "errorType": "", "error": "provider-text-must-not-leak"},
+        {"status": "error", "errorType": 1, "error": "provider-text-must-not-leak"},
+        {"status": "error", "errorType": "timeout"},
+        {"status": "error", "errorType": "timeout", "error": ""},
+        {"status": "error", "errorType": "timeout", "error": 1},
+        {
+            "status": "error",
+            "errorType": "timeout",
+            "error": "provider-text-must-not-leak",
+            "warnings": "not-an-array",
+        },
+    ],
+)
+def test_invalid_error_envelopes_do_not_prove_timeout_on_503(payload: dict) -> None:
+    result = _classify_complete_response(503, json.dumps(payload).encode())
+
+    assert result == _AttemptFailure()
+    assert "provider-text-must-not-leak" not in repr(result)
+
+
+@pytest.mark.parametrize(
+    ("status_code", "body"),
+    [
+        (503, b""),
+        (503, b"not-json"),
+        (503, b'{"status":"error"}'),
+        (400, b'{"status":"error","errorType":"bad_data","error":"provider-text-must-not-leak"}'),
+        (422, b'{"status":"error","errorType":"bad_data","error":"provider-text-must-not-leak"}'),
+        (501, b'{"status":"error","errorType":"bad_data","error":"provider-text-must-not-leak"}'),
+    ],
+)
+def test_bare_malformed_503_and_other_non_retryable_statuses_are_terminal_failures(
+    status_code: int, body: bytes
+) -> None:
+    result = _classify_complete_response(status_code, body)
+
+    assert result == _AttemptFailure()
+    assert "provider-text-must-not-leak" not in repr(result)
+
+
+@pytest.mark.parametrize("status_code", [429, 500, 502, 504])
+def test_retryable_status_precedes_valid_non_timeout_error_type(status_code: int) -> None:
+    result = _classify_complete_response(
+        status_code,
+        b'{"status":"error","errorType":"bad_data","error":"provider-text-must-not-leak"}',
+    )
+
+    assert result == _AttemptRetryEligible(status_code=status_code)
+    assert "provider-text-must-not-leak" not in repr(result)
 
 
 def test_exact_one_mebibyte_complete_success_body_is_accepted() -> None:
