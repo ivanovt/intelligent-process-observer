@@ -334,8 +334,16 @@ def test_retryable_status_body_precedence_pairs_bounded_malformed_and_oversized_
 
 
 @pytest.mark.parametrize("error_type", ["timeout", "canceled"])
-def test_valid_timeout_and_canceled_error_envelopes_with_annotations_win_before_status_policy(
-    error_type: str,
+@pytest.mark.parametrize("status_code", [429, 500, 502, 504])
+@pytest.mark.parametrize(
+    "annotations",
+    [
+        {"warnings": ["provider-warning-must-not-leak"]},
+        {"infos": ["provider-info-must-not-leak"]},
+    ],
+)
+def test_valid_timeout_and_canceled_error_envelopes_override_retryable_statuses(
+    error_type: str, status_code: int, annotations: dict[str, list[str]]
 ) -> None:
     provider_text = "provider-text-must-not-leak"
     payload = json.dumps(
@@ -343,15 +351,17 @@ def test_valid_timeout_and_canceled_error_envelopes_with_annotations_win_before_
             "status": "error",
             "errorType": error_type,
             "error": provider_text,
-            "warnings": [provider_text],
-            "infos": [provider_text],
+            **annotations,
         }
     ).encode()
 
-    result = _classify_complete_response(503, payload)
+    result = _classify_complete_response(status_code, payload)
 
     assert result == _AttemptTimeout()
-    assert provider_text not in repr(result)
+    rendered = repr(result)
+    assert provider_text not in rendered
+    assert "provider-warning-must-not-leak" not in rendered
+    assert "provider-info-must-not-leak" not in rendered
 
 
 @pytest.mark.parametrize(
@@ -359,6 +369,16 @@ def test_valid_timeout_and_canceled_error_envelopes_with_annotations_win_before_
     [
         {"errorType": "timeout", "error": "provider-text-must-not-leak"},
         {"status": 1, "errorType": "timeout", "error": "provider-text-must-not-leak"},
+        {
+            "status": "success",
+            "errorType": "timeout",
+            "error": "provider-text-must-not-leak",
+        },
+        {
+            "status": "not-error",
+            "errorType": "timeout",
+            "error": "provider-text-must-not-leak",
+        },
         {"status": "error", "error": "provider-text-must-not-leak"},
         {"status": "error", "errorType": "", "error": "provider-text-must-not-leak"},
         {"status": "error", "errorType": 1, "error": "provider-text-must-not-leak"},
@@ -378,6 +398,37 @@ def test_invalid_error_envelopes_do_not_prove_timeout_on_503(payload: dict) -> N
 
     assert result == _AttemptFailure()
     assert "provider-text-must-not-leak" not in repr(result)
+
+
+@pytest.mark.parametrize("malformed_infos", ["not-an-array", ["valid", 1]])
+@pytest.mark.parametrize(
+    ("status_code", "expected"),
+    [
+        (503, _AttemptFailure()),
+        (429, _AttemptRetryEligible(status_code=429)),
+        (500, _AttemptRetryEligible(status_code=500)),
+        (502, _AttemptRetryEligible(status_code=502)),
+        (504, _AttemptRetryEligible(status_code=504)),
+    ],
+)
+def test_malformed_infos_on_error_envelopes_follow_status_policy(
+    malformed_infos: str | list[str | int], status_code: int, expected: object
+) -> None:
+    provider_text = "provider-text-must-not-leak"
+    result = _classify_complete_response(
+        status_code,
+        json.dumps(
+            {
+                "status": "error",
+                "errorType": "timeout",
+                "error": provider_text,
+                "infos": malformed_infos,
+            }
+        ).encode(),
+    )
+
+    assert result == expected
+    assert provider_text not in repr(result)
 
 
 @pytest.mark.parametrize(
