@@ -1045,3 +1045,9 @@ acceptance obligations, proof-level changes, or redesign decisions here.
   lint, format, frontend lint/build, and strict all-spec validation passed). VS06-AC01
   through VS06-AC04 passed. No candidate shared knowledge. The change is unarchived and
   awaiting the required independent whole-change implementation review.
+- Final implementation-review stop (2026-09-03): independent review reported MEDIUM
+  IR-001 in `app.infrastructure.jira.configuration.canonical_jira_origin`: empty explicit
+  port and parser-normalized whitespace/control URL inputs are accepted despite the
+  strict credential-safe allowlist. All slices are complete, but repository governance
+  requires human triage before any targeted correction. The change remains unarchived;
+  no correction worker is active.
