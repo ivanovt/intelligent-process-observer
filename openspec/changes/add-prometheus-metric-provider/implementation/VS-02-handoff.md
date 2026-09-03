@@ -33,7 +33,7 @@
 - Tests: `backend/tests/test_prometheus_metric_provider.py`, focused updates to
   `test_prometheus_metric_provider_configuration.py` and
   `test_metric_analysis_pipeline.py`.
-- `cd backend && uv run pytest tests/test_prometheus_metric_provider.py tests/test_prometheus_metric_provider_configuration.py tests/test_metric_analysis_pipeline.py tests/test_prometheus_adapter.py -q` — **166 passed, 28 skipped** (existing PostgreSQL-gated tests).
+- `cd backend && uv run pytest tests/test_prometheus_metric_provider.py tests/test_prometheus_metric_provider_configuration.py tests/test_metric_analysis_pipeline.py tests/test_prometheus_adapter.py -q` — **192 passed, 28 skipped** (existing PostgreSQL-gated tests).
 - Targeted Ruff check and format check for the provider/focused VS-02 tests, and
   `git diff --check` — **passed**.
 
