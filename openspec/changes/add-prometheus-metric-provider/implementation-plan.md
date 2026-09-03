@@ -1026,3 +1026,9 @@ acceptance obligations, proof-level changes, or redesign decisions here.
   `implementation/VS-02-handoff.md`. No shared-knowledge candidates.
 - VS-03 active assignment (2026-09-04): delegated to a fresh Slice Implementer after
   accepted VS-02 handoff and final high-risk gate.
+- VS-03 high-risk review (2026-09-04): `SLICE CHANGES REQUIRED` with HIGH findings that
+  generic HTTPX request/client errors could escape typed provider outcomes and
+  cancellation cleanup could exceed the hard deadline, plus a MEDIUM finding that retry
+  admission anchored the acquisition budget too late. A fresh corrective implementer is
+  active within the approved VS-03 resilience boundary; VS-03 remains `IN_PROGRESS` and
+  VS-04 is not ready.
