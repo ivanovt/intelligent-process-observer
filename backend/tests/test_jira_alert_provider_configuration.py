@@ -76,6 +76,51 @@ def test_unsafe_site_urls_are_rejected(site_url: str) -> None:
         canonical_jira_origin(site_url)
 
 
+@pytest.mark.parametrize(
+    "site_url",
+    [
+        "https://foo.atlassian.net:",
+        "HTTPS://foo.atlassian.net:",
+        " https://foo.atlassian.net",
+        "https://foo.atlassian.net ",
+        "https://foo .atlassian.net",
+        "https://foo.atlassian.net/ jira",
+        "https://foo.atlassian.net/\u00a0jira",
+    ],
+)
+def test_raw_site_url_syntax_rejected_before_parser_normalization(site_url: str) -> None:
+    with pytest.raises(ValueError, match="invalid Jira site URL"):
+        canonical_jira_origin(site_url)
+
+
+@pytest.mark.parametrize("control", [*(chr(codepoint) for codepoint in range(32)), "\x7f"])
+def test_ascii_controls_are_rejected_before_parser_normalization(control: str) -> None:
+    with pytest.raises(ValueError, match="invalid Jira site URL"):
+        canonical_jira_origin(f"https://foo.atlassian.net/{control}jira")
+
+
+@pytest.mark.parametrize(
+    "site_url",
+    [
+        "https://foo.atlassian.net:",
+        "https://foo.atlassian.net\t/jira",
+        "https://foo.atlassian.net/jira\n",
+    ],
+)
+def test_raw_site_url_syntax_never_constructs_a_provider(site_url: str) -> None:
+    raw = json.dumps(
+        {
+            "site_url": site_url,
+            "email": "bot@example.invalid",
+            "api_token": "secret",
+        }
+    )
+
+    provider = JiraAlertProviderResolver(raw).resolve(_scope())
+
+    assert isinstance(provider, UnavailableAlertProvider)
+
+
 def test_valid_and_invalid_jira_resolution_always_returns_an_alert_provider() -> None:
     valid = '{"site_url":"https://foo.atlassian.net/jira","email":"bot@example.invalid","api_token":"secret"}'
     assert isinstance(JiraAlertProviderResolver(valid).resolve(_scope()), HttpxJiraAlertProvider)

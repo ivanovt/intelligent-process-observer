@@ -57,6 +57,16 @@ def parse_jira_alert_provider_settings(raw: str) -> JiraAlertProviderSettings:
 
 def canonical_jira_origin(site_url: str) -> str:
     """Validate a Jira Cloud site URL and return its safe pathless origin."""
+    if any(
+        character.isspace() or ord(character) < 32 or ord(character) == 127
+        for character in site_url
+    ):
+        raise ValueError("invalid Jira site URL")
+    scheme_separator = site_url.find("://")
+    if scheme_separator != -1:
+        authority = re.split(r"[/#?]", site_url[scheme_separator + 3 :], maxsplit=1)[0]
+        if ":" in authority:
+            raise ValueError("invalid Jira site URL")
     parts = urlsplit(site_url)
     if parts.scheme != "https" or parts.username is not None or parts.password is not None:
         raise ValueError("invalid Jira site URL")
