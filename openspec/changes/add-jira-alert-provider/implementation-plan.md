@@ -262,7 +262,7 @@ for parallel execution.
 
 | Slice | Goal | Depends on | Risk | Status | Commit | Handoff |
 |---|---|---|---|---|---|---|
-| VS-01 | Compose a credential-safe Jira provider and complete an empty single-page walking skeleton | none | high-risk | COMPLETE | `4def7ae5757adfcb8a58b7e91e0b4262d1cd54f9`; correction `fba99306837f42066277d52b54277cb416f32a38` | `implementation/VS-01-handoff.md` |
+| VS-01 | Compose a credential-safe Jira provider and complete an empty single-page walking skeleton | none | high-risk | COMPLETE | `4def7ae5757adfcb8a58b7e91e0b4262d1cd54f9`; corrections `fba99306837f42066277d52b54277cb416f32a38`, `e801fa341b55333406cb54b0df4696a29dd25834` | `implementation/VS-01-handoff.md`; `implementation/IR-001-handoff.md` |
 | VS-02 | Map Jira lifecycle records through exact current/reference pipeline semantics | VS-01 | high-risk | COMPLETE | `bc2f6eadc68fd06118cd7b9cedf2639df910d175`; correction `d8cd598e6246a2314fa4611a3f18c16e734dcefb` | `implementation/VS-02-handoff.md` |
 | VS-03 | Exhaust cursor pages and fail closed at the approved record cap | VS-02 | high-risk | COMPLETE | `e79ac3dbe97817e0e259d3f42930222814109777`; correction `897dd862ee40af4b5843ce32691efd3867bf8e0d` | `implementation/VS-03-handoff.md` |
 | VS-04 | Enforce cancellable hard attempt and acquisition deadlines | VS-03 | high-risk | COMPLETE | `558c1d21fb28f78e5938c3e465101b0fd3b832f1` | `implementation/VS-04-handoff.md` |
@@ -1054,3 +1054,12 @@ acceptance obligations, proof-level changes, or redesign decisions here.
 - IR-001 correction assignment (2026-09-03): human triage accepted the targeted strict
   raw-URL validation correction. A fresh correction implementer is active; no correction
   commit is accepted yet. Frozen slice structure and approved behavior remain unchanged.
+- IR-001 correction accepted (2026-09-03): correction
+  `e801fa341b55333406cb54b0df4696a29dd25834` and
+  `implementation/IR-001-handoff.md`; independent focused verification passed (127 tests,
+  Ruff, format, and diff check), and bounded findings verification reported IR-001
+  `RESOLVED` with no direct regression. Final planning-baseline artifact/task audits,
+  strict OpenSpec validation, and `make check` passed (339 tests passed, 57 skipped;
+  backend lint/format, frontend lint/build, and strict all-spec validation passed).
+  The optional `openspec-verify-change` workflow is not installed. The change is ready
+  for archive review but remains unarchived as directed; no worker is active.
