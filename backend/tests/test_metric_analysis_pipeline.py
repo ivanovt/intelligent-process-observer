@@ -18,7 +18,7 @@ from pydantic_ai.messages import ModelResponse, TextPart, ToolCallPart
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
-from app.core.settings import get_settings
+from app.core.settings import BearerTokenCredentials, PrometheusSourceSettings, get_settings
 from app.infrastructure.agents.pydantic_ai_metrics import PydanticAIMetricsAnalysisAgent
 from app.infrastructure.persistence.models import ObservationModel
 from app.infrastructure.persistence.repository import RuntimePersistenceRepository
@@ -32,6 +32,7 @@ from app.infrastructure.persistence.runtime_contracts import (
     ObservationRunStatus,
     StructuredReason,
 )
+from app.infrastructure.prometheus.composition import PrometheusMetricSeriesProvider
 from app.metrics.contracts import (
     FIXED_ALLOWED_TOOLS,
     CompletedInsufficientMetricResult,
@@ -1468,6 +1469,73 @@ def test_current_technical_failures_are_decided_before_terminal_persistence(
         "repository_artifact_flush",
         "caller_commit",
     ]
+
+
+@pytest.mark.parametrize(
+    ("sources", "source_id", "diagnostic"),
+    [
+        ([], "plant-prometheus", "prometheus_source_unavailable"),
+        (
+            [
+                PrometheusSourceSettings(
+                    id="plant-prometheus",
+                    name="Plant Prometheus",
+                    base_url="https://user:password@prometheus.example.test",
+                    credentials=BearerTokenCredentials(type="bearer_token", token="sentinel"),
+                )
+            ],
+            "plant-prometheus",
+            "prometheus_source_invalid",
+        ),
+        (
+            [
+                PrometheusSourceSettings(
+                    id="other-prometheus",
+                    name="Other Prometheus",
+                    base_url="https://prometheus.example.test",
+                    credentials=BearerTokenCredentials(type="bearer_token", token="sentinel"),
+                )
+            ],
+            "plant-prometheus",
+            "prometheus_source_unavailable",
+        ),
+    ],
+)
+def test_real_composed_provider_preserves_current_failure_result(
+    sources, source_id, diagnostic
+) -> None:
+    execution_context = context().model_copy(
+        update={"provider_scope": _provider_scope(source_id=source_id)}
+    )
+    provider = PrometheusMetricSeriesProvider(sources)
+    pipeline = MetricAnalysisPipeline(
+        provider=provider,
+        agent=FakeAgent(),
+        history_reader=FakeHistoryReader(),
+        repository=RecordingRepository([]),
+        result_builder=MetricResultBuilder(lambda: WINDOW_START + timedelta(minutes=5)),
+    )
+
+    direct = run(
+        provider.acquire(execution_context.provider_scope, execution_context.analysis_window)
+    )
+    analysis = run(pipeline.analyze(execution_context))
+
+    assert direct.diagnostic == diagnostic
+    assert analysis.failure == MetricCurrentAcquisitionFailed(diagnostic=diagnostic)
+    assert analysis.terminal_result.payload["status"] == {
+        "state": "failed",
+        "error": {
+            "code": "current_metric_acquisition_failed",
+            "message": "Current metric data acquisition failed.",
+        },
+    }
+
+
+def _provider_scope(*, source_id: str) -> MetricProviderScope:
+    return MetricProviderScope(
+        adapter_type="prometheus", source_id=source_id, query="avg(coolant_temperature_celsius)"
+    )
 
 
 @pytest.mark.parametrize(

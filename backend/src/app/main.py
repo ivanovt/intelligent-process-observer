@@ -10,6 +10,7 @@ from app.core.settings import get_settings
 from app.infrastructure.jira import JiraAlertProviderResolver
 from app.infrastructure.persistence.database import create_database_engine, create_session_factory
 from app.infrastructure.prometheus.adapter import HttpxPrometheusQueryAdapter
+from app.infrastructure.prometheus.composition import PrometheusMetricSeriesProvider
 from app.observations.api import router
 from app.observations.errors import ApiError
 from app.observations.service import ObservationDefinitionService
@@ -17,12 +18,14 @@ from app.observations.service import ObservationDefinitionService
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    settings = get_settings()
     engine = create_database_engine()
     app.state.session_factory = create_session_factory(engine)
     app.state.observation_service = ObservationDefinitionService()
     app.state.prometheus_adapter = HttpxPrometheusQueryAdapter()
+    app.state.metric_series_provider = PrometheusMetricSeriesProvider(settings.prometheus_sources)
     app.state.jira_alert_provider_resolver = JiraAlertProviderResolver(
-        get_settings().jira_alert_provider_raw
+        settings.jira_alert_provider_raw
     )
     yield
     await engine.dispose()
