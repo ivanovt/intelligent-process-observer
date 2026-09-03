@@ -1,10 +1,10 @@
 # Implementation Plan — add-prometheus-metric-provider
 
-**Status:** DRAFT — READY FOR INDEPENDENT SLICE-PLAN REVIEW
+**Status:** APPROVED — EXECUTION IN PROGRESS
 **Artifact type:** Non-normative execution plan
 **Approved OpenSpec change:** `add-prometheus-metric-provider`
 **Implementation branch:** `feature/add-prometheus-metric-provider`
-**Human-approved planning SHA:** not established; Coordinator-owned after approval
+**Human-approved planning SHA:** `75b97960704af790b2d8c3e8b6ce84a9e400151a`
 
 ## Approval state
 
@@ -987,3 +987,8 @@ acceptance obligations, proof-level changes, or redesign decisions here.
 - Every implementer uses a fresh context, reads the exact context pack and accepted
   predecessor handoff, runs focused verification/self-review, creates one atomic commit
   by default, and writes the repository-standard handoff.
+- Readiness record (2026-09-03): the Coordinator executed the complete pre-VS-01
+  approved-artifact committed/index/worktree, checkbox-transition, task-ownership, and
+  frozen-plan audits against `75b97960704af790b2d8c3e8b6ce84a9e400151a`; strict OpenSpec
+  validation, branch verification, and the required clean-status assertion passed before
+  execution metadata was recorded.
