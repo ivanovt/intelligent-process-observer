@@ -259,27 +259,21 @@ async def _run_with_deadline[Result](awaitable: Awaitable[Result], seconds: floa
             {task}, timeout=max(0.0, deadline - asyncio.get_running_loop().time())
         )
     except BaseException:
-        _cancel_without_waiting(task)
+        await _cancel_and_wait(task)
         raise
     if task in done and asyncio.get_running_loop().time() < deadline:
         return task.result()
 
-    _cancel_without_waiting(task)
+    await _cancel_and_wait(task)
     raise TimeoutError
 
 
-def _cancel_without_waiting(task: asyncio.Future[Any]) -> None:
-    """Request cancellation without allowing asynchronous cleanup to extend a deadline."""
+async def _cancel_and_wait(task: asyncio.Future[Any]) -> None:
+    """Cancel an in-flight task and wait until its cancellation cleanup is complete."""
 
     task.cancel()
-    task.add_done_callback(_consume_background_task_outcome)
-
-
-def _consume_background_task_outcome(task: asyncio.Future[Any]) -> None:
-    """Retrieve a detached cancellation outcome so cleanup errors are not unobserved."""
-
     try:
-        task.exception()
+        await task
     except BaseException:
         pass
 

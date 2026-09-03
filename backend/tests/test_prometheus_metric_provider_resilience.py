@@ -406,12 +406,16 @@ class _HangingStream(httpx.AsyncByteStream):
 class _ClosingClient:
     def __init__(self, stream: _HangingStream) -> None:
         self.closed = False
+        self.closing_started = asyncio.Event()
+        self.close_release = asyncio.Event()
         self._stream = stream
 
     async def __aenter__(self) -> _ClosingClient:
         return self
 
     async def __aexit__(self, *_: object) -> None:
+        self.closing_started.set()
+        await self.close_release.wait()
         self.closed = True
 
     @asynccontextmanager
@@ -424,21 +428,35 @@ class _ClosingClient:
 
 
 def test_attempt_deadline_cancels_body_and_closes_response_and_client() -> None:
-    stream = _HangingStream()
-    client = _ClosingClient(stream)
+    async def scenario() -> None:
+        stream = _HangingStream()
+        client = _ClosingClient(stream)
 
-    async def short_deadline(awaitable: Any, seconds: float) -> Any:
-        return await _run_with_deadline(awaitable, 0.01 if seconds == 15.0 else 1.0)
+        async def short_deadline(awaitable: Any, seconds: float) -> Any:
+            return await _run_with_deadline(awaitable, 0.01 if seconds == 15.0 else 1.0)
 
-    provider = PrometheusMetricSeriesProvider(
-        [_source()], client_factory=lambda: client, deadline_runner=short_deadline
-    )
-    outcome = asyncio.run(provider.acquire(_scope(), _window()))
+        provider = PrometheusMetricSeriesProvider(
+            [_source()], client_factory=lambda: client, deadline_runner=short_deadline
+        )
+        acquire = asyncio.create_task(provider.acquire(_scope(), _window()))
+        await asyncio.wait_for(client.closing_started.wait(), timeout=0.1)
 
-    assert outcome == MetricSeriesAcquisitionTimeout(diagnostic="prometheus_acquisition_timeout")
-    assert stream.cancelled is True
-    assert stream.closed is True
-    assert client.closed is True
+        assert stream.cancelled is True
+        assert stream.closed is True
+        assert client.closed is False
+        assert acquire.done() is False
+
+        client.close_release.set()
+        outcome = await asyncio.wait_for(acquire, timeout=0.1)
+
+        assert outcome == MetricSeriesAcquisitionTimeout(
+            diagnostic="prometheus_acquisition_timeout"
+        )
+        assert client.closed is True
+        await asyncio.sleep(0)
+        assert acquire.done() is True
+
+    asyncio.run(scenario())
 
 
 def test_acquisition_deadline_cancels_a_retry_wait_without_another_attempt() -> None:
@@ -488,7 +506,7 @@ def test_hard_local_deadline_wins_when_cancelled_work_raises_connect_error() -> 
         asyncio.run(_run_with_deadline(race(), 0.01))
 
 
-def test_hard_deadline_return_does_not_wait_for_delayed_cancellation_cleanup() -> None:
+def test_hard_deadline_waits_for_delayed_cancellation_cleanup() -> None:
     async def scenario() -> None:
         cleanup_started = asyncio.Event()
         cleanup_release = asyncio.Event()
@@ -507,12 +525,14 @@ def test_hard_deadline_return_does_not_wait_for_delayed_cancellation_cleanup() -
         try:
             await asyncio.wait_for(cleanup_started.wait(), timeout=0.1)
             done, _ = await asyncio.wait({runner}, timeout=0.02)
-            assert runner in done
-            with pytest.raises(TimeoutError):
-                await runner
+            assert runner not in done
             assert cleanup_finished.is_set() is False
-        finally:
+
             cleanup_release.set()
             await asyncio.wait_for(cleanup_finished.wait(), timeout=0.1)
+            with pytest.raises(TimeoutError):
+                await runner
+        finally:
+            cleanup_release.set()
 
     asyncio.run(scenario())
