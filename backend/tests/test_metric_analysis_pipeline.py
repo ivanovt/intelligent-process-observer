@@ -2462,6 +2462,114 @@ def test_current_insufficiency_does_not_acquire_or_partial_configured_references
     assert "reason" not in repository.persisted[0].payload
 
 
+def test_real_provider_timeout_keeps_the_existing_minimal_current_failure_result() -> None:
+    provider = PrometheusMetricSeriesProvider(
+        [
+            PrometheusSourceSettings(
+                id="plant-prometheus",
+                name="Plant Prometheus",
+                base_url="https://prometheus.example.test",
+                credentials=BearerTokenCredentials(type="bearer_token", token="provider-secret"),
+            )
+        ],
+        client_factory=lambda: httpx.AsyncClient(
+            transport=httpx.MockTransport(
+                lambda _: httpx.Response(
+                    503,
+                    json={
+                        "status": "error",
+                        "errorType": "timeout",
+                        "error": "provider text must not cross the pipeline",
+                    },
+                )
+            )
+        ),
+    )
+    pipeline = MetricAnalysisPipeline(
+        provider=provider,
+        agent=FakeAgent(),
+        history_reader=FakeHistoryReader(),
+        repository=RecordingRepository([]),
+        result_builder=MetricResultBuilder(lambda: WINDOW_START + timedelta(minutes=5)),
+    )
+
+    analysis = run(pipeline.analyze(context()))
+
+    assert analysis.terminal_result.status == LensRunStatus.FAILED
+    assert analysis.terminal_result.payload["status"] == {
+        "state": "failed",
+        "error": {
+            "code": "current_metric_acquisition_failed",
+            "message": "Current metric data acquisition failed.",
+        },
+    }
+
+
+def test_real_provider_retry_exhaustion_makes_only_its_reference_partial() -> None:
+    request_count = 0
+
+    def handler(_: httpx.Request) -> httpx.Response:
+        nonlocal request_count
+        request_count += 1
+        if request_count == 1:
+            return httpx.Response(
+                200,
+                json={
+                    "status": "success",
+                    "data": {
+                        "resultType": "matrix",
+                        "result": [
+                            {
+                                "metric": {},
+                                "values": [
+                                    [WINDOW_START.timestamp(), "10"],
+                                    [(WINDOW_START + timedelta(seconds=60)).timestamp(), "20"],
+                                    [(WINDOW_START + timedelta(seconds=180)).timestamp(), "40"],
+                                ],
+                            }
+                        ],
+                    },
+                },
+            )
+        return httpx.Response(500, content=b"not-json")
+
+    async def no_sleep(_: float) -> None:
+        return None
+
+    provider = PrometheusMetricSeriesProvider(
+        [
+            PrometheusSourceSettings(
+                id="plant-prometheus",
+                name="Plant Prometheus",
+                base_url="https://prometheus.example.test",
+                credentials=BearerTokenCredentials(type="bearer_token", token="provider-secret"),
+            )
+        ],
+        client_factory=lambda: httpx.AsyncClient(transport=httpx.MockTransport(handler)),
+        sleep=no_sleep,
+    )
+    repository = RecordingRepository([])
+    pipeline = MetricAnalysisPipeline(
+        provider=provider,
+        agent=FakeAgent(),
+        history_reader=FakeHistoryReader(),
+        repository=repository,
+        result_builder=MetricResultBuilder(lambda: WINDOW_START + timedelta(minutes=5)),
+    )
+
+    analysis = run(pipeline.analyze(context(reference_periods=("1h",))))
+    lens_run = SimpleNamespace(status="running", reason=None)
+    run(pipeline.persist_terminal(object(), lens_run, analysis))
+
+    assert request_count == 4
+    assert lens_run.status == "partial"
+    assert repository.persisted[0].payload["reason"] == {
+        "code": "reference_unavailable",
+        "component": "reference_periods",
+    }
+    assert "reference_periods" not in repository.persisted[0].payload
+
+
 @pytest.mark.parametrize("history_failure", [False, True])
 def test_fake_reader_history_outcomes_round_trip_through_runtime_aggregate(
     session_factory: async_sessionmaker[AsyncSession],

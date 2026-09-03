@@ -2,9 +2,12 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 import math
-from collections.abc import Callable, Iterable
+import time
+from asyncio import sleep as _async_sleep
+from collections.abc import Awaitable, Callable, Iterable
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Any
@@ -39,6 +42,9 @@ _ACQUISITION_TIMEOUT = "prometheus_acquisition_timeout"
 _MAX_RESPONSE_BYTES = 1024 * 1024
 _MAX_SAMPLES = 61
 _RETRYABLE_STATUS_CODES = frozenset({429, 500, 502, 504})
+_ATTEMPT_DEADLINE_SECONDS = 15.0
+_ACQUISITION_DEADLINE_SECONDS = 50.0
+_RETRY_WAITS_SECONDS = (0.5, 1.0)
 
 
 @dataclass(frozen=True)
@@ -84,7 +90,18 @@ class _AttemptRetryEligible:
     status_code: int
 
 
-_AttemptResult = _AttemptAvailable | _AttemptFailure | _AttemptTimeout | _AttemptRetryEligible
+@dataclass(frozen=True)
+class _AttemptConnectRetryEligible:
+    """A connection failure that alone may enter the provider retry policy."""
+
+
+_AttemptResult = (
+    _AttemptAvailable
+    | _AttemptFailure
+    | _AttemptTimeout
+    | _AttemptRetryEligible
+    | _AttemptConnectRetryEligible
+)
 
 
 class PrometheusMetricSeriesProvider:
@@ -95,6 +112,9 @@ class PrometheusMetricSeriesProvider:
         sources: Iterable[PrometheusSourceSettings],
         *,
         client_factory: Callable[[], httpx.AsyncClient] | None = None,
+        monotonic_clock: Callable[[], float] | None = None,
+        sleep: Callable[[float], Awaitable[None]] | None = None,
+        deadline_runner: Callable[[Awaitable[Any], float], Awaitable[Any]] | None = None,
     ) -> None:
         self._sources = {
             source.id: _ConfiguredPrometheusSource(
@@ -105,12 +125,28 @@ class PrometheusMetricSeriesProvider:
             for source in sources
         }
         self._client_factory = client_factory or self._new_client
+        self._monotonic_clock = monotonic_clock or time.monotonic
+        self._sleep = sleep or _async_sleep
+        self._deadline_runner = deadline_runner or _run_with_deadline
 
     async def acquire(
         self, scope: MetricProviderScope, window: MetricAnalysisWindow
     ) -> MetricSeriesAcquisitionOutcome:
         """Acquire one bounded range response for the selected configured source."""
 
+        try:
+            return await self._deadline_runner(
+                self._acquire_with_resilience(scope, window), _ACQUISITION_DEADLINE_SECONDS
+            )
+        except TimeoutError:
+            return MetricSeriesAcquisitionTimeout(diagnostic=_ACQUISITION_TIMEOUT)
+
+    async def _acquire_with_resilience(
+        self, scope: MetricProviderScope, window: MetricAnalysisWindow
+    ) -> MetricSeriesAcquisitionOutcome:
+        """Resolve one source and run its immutable request through the retry policy."""
+
+        acquisition_deadline = self._monotonic_clock() + _ACQUISITION_DEADLINE_SECONDS
         source = self._sources.get(scope.source_id)
         if source is None:
             return MetricSeriesUnavailable(diagnostic=_SOURCE_UNAVAILABLE)
@@ -118,13 +154,43 @@ class PrometheusMetricSeriesProvider:
         if target is None:
             return MetricSeriesAcquisitionFailure(diagnostic=_INVALID_TARGET)
         request = self._logical_request(source, target, scope, window)
-        attempt = await self._execute_one_attempt(request)
-        if isinstance(attempt, _AttemptAvailable):
-            return MetricSeriesAvailable(source="prometheus", samples=attempt.samples)
-        if isinstance(attempt, _AttemptTimeout):
-            return MetricSeriesAcquisitionTimeout(diagnostic=_ACQUISITION_TIMEOUT)
-        # Retry admission and the second/third attempts are deliberately VS-03 work.
-        return MetricSeriesAcquisitionFailure(diagnostic=_ACQUISITION_FAILED)
+        for attempt_number in range(3):
+            attempt = await self._execute_attempt_with_deadline(request)
+            if isinstance(attempt, _AttemptAvailable):
+                return MetricSeriesAvailable(source="prometheus", samples=attempt.samples)
+            if isinstance(attempt, _AttemptTimeout):
+                return MetricSeriesAcquisitionTimeout(diagnostic=_ACQUISITION_TIMEOUT)
+            if isinstance(attempt, _AttemptFailure):
+                return MetricSeriesAcquisitionFailure(diagnostic=_ACQUISITION_FAILED)
+            if attempt_number == 2:
+                return MetricSeriesAcquisitionFailure(diagnostic=_ACQUISITION_FAILED)
+
+            retry_wait = _RETRY_WAITS_SECONDS[attempt_number]
+            if acquisition_deadline - self._monotonic_clock() < (
+                retry_wait + _ATTEMPT_DEADLINE_SECONDS
+            ):
+                return MetricSeriesAcquisitionTimeout(diagnostic=_ACQUISITION_TIMEOUT)
+            await self._sleep(retry_wait)
+
+        raise AssertionError("three-attempt retry policy was not exhaustive")
+
+    async def _execute_attempt_with_deadline(self, request: _LogicalRangeQuery) -> _AttemptResult:
+        """Run and classify one complete HTTP attempt within its hard local deadline."""
+
+        try:
+            return await self._deadline_runner(
+                self._execute_one_attempt(request), _ATTEMPT_DEADLINE_SECONDS
+            )
+        except TimeoutError:
+            return _AttemptTimeout()
+        except httpx.TimeoutException:
+            return _AttemptTimeout()
+        except httpx.ConnectError:
+            return _AttemptConnectRetryEligible()
+        except httpx.TransportError:
+            return _AttemptFailure()
+        except (httpx.DecodingError, httpx.TooManyRedirects, httpx.InvalidURL, httpx.StreamError):
+            return _AttemptFailure()
 
     @staticmethod
     def _new_client() -> httpx.AsyncClient:
@@ -163,23 +229,42 @@ class PrometheusMetricSeriesProvider:
     async def _execute_one_attempt(self, request: _LogicalRangeQuery) -> _AttemptResult:
         """Send one request, fully consume its bounded body, and classify it privately."""
 
+        async with self._client_factory() as client:
+            async with client.stream(
+                "POST",
+                request.url,
+                data=dict(request.form),
+                headers=dict(request.headers),
+                auth=request.auth,
+            ) as response:
+                body = await _read_bounded_body(response)
+                if body is None:
+                    return _AttemptFailure()
+                return _classify_complete_response(response.status_code, body)
+
+
+async def _run_with_deadline[Result](awaitable: Awaitable[Result], seconds: float) -> Result:
+    """Cancel an awaitable when its hard local monotonic deadline expires."""
+
+    task = asyncio.ensure_future(awaitable)
+    try:
+        done, _ = await asyncio.wait({task}, timeout=seconds)
+    except BaseException:
+        task.cancel()
         try:
-            async with self._client_factory() as client:
-                async with client.stream(
-                    "POST",
-                    request.url,
-                    data=dict(request.form),
-                    headers=dict(request.headers),
-                    auth=request.auth,
-                ) as response:
-                    body = await _read_bounded_body(response)
-                    if body is None:
-                        return _AttemptFailure()
-                    return _classify_complete_response(response.status_code, body)
-        # VS-03 supplies the ordered HTTPX exception/deadline/retry policy.  This
-        # temporary single-attempt boundary only makes unexpected client failures safe.
-        except httpx.HTTPError:
-            return _AttemptFailure()
+            await task
+        except BaseException:
+            pass
+        raise
+    if task in done:
+        return task.result()
+
+    task.cancel()
+    try:
+        await task
+    except BaseException:
+        pass
+    raise TimeoutError
 
 
 def _authentication(
