@@ -367,7 +367,7 @@ VS-01 -> VS-02 -> VS-03 -> VS-04
 |---|---|---|---|---|---|---|
 | VS-01 | Source-safe transport-free walking skeleton through the existing Metric port | none | high-risk | COMPLETE | 1217266598aa5f20b902e9ae2edfe1da2ffed6c2 | `implementation/VS-01-handoff.md` |
 | VS-02 | Complete bounded single-attempt request, mapping, and status classification | VS-01 | high-risk | COMPLETE | `99bce08`, `d01a104`, `0d35520`, `ee4d364` | `implementation/VS-02-handoff.md` |
-| VS-03 | Hard deadlines, deterministic retries, and terminal resilience integration | VS-02 | high-risk | PLANNED | - | - |
+| VS-03 | Hard deadlines, deterministic retries, and terminal resilience integration | VS-02 | high-risk | IN_PROGRESS | - | - |
 | VS-04 | Compatibility, operational documentation, and whole-change conformance | VS-03 | normal | PLANNED | - | - |
 
 ## Slice definitions
@@ -1024,3 +1024,5 @@ acceptance obligations, proof-level changes, or redesign decisions here.
   `0d355201d94da59db062afbad794cbce96a98e67`, and
   `ee4d364bb95a954b84b93dd33f0203fa9d72cb1b`, with handoff
   `implementation/VS-02-handoff.md`. No shared-knowledge candidates.
+- VS-03 active assignment (2026-09-04): delegated to a fresh Slice Implementer after
+  accepted VS-02 handoff and final high-risk gate.
