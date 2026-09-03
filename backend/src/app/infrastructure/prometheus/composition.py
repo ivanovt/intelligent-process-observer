@@ -247,8 +247,11 @@ async def _run_with_deadline[Result](awaitable: Awaitable[Result], seconds: floa
     """Cancel an awaitable when its hard local monotonic deadline expires."""
 
     task = asyncio.ensure_future(awaitable)
+    deadline = asyncio.get_running_loop().time() + seconds
     try:
-        done, _ = await asyncio.wait({task}, timeout=seconds)
+        done, _ = await asyncio.wait(
+            {task}, timeout=max(0.0, deadline - asyncio.get_running_loop().time())
+        )
     except BaseException:
         task.cancel()
         try:
@@ -256,7 +259,7 @@ async def _run_with_deadline[Result](awaitable: Awaitable[Result], seconds: floa
         except BaseException:
             pass
         raise
-    if task in done:
+    if task in done and asyncio.get_running_loop().time() < deadline:
         return task.result()
 
     task.cancel()
