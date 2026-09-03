@@ -1011,3 +1011,7 @@ acceptance obligations, proof-level changes, or redesign decisions here.
   status with independent valid warnings-only and infos-only envelopes; malformed infos
   must be covered on an error envelope. A fresh corrective implementer is active; VS-02
   remains `IN_PROGRESS` and VS-03 is not ready.
+- VS-02 final review (2026-09-04): `SLICE CHANGES REQUIRED` on one remaining MEDIUM
+  evidence gap only. VS02-AC09 requires empty-current completed-insufficient behavior
+  through the real composed provider, not a fake provider. A fresh corrective implementer
+  is active; VS-02 remains `IN_PROGRESS` and VS-03 is not ready.
