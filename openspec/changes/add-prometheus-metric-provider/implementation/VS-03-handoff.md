@@ -51,7 +51,9 @@ made.
 Deferred scope remains unchanged: no jitter, `Retry-After`, proxy/redirect policy
 change, Observation-level deadline, concurrency, or public retry diagnostics.
 
-Implementation commit: `4baf129efeb84ba40c507934ad9e4451cf59b5b0`
+Implementation commits: `4baf129efeb84ba40c507934ad9e4451cf59b5b0` (bounded retry/deadline
+orchestrator and tests), `5c35ae84e141169375faff4e7f1c909ccb774cbb` (strict hard-deadline
+precedence at an exact completion boundary).
 
 Plan change requested: none.
 
