@@ -23,7 +23,7 @@
 
 ## 2. Jira Cloud acquisition adapter
 
-- [ ] 2.1 Implement the infrastructure-only Jira Cloud enhanced-search adapter using
+- [x] 2.1 Implement the infrastructure-only Jira Cloud enhanced-search adapter using
   fixed site-root REST v2 target `/rest/api/2/search/jql`, preemptive Basic
   authentication for the selected ordinary-user classic token, the minimal approved
   field set, documented JQL field `resolved`, floor(start)/ceil(end)
@@ -45,14 +45,14 @@
   attempts, reads, and waits; ensure in-flight operations are cancellable and cleaned
   up, retain HTTPX phase timeouts only as defense in depth, and preserve typed timeout
   outcomes.
-- [ ] 2.5 Implement maximum two retries per failed page request, exact single-value
+- [x] 2.5 Implement maximum two retries per failed page request, exact single-value
   decimal `Retry-After` grammar and 15-second cap, exact no-jitter fallback waits of
   0.5/1.0 seconds, remaining-hard-deadline admission, non-timeout response-contract
   failure mapping, and secret-safe diagnostics.
 
 ## 3. Provider verification
 
-- [ ] 3.1 Add deterministic HTTP-boundary tests for fixed REST v2, Basic authentication,
+- [x] 3.1 Add deterministic HTTP-boundary tests for fixed REST v2, Basic authentication,
   exact requested fields and JQL `resolved` construction, floor-start/ceil-end
   current/reference bounds, sub-millisecond candidate-superset behavior, no status
   predicate, exact post-map overlap filtering, omitted `reconcileIssues`, and
@@ -61,18 +61,18 @@
   missing-key preservation through `invalid_records`, usable/malformed mixed pages,
   native priority/status preservation, source-reference safety, latest-known resolved
   reference records, and absence of full Jira payload leakage.
-- [ ] 3.3 Add pagination and resilience tests for terminal/multi-page success, exact
+- [x] 3.3 Add pagination and resilience tests for terminal/multi-page success, exact
   1,000-record terminal success, over-cap failure, `isLast`/token inconsistencies,
   missing/repeated tokens, malformed responses, slow-progress/chunked bodies,
   in-flight hard-attempt expiry, hard-acquire expiry across pages/retries, pre-attempt
   admission with insufficient budget, non-retryable errors, and retryable
   connection/502/503/504/429 failures.
-- [ ] 3.4 Add deterministic retry tests for exactly one Retry-After value with SP/HTAB,
+- [x] 3.4 Add deterministic retry tests for exactly one Retry-After value with SP/HTAB,
   positive decimal and leading-zero acceptance, empty/zero/signed/fractional/combined/
   duplicate/HTTP-date/non-decimal rejection, exact 15 accepted and 16 timed out,
   exact retry #1/#2 fallback waits, remaining-deadline admission/rejection, retry
   exhaustion, and non-timeout response-contract failures.
-- [ ] 3.5 Add configuration, URL, composition, and injected-pipeline tests covering no
+- [x] 3.5 Add configuration, URL, composition, and injected-pipeline tests covering no
   configuration, malformed serialization, invalid URL, missing email, missing token,
   valid ordinary-user/classic-token composition, startup usability for every invalid
   optional-provider case, all accepted root/`/jira` trailing-slash input variants,

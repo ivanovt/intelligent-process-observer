@@ -266,8 +266,8 @@ for parallel execution.
 | VS-02 | Map Jira lifecycle records through exact current/reference pipeline semantics | VS-01 | high-risk | COMPLETE | `bc2f6eadc68fd06118cd7b9cedf2639df910d175`; correction `d8cd598e6246a2314fa4611a3f18c16e734dcefb` | `implementation/VS-02-handoff.md` |
 | VS-03 | Exhaust cursor pages and fail closed at the approved record cap | VS-02 | high-risk | COMPLETE | `e79ac3dbe97817e0e259d3f42930222814109777`; correction `897dd862ee40af4b5843ce32691efd3867bf8e0d` | `implementation/VS-03-handoff.md` |
 | VS-04 | Enforce cancellable hard attempt and acquisition deadlines | VS-03 | high-risk | COMPLETE | `558c1d21fb28f78e5938c3e465101b0fd3b832f1` | `implementation/VS-04-handoff.md` |
-| VS-05 | Apply exact bounded retry and failure classification semantics | VS-04 | high-risk | IN_PROGRESS | — | `implementation/VS-05-handoff.md` |
-| VS-06 | Complete operator documentation and whole-change conformance | VS-05 | normal | PLANNED | — | `implementation/VS-06-handoff.md` |
+| VS-05 | Apply exact bounded retry and failure classification semantics | VS-04 | high-risk | COMPLETE | `5dc4d91d1b28818dd8aa81171d1e6f115ad8f046`; correction `985203c0ddf736b6402ab12e75a200abcd6ee8f0` | `implementation/VS-05-handoff.md` |
+| VS-06 | Complete operator documentation and whole-change conformance | VS-05 | normal | IN_PROGRESS | — | `implementation/VS-06-handoff.md` |
 
 ## Slice definitions
 
@@ -1031,3 +1031,11 @@ acceptance obligations, proof-level changes, or redesign decisions here.
 - VS-05 assignment (2026-09-03): user confirmation received, VS-04 prerequisite is
   accepted, and a fresh Slice Implementer is active. No implementation commit is
   accepted yet.
+- VS-05 accepted (2026-09-03): implementation `5dc4d91d1b28818dd8aa81171d1e6f115ad8f046`
+  and correction `985203c0ddf736b6402ab12e75a200abcd6ee8f0`; focused independent
+  verification passed (59 tests, Ruff, format, diff check). Initial high-risk review
+  required bounded parsing of enormous valid decimal Retry-After values; bounded verifier
+  IR-001 resolved it with no direct regression. VS05-AC01 through VS05-AC07 passed.
+  No candidate shared knowledge.
+- VS-06 assignment (2026-09-03): VS-05 prerequisite is accepted; a fresh Slice
+  Implementer is active. No implementation commit is accepted yet.
