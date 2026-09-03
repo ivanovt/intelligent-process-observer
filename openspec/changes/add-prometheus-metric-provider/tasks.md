@@ -1,6 +1,6 @@
 ## 1. Source configuration and safe composition
 
-- [ ] 1.1 Preserve global Settings and shared `PROMETHEUS_SOURCES` loading unchanged;
+- [x] 1.1 Preserve global Settings and shared `PROMETHEUS_SOURCES` loading unchanged;
   add stricter URL/transport validation only after the production
   `MetricSeriesProvider` resolves the selected configured source, returning failure
   with zero HTTP attempts when that production-only validation rejects it.
@@ -10,13 +10,13 @@
   material as Bearer token/Basic password while also excluding Authorization and the
   configured Basic username from provider diagnostics, logs, errors, public output,
   and failure messages without changing the existing credential model for repr alone.
-- [ ] 1.3 Add a source-aware Prometheus Metric provider composer/resolver that returns
+- [x] 1.3 Add a source-aware Prometheus Metric provider composer/resolver that returns
   the existing typed unavailable outcome with zero HTTP attempts for absent/unknown
   sources, preserves the compatible loaded registry without eager production URL
   validation, resolves and validates only the source selected by `acquire`, returns
   failure with zero attempts for a selected production-invalid source, and never
   chooses a fallback.
-- [ ] 1.4 Wire the composed provider into application lifespan/state only as an
+- [x] 1.4 Wire the composed provider into application lifespan/state only as an
   injectable `MetricSeriesProvider`; prove Metric domain/pipeline modules import no
   settings, HTTPX, or Prometheus response contracts and that composition starts no run
   or Observation orchestration.
@@ -116,7 +116,7 @@
   behavior, current unavailable/failure/timeout terminal mapping, reference-only partial
   mapping, and preservation of the provider-neutral Metric contracts and analytical
   results.
-- [ ] 4.6 Regardless of whether HTTP helpers are shared, add mandatory regression tests
+- [x] 4.6 Regardless of whether HTTP helpers are shared, add mandatory regression tests
   proving application startup, capabilities output, Observation creation, and Metric
   preflight retain compatible shared-source behavior for both production-valid and
   production-invalid selected source URLs; preserve preflight's independent 15-second

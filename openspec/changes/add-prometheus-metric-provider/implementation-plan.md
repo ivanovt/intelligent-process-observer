@@ -365,7 +365,7 @@ VS-01 -> VS-02 -> VS-03 -> VS-04
 
 | Slice | Goal | Depends on | Risk | Status | Commit | Handoff |
 |---|---|---|---|---|---|---|
-| VS-01 | Source-safe transport-free walking skeleton through the existing Metric port | none | high-risk | IN_PROGRESS | - | - |
+| VS-01 | Source-safe transport-free walking skeleton through the existing Metric port | none | high-risk | COMPLETE | 1217266598aa5f20b902e9ae2edfe1da2ffed6c2 | `implementation/VS-01-handoff.md` |
 | VS-02 | Complete bounded single-attempt request, mapping, and status classification | VS-01 | high-risk | PLANNED | - | - |
 | VS-03 | Hard deadlines, deterministic retries, and terminal resilience integration | VS-02 | high-risk | PLANNED | - | - |
 | VS-04 | Compatibility, operational documentation, and whole-change conformance | VS-03 | normal | PLANNED | - | - |
@@ -994,3 +994,8 @@ acceptance obligations, proof-level changes, or redesign decisions here.
   execution metadata was recorded.
 - VS-01 active assignment (2026-09-03): delegated to a fresh Slice Implementer; no
   predecessor handoff is required.
+- VS-01 acceptance (2026-09-03): focused gate independently reproduced as 148 passed,
+  28 existing PostgreSQL-gated skips; targeted Ruff/format and diff checks passed.
+  Independent high-risk review of `03fef65..6499d90` returned `SLICE REVIEW PASS` with
+  no findings. Accepted implementation commit `1217266598aa5f20b902e9ae2edfe1da2ffed6c2`
+  and handoff `implementation/VS-01-handoff.md`; no shared-knowledge candidates.
