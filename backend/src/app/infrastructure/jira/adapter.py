@@ -26,8 +26,11 @@ from app.infrastructure.jira.configuration import JiraAlertProviderSettings
 _FIELDS = ["summary", "created", "resolutiondate", "status", "priority"]
 _ATTEMPT_DEADLINE_SECONDS = 15.0
 _ACQUISITION_DEADLINE_SECONDS = 60.0
+_MAX_RETRIES_PER_PAGE = 2
+_RETRYABLE_STATUS_CODES = frozenset({429, 502, 503, 504})
 
 _DeadlineRunner = Callable[[Awaitable[httpx.Response], float], Awaitable[httpx.Response]]
+_Sleeper = Callable[[float], Awaitable[None]]
 
 
 class HttpxJiraAlertProvider:
@@ -40,11 +43,13 @@ class HttpxJiraAlertProvider:
         transport: httpx.AsyncBaseTransport | None = None,
         monotonic: Callable[[], float] = time.monotonic,
         run_with_deadline: _DeadlineRunner | None = None,
+        sleep: _Sleeper | None = None,
     ) -> None:
         self._settings = settings
         self._transport = transport
         self._monotonic = monotonic
         self._run_with_deadline = run_with_deadline or self._default_deadline_runner
+        self._sleep = sleep or asyncio.sleep
 
     async def acquire(
         self, scope: AlertProviderScope, window: AlertAnalysisWindow
@@ -66,17 +71,18 @@ class HttpxJiraAlertProvider:
                 transport=self._transport, follow_redirects=False
             ) as client:
                 while True:
-                    remaining = acquisition_deadline - self._monotonic()
-                    if remaining < _ATTEMPT_DEADLINE_SECONDS:
-                        return AlertProviderTimeout(diagnostic="deadline_exceeded")
                     if next_page_token is None:
                         page_request = request_body
                     else:
                         page_request = {**request_body, "nextPageToken": next_page_token}
-                    response = await self._run_with_deadline(
-                        self._complete_attempt(client, page_request),
-                        min(_ATTEMPT_DEADLINE_SECONDS, remaining),
+                    response_or_outcome = await self._fetch_page_with_retries(
+                        client, page_request, acquisition_deadline
                     )
+                    if isinstance(
+                        response_or_outcome, (AlertProviderFailure, AlertProviderTimeout)
+                    ):
+                        return response_or_outcome
+                    response = response_or_outcome
                     if response.status_code < 200 or response.status_code >= 300:
                         return AlertProviderFailure(
                             diagnostic=f"http_status_{response.status_code}"
@@ -100,6 +106,86 @@ class HttpxJiraAlertProvider:
             return AlertProviderTimeout(diagnostic="deadline_exceeded")
         except httpx.RequestError:
             return AlertProviderFailure(diagnostic="transport_error")
+
+    async def _fetch_page_with_retries(
+        self,
+        client: httpx.AsyncClient,
+        page_request: dict[str, object],
+        acquisition_deadline: float,
+    ) -> httpx.Response | AlertProviderFailure | AlertProviderTimeout:
+        """Run one page's complete attempts and its bounded transient retries."""
+        retries = 0
+        while True:
+            remaining = acquisition_deadline - self._monotonic()
+            if remaining < _ATTEMPT_DEADLINE_SECONDS:
+                return AlertProviderTimeout(diagnostic="deadline_exceeded")
+            try:
+                response = await self._run_with_deadline(
+                    self._complete_attempt(client, page_request),
+                    min(_ATTEMPT_DEADLINE_SECONDS, remaining),
+                )
+            except TimeoutError:
+                return AlertProviderTimeout(diagnostic="deadline_exceeded")
+            except (httpx.ConnectError, httpx.ConnectTimeout):
+                if retries == _MAX_RETRIES_PER_PAGE:
+                    return AlertProviderFailure(diagnostic="transport_error")
+                retry_outcome = await self._wait_for_retry(retries + 1, None, acquisition_deadline)
+                if retry_outcome is not None:
+                    return retry_outcome
+                retries += 1
+                continue
+            except httpx.RequestError:
+                return AlertProviderFailure(diagnostic="transport_error")
+
+            if response.status_code not in _RETRYABLE_STATUS_CODES:
+                return response
+            if retries == _MAX_RETRIES_PER_PAGE:
+                return AlertProviderFailure(diagnostic=f"http_status_{response.status_code}")
+            retry_outcome = await self._wait_for_retry(retries + 1, response, acquisition_deadline)
+            if retry_outcome is not None:
+                return retry_outcome
+            retries += 1
+
+    async def _wait_for_retry(
+        self,
+        retry_number: int,
+        response: httpx.Response | None,
+        acquisition_deadline: float,
+    ) -> AlertProviderTimeout | None:
+        """Admit and perform one deterministic retry wait inside the acquire deadline."""
+        delay = self._retry_delay(response, retry_number)
+        if delay is None:
+            return AlertProviderTimeout(diagnostic="deadline_exceeded")
+        remaining = acquisition_deadline - self._monotonic()
+        if delay + _ATTEMPT_DEADLINE_SECONDS > remaining:
+            return AlertProviderTimeout(diagnostic="deadline_exceeded")
+        try:
+            await asyncio.wait_for(self._sleep(delay), timeout=remaining)
+        except TimeoutError:
+            return AlertProviderTimeout(diagnostic="deadline_exceeded")
+        return None
+
+    @staticmethod
+    def _retry_delay(response: httpx.Response | None, retry_number: int) -> float | None:
+        """Select the approved raw Retry-After delay or the fixed retry fallback."""
+        parsed_delay = (
+            HttpxJiraAlertProvider._parse_retry_after(response) if response is not None else None
+        )
+        if parsed_delay is not None:
+            return float(parsed_delay) if parsed_delay <= _ATTEMPT_DEADLINE_SECONDS else None
+        return 0.5 if retry_number == 1 else 1.0
+
+    @staticmethod
+    def _parse_retry_after(response: httpx.Response) -> int | None:
+        """Parse exactly one positive decimal Retry-After raw field value."""
+        values = [value for name, value in response.headers.raw if name.lower() == b"retry-after"]
+        if len(values) != 1:
+            return None
+        value = values[0].strip(b" \t")
+        if not value or any(byte < ord("0") or byte > ord("9") for byte in value):
+            return None
+        parsed = int(value, 10)
+        return parsed if parsed > 0 else None
 
     @staticmethod
     async def _default_deadline_runner(

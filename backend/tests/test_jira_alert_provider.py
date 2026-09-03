@@ -753,3 +753,214 @@ def test_reference_hard_deadline_degrades_only_reference() -> None:
     )
     assert outcome.status.value == "partial"
     assert outcome.reason.code == "reference_unavailable"
+
+
+def test_retryability_and_attempt_counts_are_closed_and_exact() -> None:
+    retriable = (429, 502, 503, 504)
+    excluded = (400, 401, 403, 404, 500, 501, 505)
+
+    for status in retriable + excluded:
+        calls = 0
+        waits: list[float] = []
+
+        async def sleep(delay: float, waits: list[float] = waits) -> None:
+            waits.append(delay)
+
+        def handler(_: httpx.Request, status: int = status) -> httpx.Response:
+            nonlocal calls
+            calls += 1
+            return httpx.Response(
+                status,
+                headers={"X-Provider-Secret": "SECRET_PROVIDER_HEADER"},
+                content=b"SECRET_PROVIDER_BODY",
+            )
+
+        provider = HttpxJiraAlertProvider(
+            JiraAlertProviderSettings(
+                site_url="https://foo.atlassian.net", email="bot@example.invalid", api_token="token"
+            ),
+            transport=httpx.MockTransport(handler),
+            sleep=sleep,
+        )
+        outcome = asyncio.run(provider.acquire(_scope(), _window()))
+        assert outcome.state == "failed"
+        assert calls == (3 if status in retriable else 1)
+        assert waits == ([0.5, 1.0] if status in retriable else [])
+        assert "SECRET_PROVIDER_BODY" not in outcome.diagnostic
+        assert "SECRET_PROVIDER_HEADER" not in outcome.diagnostic
+
+
+def test_retry_after_raw_header_grammar_and_waits_are_exact() -> None:
+    cases = (
+        ([(b"Retry-After", b" \t005\t ")], [5.0]),
+        ([(b"Retry-After", b"15")], [15.0]),
+        ([(b"Retry-After", b"16")], []),
+        ([(b"Retry-After", b"0")], [0.5]),
+        ([(b"Retry-After", b"+5")], [0.5]),
+        ([(b"Retry-After", b"1.5")], [0.5]),
+        ([(b"Retry-After", b"1, 2")], [0.5]),
+        ([(b"Retry-After", b"3"), (b"Retry-After", b"4")], [0.5]),
+        ([(b"Retry-After", b"Wed, 21 Oct 2015 07:28:00 GMT")], [0.5]),
+    )
+    for headers, expected_waits in cases:
+        calls = 0
+        waits: list[float] = []
+
+        async def sleep(delay: float, waits: list[float] = waits) -> None:
+            waits.append(delay)
+
+        def handler(_: httpx.Request, headers=headers) -> httpx.Response:
+            nonlocal calls
+            calls += 1
+            if calls == 1:
+                return httpx.Response(429, headers=headers)
+            return httpx.Response(200, json={"isLast": True, "issues": []})
+
+        provider = HttpxJiraAlertProvider(
+            JiraAlertProviderSettings(
+                site_url="https://foo.atlassian.net", email="bot@example.invalid", api_token="token"
+            ),
+            transport=httpx.MockTransport(handler),
+            sleep=sleep,
+        )
+        outcome = asyncio.run(provider.acquire(_scope(), _window()))
+        if headers == [(b"Retry-After", b"16")]:
+            assert outcome.state == "timeout" and calls == 1
+        else:
+            assert outcome.records == () and calls == 2
+        assert waits == expected_waits
+
+
+def test_fallback_retry_waits_and_maximum_attempts_are_exact() -> None:
+    calls = 0
+    waits: list[float] = []
+
+    async def sleep(delay: float) -> None:
+        waits.append(delay)
+
+    def handler(_: httpx.Request) -> httpx.Response:
+        nonlocal calls
+        calls += 1
+        raise httpx.ConnectError("credential=SECRET")
+
+    provider = HttpxJiraAlertProvider(
+        JiraAlertProviderSettings(
+            site_url="https://foo.atlassian.net", email="bot@example.invalid", api_token="token"
+        ),
+        transport=httpx.MockTransport(handler),
+        sleep=sleep,
+    )
+    outcome = asyncio.run(provider.acquire(_scope(), _window()))
+    assert outcome.state == "failed"
+    assert outcome.diagnostic == "transport_error"
+    assert calls == 3
+    assert waits == [0.5, 1.0]
+
+
+def test_retry_delay_cap_and_remaining_budget_admission_return_timeout() -> None:
+    clock = _ControlledClock()
+    calls = 0
+    waits: list[float] = []
+
+    async def sleep(delay: float) -> None:
+        waits.append(delay)
+        clock.now += delay
+
+    def handler(_: httpx.Request) -> httpx.Response:
+        nonlocal calls
+        calls += 1
+        clock.now = 30.1
+        return httpx.Response(503, headers={"Retry-After": "15"})
+
+    provider = HttpxJiraAlertProvider(
+        JiraAlertProviderSettings(
+            site_url="https://foo.atlassian.net", email="bot@example.invalid", api_token="token"
+        ),
+        transport=httpx.MockTransport(handler),
+        monotonic=clock,
+        sleep=sleep,
+    )
+    outcome = asyncio.run(provider.acquire(_scope(), _window()))
+    assert outcome.state == "timeout"
+    assert calls == 1 and waits == []
+
+    clock.now = 0
+    calls = 0
+
+    def exact_handler(_: httpx.Request) -> httpx.Response:
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            clock.now = 30
+            return httpx.Response(503, headers={"Retry-After": "15"})
+        return httpx.Response(200, json={"isLast": True, "issues": []})
+
+    exact = HttpxJiraAlertProvider(
+        JiraAlertProviderSettings(
+            site_url="https://foo.atlassian.net", email="bot@example.invalid", api_token="token"
+        ),
+        transport=httpx.MockTransport(exact_handler),
+        monotonic=clock,
+        sleep=sleep,
+    )
+    assert asyncio.run(exact.acquire(_scope(), _window())).records == ()
+    assert calls == 2 and waits == [15.0]
+
+
+def test_hard_acquire_deadline_includes_pages_attempts_and_retry_waits() -> None:
+    clock = _ControlledClock()
+    calls = 0
+    waits: list[float] = []
+
+    async def sleep(delay: float) -> None:
+        waits.append(delay)
+        clock.now = 60
+
+    def handler(_: httpx.Request) -> httpx.Response:
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            return httpx.Response(
+                200, json={"isLast": False, "nextPageToken": "next", "issues": []}
+            )
+        return httpx.Response(503)
+
+    provider = HttpxJiraAlertProvider(
+        JiraAlertProviderSettings(
+            site_url="https://foo.atlassian.net", email="bot@example.invalid", api_token="token"
+        ),
+        transport=httpx.MockTransport(handler),
+        monotonic=clock,
+        sleep=sleep,
+    )
+    outcome = asyncio.run(provider.acquire(_scope(), _window()))
+    assert outcome.state == "timeout"
+    assert calls == 2 and waits == [0.5]
+
+
+def test_retry_terminal_outcomes_preserve_current_and_reference_semantics() -> None:
+    current = asyncio.run(
+        AlertAnalysisPipeline(
+            provider=_provider(lambda _: httpx.Response(503)), agent=_CapturingAgent()
+        ).analyze(_context())
+    )
+    assert current.status.value == "failed"
+    assert current.reason.code == "current_query_failed"
+
+    calls = 0
+
+    def handler(_: httpx.Request) -> httpx.Response:
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            return httpx.Response(200, json={"isLast": True, "issues": [_issue()]})
+        return httpx.Response(503)
+
+    reference = asyncio.run(
+        AlertAnalysisPipeline(provider=_provider(handler), agent=_CapturingAgent()).analyze(
+            _context(references=("1h",))
+        )
+    )
+    assert reference.status.value == "partial"
+    assert reference.reason.code == "reference_unavailable"
+    assert calls == 4
