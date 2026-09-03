@@ -38,6 +38,11 @@ class Settings(BaseSettings):
     app_env: str = "development"
     database_url: str = "postgresql+psycopg://ipo:ipo@localhost:5432/ipo"
     prometheus_sources: list[PrometheusSourceSettings] = Field(default_factory=list)
+    # Jira parsing remains provider-owned so malformed optional integration input cannot
+    # prevent unrelated application startup.
+    jira_alert_provider_raw: str | None = Field(
+        default=None, validation_alias="JIRA_ALERT_PROVIDER"
+    )
 
     model_config = SettingsConfigDict(
         env_file=_REPOSITORY_ROOT / ".env",

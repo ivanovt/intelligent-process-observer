@@ -138,7 +138,51 @@ transaction only after provider acquisition, normalization, deterministic analys
 optional tools, agent work, and result construction finish. The terminal persistence
 composer then advances the existing LensRun and conditionally writes its artifact; it
 flushes but never commits. Jira transport, credentials, field mapping, and production
-model/provider selection remain intentionally deferred and must not be added as defaults.
+provider selection stay in `app.infrastructure.jira`, outside `app.alerts`.
+
+### 5.2 Jira Cloud Alert provider configuration
+
+The optional Jira provider supports only the `jira_track_and_release` Alert source. Set
+`JIRA_ALERT_PROVIDER` in a deployment or local environment as serialized JSON; use the
+placeholder-only shape in [`.env.example`](../.env.example) and never commit a real
+email, API token, Basic-auth value, or serialized provider profile.
+
+```text
+JIRA_ALERT_PROVIDER={"site_url":"https://example.atlassian.net/jira","email":"bot@example.invalid","api_token":"replace-me"}
+```
+
+Use a dedicated ordinary Atlassian user account operated as a bot and that account's
+classic/unscoped API token. This integration does not support scoped tokens, official
+Atlassian Service Accounts, gateway or Cloud-ID routing, OAuth, Jira Service
+Management/Operations, Opsgenie, custom domains, or Jira Server/Data Center.
+
+`site_url` must be `https://<site>.atlassian.net` or the same URL with `/jira` (with an
+optional trailing slash). Both forms derive the same canonical pathless origin:
+`https://<site>.atlassian.net`. REST requests use
+`/rest/api/2/search/jql`, and issue links use `/browse/<encoded-key>`; neither derived
+URL retains `/jira`.
+
+Before enabling a selector, grant the bot **Browse Projects** and every applicable
+issue-level-security permission for the selector's complete scope. Jira filters search
+results by the authenticated account and can silently omit inaccessible issues. A
+successful empty or incomplete response therefore does not prove visibility and must
+not be interpreted as analytical completeness.
+
+The provider preserves the stored selector exactly and adds only its LensRun-owned
+lifecycle time predicate. Do not configure a selector with a trailing `ORDER BY` clause
+or rely on the provider to repair, trim, normalize, or add a status filter. Current and
+reference searches use Jira Cloud REST API v2 enhanced JQL search and can be eventually
+consistent: a successful stale response is accepted as returned. The provider does not
+use reconciliation and does not retry merely because recently created or resolved issues
+are temporarily absent.
+
+Each acquisition is bounded to 1,000 issues, a 60-second total monotonic deadline, and
+15 seconds for each complete HTTP attempt. Only connection failures and HTTP
+429/502/503/504 are retried, at most twice per page. A usable `Retry-After` up to
+15 seconds is used exactly; otherwise the deterministic waits are 0.5 then 1.0 seconds.
+Retries that cannot fit their wait plus a complete subsequent attempt in the remaining
+acquisition deadline return the existing typed timeout outcome. These bounds are
+operational safeguards, not a guarantee of completeness or historical reconciliation.
 
 ## 6. Initial bootstrap workflow
 
