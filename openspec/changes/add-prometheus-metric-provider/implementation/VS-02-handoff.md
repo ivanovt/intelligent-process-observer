@@ -19,12 +19,12 @@
 
 | Coverage | Evidence |
 |---|---|
-| VS02-AC01 | Root/prefix and 0.5s, 60s, 60.001s, 3600s, 3600.001s request tests assert one form POST, exact URL/form, resolution, and no extra fields. |
+| VS02-AC01 | Root/prefix request tests cover every approved double-ceiling vector: `0.5`, `1.25`, `59.999`, `60`, `60.001`, `119.999`, `120`, `120.001`, `3599.999`, `3600`, and `3600.001` seconds. Each asserts the exact one-POST path, form, RFC 3339 start/end, step, and `floor(duration / step) + 1 <= 61`. |
 | VS02-AC02 | Bearer/Basic request ledgers verify preemptive headers; redirect test makes one request; default-client test proves redirects/proxy environment off and TLS verification on. |
 | VS02-AC03/04 | Strict matrix tests cover empty, single ordered finite/non-finite samples, two series, histogram presence, bad labels/pairs/timestamps/values, and 61/62 sample boundary. |
-| VS02-AC05 | Exact 1 MiB body succeeds; declared and streamed over-cap bodies fail and close; complete malformed retryable status bodies yield private retry-eligible variants. |
-| VS02-AC06/08 | Warning/annotation failures and sentinel audit prove fixed diagnostics omit provider text, labels, samples, URLs, and credentials. |
-| VS02-AC07 | Classifier tests cover timeout precedence, malformed/bare 503 failure, and all retryable statuses. |
+| VS02-AC05 | Exact 1 MiB body succeeds. For each `429`, `500`, `502`, and `504`, the same status's bounded malformed body yields private `retry_eligible`, while a declared over-cap body yields private terminal failure and closes its stream. The existing streamed over-cap `504` case also closes, proving both body-bound paths precede status. |
+| VS02-AC06/08 | Valid successful `infos` preserve available data while discarding text. Valid non-empty warnings and every malformed success annotation form fail closed; sentinel assertions prove annotations, provider errors, labels, samples, URLs, and credentials do not enter outcomes. |
+| VS02-AC07 | Strict matrix covers valid `timeout` and `canceled` envelopes with valid warnings/infos; absent/malformed `status`, `errorType`, or `error` including empty values; malformed annotations; bare/malformed `503`; non-retryable `400`/`422`/`501`; and retryable statuses with a valid non-timeout error. All resulting private/public outcomes are fixed and omit provider text. |
 | VS02-AC09 | Real composed provider pipeline test records current plus ordered 1h/1d/1w windows, equal step `3`, successful surrounding references, and partial omission of the single failed reference. |
 
 ## Files and verification
@@ -33,9 +33,9 @@
 - Tests: `backend/tests/test_prometheus_metric_provider.py`, focused updates to
   `test_prometheus_metric_provider_configuration.py` and
   `test_metric_analysis_pipeline.py`.
-- `cd backend && uv run pytest tests/test_prometheus_metric_provider.py tests/test_prometheus_metric_provider_configuration.py tests/test_metric_analysis_pipeline.py tests/test_prometheus_adapter.py -q` — **135 passed, 28 skipped** (existing PostgreSQL-gated tests).
-- Targeted Ruff check/format, `openspec validate add-prometheus-metric-provider --strict`,
-  and `git diff --check` — **passed**.
+- `cd backend && uv run pytest tests/test_prometheus_metric_provider.py tests/test_prometheus_metric_provider_configuration.py tests/test_metric_analysis_pipeline.py tests/test_prometheus_adapter.py -q` — **166 passed, 28 skipped** (existing PostgreSQL-gated tests).
+- Targeted Ruff check and format check for the provider/focused VS-02 tests, and
+  `git diff --check` — **passed**.
 
 ## Downstream invariants and deferred work
 
@@ -45,7 +45,9 @@ VS-03 must consume the private result for deadlines, HTTPX taxonomy, retry admis
 sleep, second/third attempts, and retry exhaustion. No hard deadline, retry, or sleep
 was added here.
 
-Implementation commit: `99bce0803fb8781151b085d06925d1edf3dacae2`
+Initial implementation commit: `99bce0803fb8781151b085d06925d1edf3dacae2`
+
+Evidence correction commit: `d01a10477158d316b18eac43fc48abca5ddd01db`
 
 Plan change requested: none.
 
