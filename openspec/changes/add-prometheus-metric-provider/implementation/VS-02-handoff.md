@@ -51,7 +51,7 @@ Evidence correction commit: `d01a10477158d316b18eac43fc48abca5ddd01db`
 
 Final error-envelope evidence correction: `0d355201d94da59db062afbad794cbce96a98e67`
 
-Empty-current composed-provider evidence correction: `HEAD` (this atomic correction commit).
+Empty-current composed-provider evidence correction: `ee4d364bb95a954b84b93dd33f0203fa9d72cb1b` (this atomic correction commit).
 
 Plan change requested: none.
 
