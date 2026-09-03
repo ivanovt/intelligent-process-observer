@@ -1006,3 +1006,8 @@ acceptance obligations, proof-level changes, or redesign decisions here.
   oversized-versus-bounded malformed precedence pairs, and incomplete required
   annotation/error matrix coverage. A fresh corrective implementer is active; VS-02
   remains `IN_PROGRESS` and VS-03 is not ready.
+- VS-02 corrective re-review (2026-09-04): `SLICE CHANGES REQUIRED` on remaining MEDIUM
+  evidence gaps only. Timeout/canceled proof must discriminate against every retryable
+  status with independent valid warnings-only and infos-only envelopes; malformed infos
+  must be covered on an error envelope. A fresh corrective implementer is active; VS-02
+  remains `IN_PROGRESS` and VS-03 is not ready.
