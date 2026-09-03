@@ -14,7 +14,7 @@
   fragment/IP, and only root or `/jira`; derive one pathless canonical site origin from
   every accepted form for independent REST and issue-navigation construction, disable
   redirects, and never forward credentials cross-host.
-- [ ] 1.4 Document the placeholder-only `JIRA_ALERT_PROVIDER` serialized shape in
+- [x] 1.4 Document the placeholder-only `JIRA_ALERT_PROVIDER` serialized shape in
   `.env.example`, complete Browse Projects/issue-security visibility as a deployment
   precondition, silent permission-based omission, and enhanced-search eventual
   consistency; document the ordinary-user/classic-token model and excluded scoped-token,
@@ -86,12 +86,12 @@
 
 ## 4. Verification and handoff
 
-- [ ] 4.1 Review public classes and interface methods for the repository docstring
+- [x] 4.1 Review public classes and interface methods for the repository docstring
   policy; update concise developer-facing site-URL/canonical-origin, source-reference,
   ordinary-user classic token, excluded gateway models, hard-deadline, Retry-After,
   permission, and eventual-consistency documentation.
-- [ ] 4.2 Run focused Jira-provider, settings, Alert-pipeline, and integration tests;
+- [x] 4.2 Run focused Jira-provider, settings, Alert-pipeline, and integration tests;
   report failures accurately.
-- [ ] 4.3 Run `openspec validate add-jira-alert-provider --strict` and `make check`.
+- [x] 4.3 Run `openspec validate add-jira-alert-provider --strict` and `make check`.
   Do not archive, push, create a pull request, or add Jira JSM/Opsgenie/OAuth support
   in this change.
