@@ -113,11 +113,31 @@ Before the final independent slice-plan review and before human approval of this
    immutable planning-review commit SHA:
 
    ```bash
-   git branch --show-current
-   git status --porcelain
-   git diff --cached --name-status
+   set -euo pipefail
+   change_dir=openspec/changes/add-prometheus-metric-provider
+   snapshot_audit_dir=$(mktemp -d)
+   current_branch=$(git branch --show-current)
+   test "$current_branch" = "feature/add-prometheus-metric-provider"
+   {
+     printf '%s\n' \
+       "$change_dir/.openspec.yaml" \
+       "$change_dir/design.md" \
+       "$change_dir/implementation-plan.md" \
+       "$change_dir/proposal.md" \
+       "$change_dir/tasks.md"
+     find "$change_dir/specs" -type f -print
+   } | LC_ALL=C sort > "$snapshot_audit_dir/expected"
+   git diff --cached --name-only | LC_ALL=C sort > "$snapshot_audit_dir/actual"
+   if ! diff -u "$snapshot_audit_dir/expected" "$snapshot_audit_dir/actual"; then
+     exit 1
+   fi
+   git diff --quiet
    git commit -m "docs: plan Prometheus metric provider implementation"
-   git rev-parse HEAD
+   planning_review_sha=$(git rev-parse HEAD)
+   test -n "$planning_review_sha"
+   git status --porcelain > "$snapshot_audit_dir/status"
+   test ! -s "$snapshot_audit_dir/status"
+   printf '%s\n' "$planning_review_sha"
    ```
 
 4. The independent slice-plan reviewer records that exact SHA in its review report and
@@ -138,7 +158,9 @@ Set the exact human-approved SHA; never infer it from `HEAD`, a branch name, or 
 base:
 
 ```bash
-approved_sha=<human-approved-planning-sha>
+set -euo pipefail
+approved_sha="${APPROVED_PLANNING_SHA:?set APPROVED_PLANNING_SHA}"
+git cat-file -e "$approved_sha^{commit}"
 change_dir=openspec/changes/add-prometheus-metric-provider
 immutable_paths=(
   "$change_dir/.openspec.yaml"
@@ -150,23 +172,32 @@ immutable_paths=(
 
 Run every audit below both immediately before VS-01 delegation and during VS-04 final
 conformance. These are approved-artifact integrity checks, not implementation-diff checks.
+The fenced blocks are consecutive fragments of one Bash audit script, split only for
+readability: concatenate and execute them in order in one process. Each fragment repeats
+`set -euo pipefail` defensively. Do not continue with a later fragment after any non-zero
+exit. The recorded gate result is the exit status of the one complete script, so no later
+successful command can mask an earlier failure.
 
 The immutable OpenSpec paths must be byte-for-byte identical in committed `HEAD`, index,
 and worktree:
 
 ```bash
-git diff --exit-code "$approved_sha" HEAD -- "${immutable_paths[@]}"
-git diff --cached --exit-code "$approved_sha" -- "${immutable_paths[@]}"
-git diff --exit-code "$approved_sha" -- "${immutable_paths[@]}"
+set -euo pipefail
+if ! git diff --exit-code "$approved_sha" HEAD -- "${immutable_paths[@]}"; then exit 1; fi
+if ! git diff --cached --exit-code "$approved_sha" -- "${immutable_paths[@]}"; then
+  exit 1
+fi
+if ! git diff --exit-code "$approved_sha" -- "${immutable_paths[@]}"; then exit 1; fi
 ```
 
 Audit `tasks.md` separately against committed `HEAD`, index, and worktree. Normalization
 must prove identical wording, numbering, ordering, structure, whitespace, task count, and
 absence of additions/removals; the raw comparison permits only forward `[ ] -> [x]`
-transitions. Each observed transition must also be reconciled manually to every owning
-slice's accepted commit/handoff/review recorded in execution metadata.
+transitions. Each observed transition is then reconciled mechanically to every owning
+slice's accepted commit and handoff recorded in execution metadata.
 
 ```bash
+set -euo pipefail
 audit_dir=$(mktemp -d)
 task_path="$change_dir/tasks.md"
 git show "$approved_sha:$task_path" > "$audit_dir/tasks.baseline"
@@ -179,9 +210,11 @@ for current in head index worktree; do
     > "$audit_dir/tasks.baseline.normalized"
   sed -E 's/^- \[( |x)\] /- [STATE] /' "$audit_dir/tasks.$current" \
     > "$audit_dir/tasks.$current.normalized"
-  diff -u "$audit_dir/tasks.baseline.normalized" \
-    "$audit_dir/tasks.$current.normalized"
-  awk '
+  if ! diff -u "$audit_dir/tasks.baseline.normalized" \
+    "$audit_dir/tasks.$current.normalized"; then
+    exit 1
+  fi
+  if ! awk '
     FILENAME == ARGV[1] { baseline[FNR] = $0; baseline_count = FNR; next }
     FILENAME == ARGV[2] {
       current_count = FNR
@@ -194,7 +227,9 @@ for current in head index worktree; do
       if (baseline_count != current_count) invalid = 1
       exit invalid
     }
-  ' "$audit_dir/tasks.baseline" "$audit_dir/tasks.$current"
+  ' "$audit_dir/tasks.baseline" "$audit_dir/tasks.$current"; then
+    exit 1
+  fi
 done
 ```
 
@@ -203,6 +238,7 @@ ownership table and execution overview. Every owning slice must be `COMPLETE` an
 have non-placeholder accepted commit and handoff fields:
 
 ```bash
+set -euo pipefail
 python3 - "$task_path" "$change_dir/implementation-plan.md" <<'PY'
 import re
 import sys
@@ -252,6 +288,7 @@ execution overview's `Status`/`Commit`/`Handoff` cells, and all content below
 ownership, boundaries, risk, coverage, verification, context packs, and gates—must match.
 
 ```bash
+set -euo pipefail
 plan_path="$change_dir/implementation-plan.md"
 git show "$approved_sha:$plan_path" > "$audit_dir/plan.baseline"
 git show "HEAD:$plan_path" > "$audit_dir/plan.head"
@@ -278,7 +315,9 @@ frozen_plan() {
 frozen_plan "$audit_dir/plan.baseline" > "$audit_dir/plan.baseline.frozen"
 for current in head index worktree; do
   frozen_plan "$audit_dir/plan.$current" > "$audit_dir/plan.$current.frozen"
-  diff -u "$audit_dir/plan.baseline.frozen" "$audit_dir/plan.$current.frozen"
+  if ! diff -u "$audit_dir/plan.baseline.frozen" "$audit_dir/plan.$current.frozen"; then
+    exit 1
+  fi
 done
 ```
 
@@ -286,9 +325,13 @@ Before VS-01, also require the expected branch, successful strict change validat
 an empty index/worktree, including no untracked files:
 
 ```bash
-test "$(git branch --show-current)" = "feature/add-prometheus-metric-provider"
+set -euo pipefail
+readiness_audit_dir=$(mktemp -d)
+current_branch=$(git branch --show-current)
+test "$current_branch" = "feature/add-prometheus-metric-provider"
 openspec validate add-prometheus-metric-provider --strict
-test -z "$(git status --porcelain)"
+git status --porcelain > "$readiness_audit_dir/status"
+test ! -s "$readiness_audit_dir/status"
 ```
 
 Any failure is a Coordinator stop condition. It is not delegated to VS-01 and cannot be
@@ -302,6 +345,8 @@ commit/path/diff, and classify production, test, documentation, task-state, and 
 plan-metadata changes:
 
 ```bash
+set -euo pipefail
+git cat-file -e "$approved_sha^{commit}"
 git log --oneline "$approved_sha"..HEAD
 git diff --name-status "$approved_sha"..HEAD
 git diff "$approved_sha"..HEAD
@@ -340,7 +385,8 @@ unsafe-target, and shared-consumer scenarios; composition requirement's port/dom
 boundary scenario; modified pipeline's transport-free scenario; real-provider current-
 unavailable portion of the failure-preservation scenario; tasks 1.1, 1.3, 1.4,
 pre-transport portions of 2.1 and 3.5, configuration/zero-request portions of 1.2 and
-4.1, current-unavailable portion of 4.5, compatibility setup from 4.6, and per-symbol
+4.1, current-unavailable portion of 4.5, complete production-valid and production-invalid
+shared-surface regression task 4.6, and per-symbol
 docstrings from 5.1.
 
 **Dependencies:** none beyond the human-approved planning-SHA readiness gate.
@@ -380,9 +426,10 @@ retries/backoff, deadlines/cancellation, reference acquisition, or analytical ch
 | VS01-AC02 | Unsafe selected target | Valid HTTPS/exact-loopback targets plus every rejected scheme, authority, host, query, fragment, and ambiguous path form | Select and validate only the requested configured source | Accepted source becomes a private validated selection for later transport; rejected source returns fixed safe failure with zero client/request activity; shared Settings construction is unchanged | parameterized unit + startup | exhaustive raw URL/path vectors and zero-construction ledger |
 | VS01-AC03 | Current unavailable end to end | Absent registry and separately unknown source ID, real source-aware composition, existing Metrics dependencies, and a fail-on-transport seam | Inject that provider into `MetricAnalysisPipeline` and analyze current | `acquire()` returns `MetricSeriesUnavailable`; pipeline preserves existing current-unavailable/current-acquisition failure and minimal failed Metric result semantics; zero HTTP requests occur | service | explicit real composition -> port -> acquire -> pipeline/result assertions for both cases |
 | VS01-AC04 | Production-invalid current outcome | Shared loading accepts the selected source but production-only validation rejects it | Call real provider directly and through current pipeline | Provider returns fixed `MetricSeriesAcquisitionFailure`, pipeline preserves its existing minimal failed result, and zero HTTP requests occur | service + transport ledger | provider and pipeline outcome assertions with fail-on-request seam |
-| VS01-AC05 | Shared-consumer compatibility | Production-invalid source accepted by shared settings | Start app; exercise capabilities, Observation creation, preflight, and production acquisition | Startup and existing public/preflight behavior remain compatible; only production acquisition rejects the source with zero requests from the production transport | API + service | lifespan/API/service/preflight regressions with separate transport ledgers |
+| VS01-AC05 | Production-invalid shared-consumer compatibility | Production-invalid source accepted by shared settings | Start app; exercise capabilities, Observation creation, preflight, and production acquisition | Startup and existing public/preflight behavior remain compatible; only production acquisition rejects the source with zero requests from the production transport | API + service | lifespan/API/service/preflight regressions with separate transport ledgers |
 | VS01-AC06 | Secret-safe pre-transport composition | Sentinel Bearer token and Basic username/password in selected and unselected sources | Load, resolve, reject invalid target, and inspect outcomes/logs/errors/repr/public projections | No diagnostic/output exposes token, password, Authorization, or configured username; internal shared credential representation is unchanged; no credential reaches a URL | unit + repository audit | sentinel scan and exact safe diagnostic snapshots |
 | VS01-AC07 | Port-only composition | Constructed application state and source-aware provider | Inspect imports/types without starting a run | Provider satisfies `MetricSeriesProvider`; Metric modules import no settings/HTTPX/Prometheus response types; construction creates/advances no LensRun or ObservationRun | static audit + service | protocol-use test, import scan, lifecycle spy |
+| VS01-AC08 | Production-valid shared-consumer compatibility | Valid production source configuration and fail-on-production-transport seam | Start app; exercise capabilities, Observation creation, and existing Metric preflight without calling production acquire | Startup succeeds; capabilities and creation retain their exact behavior; preflight retains its independent adapter, 15-second/no-retry policy, labels/warnings, and public error mapping; these existing surfaces create zero production-provider HTTP activity | API + service + transport ledger | valid-source lifespan/capabilities/create/preflight regression with separate preflight and fail-on-production ledgers |
 
 **Counterexample guards:** URL vectors include exact IPv4/IPv6/hostname loopback versus
 look-alikes, percent-encoding case variants, raw backslashes, repeated/interior slashes,
@@ -390,7 +437,9 @@ dot segments, whitespace/control/parser-normalized forms, and credentials in aut
 The production-invalid compatibility source contains otherwise valid credentials so
 eager shared validation cannot pass. Current-unavailable tests instantiate the real
 source-aware provider and execute `MetricAnalysisPipeline`; directly injecting a typed
-outcome or a fake provider does not satisfy VS01-AC03.
+outcome or a fake provider does not satisfy VS01-AC03. VS01-AC08 gives preflight its own
+adapter ledger and makes the production transport fail on construction/use, so merely
+sharing a client or silently invoking production acquisition cannot pass.
 
 **Focused verification:** `cd backend && uv run pytest
 tests/test_prometheus_metric_provider_configuration.py
@@ -405,10 +454,12 @@ separation; ADR-003, ADR-045, ADR-048, ADR-133, ADR-157; architecture Metrics pr
 pipeline boundaries; current settings, preflight adapter/contracts, observation service/
 API, lifespan, Metric contracts/port/pipeline/result builder, and focused tests.
 
-**Handoff expectations:** VS01-AC01 through VS01-AC07 evidence; exact public/private
+**Handoff expectations:** VS01-AC01 through VS01-AC08 evidence; exact public/private
 symbols; URL/path allow/reject table; client/request zero-activity ledgers; direct and
 pipeline unavailable/failure results; app-state provider type; shared-consumer regressions;
-secret/import/dependency audit; deviations; focused commands; explicitly deferred HTTP
+separate production-valid and production-invalid startup/capabilities/create/preflight
+results; confirmation task 4.6 is complete; secret/import/dependency audit; deviations;
+focused commands; explicitly deferred HTTP
 acquisition/mapping/resilience; shared-knowledge candidates.
 
 **Risk:** high-risk
@@ -417,8 +468,10 @@ acquisition/mapping/resilience; shared-knowledge candidates.
 source return the approved typed outcomes with zero transport; real composed current-
 unavailable and invalid-source outcomes traverse the existing pipeline to unchanged
 minimal failed Metric results; valid-source setup exposes no callable HTTP path; startup
-and shared consumers remain compatible; no domain/public/schema/dependency/orchestration
-change appears; docstrings and focused checks pass; independent high-risk review returns
+and capabilities/creation/preflight remain compatible for both production-valid and
+production-invalid shared sources with zero production transport activity; all of task
+4.6 is proven in this slice; no domain/public/schema/dependency/orchestration change
+appears; docstrings and focused checks pass; independent high-risk review returns
 `SLICE REVIEW PASS`; one atomic implementation commit and handoff exist, followed by
 Coordinator acceptance metadata.
 
@@ -437,7 +490,7 @@ classification, deterministic rejection, bare 503, body/status/success precedenc
 initial completion; composition verification through successful current/reference paths;
 modified pipeline's zero/one/multiple-reference scenarios; tasks 1.2 credential HTTP
 boundary, 2.1-2.5, one-attempt classification portion of 3.3, 4.1-4.4, successful/empty/
-current-failure/reference-failure portions of 4.5, provider-valid regressions from 4.6,
+current-failure/reference-failure portions of 4.5,
 and per-symbol docstrings from 5.1.
 
 **Dependencies:** VS-01 accepted.
@@ -648,15 +701,118 @@ orchestration; archive/PR/push; fixing an unrelated pre-existing failure.
 | VS04-AC04 | Scope/dependency/schema/API audit | Baseline-to-HEAD implementation diff and manifests/migrations/routes/contracts | Review change | No dependency, migration/schema, public API, Metric result/analysis, History, Agent, reference semantics, persistence, or Observation orchestration change exists | repository audit | diff/name-status, lock/manifest/migration/route/contract checks |
 | VS04-AC05 | Final verification | Completed sequential slices and clean execution state | Run focused tests, strict OpenSpec validation, and `make check` | Every command passes accurately; approved artifacts remain intact; task ownership is reconciled; worktree is clean after accepted commits/metadata | repository gate | recorded commands, baseline integrity audit, task/plan mutable-only audit |
 
+VS04-AC05 includes this separate final-completion assertion after the authorized
+transition audit above. It fail-closes unless the approved snapshot, current `tasks.md`,
+and frozen task ownership matrix contain the same 24 unique ordered task IDs; every
+current task is checked; and every owner is `COMPLETE` with accepted commit and handoff
+metadata:
+
+```bash
+set -euo pipefail
+approved_sha="${APPROVED_PLANNING_SHA:?set APPROVED_PLANNING_SHA}"
+git cat-file -e "$approved_sha^{commit}"
+change_dir=openspec/changes/add-prometheus-metric-provider
+final_task_audit_dir=$(mktemp -d)
+git show "$approved_sha:$change_dir/tasks.md" > "$final_task_audit_dir/tasks.baseline"
+cp "$change_dir/tasks.md" "$final_task_audit_dir/tasks.current"
+
+python3 - \
+  "$final_task_audit_dir/tasks.baseline" \
+  "$final_task_audit_dir/tasks.current" \
+  "$change_dir/implementation-plan.md" <<'PY'
+import re
+import sys
+from pathlib import Path
+
+TASK = re.compile(r"^- \[([ x])\] (\d+\.\d+)\b")
+
+
+def task_entries(path: str) -> list[tuple[str, str]]:
+    return [
+        (match.group(2), match.group(1))
+        for line in Path(path).read_text().splitlines()
+        if (match := TASK.match(line))
+    ]
+
+
+baseline = task_entries(sys.argv[1])
+current = task_entries(sys.argv[2])
+if len(baseline) != 24 or len({task_id for task_id, _ in baseline}) != 24:
+    raise SystemExit("approved snapshot must contain exactly 24 unique task IDs")
+if [task_id for task_id, _ in current] != [task_id for task_id, _ in baseline]:
+    raise SystemExit("current task IDs/count/order differ from approved snapshot")
+if any(state != "x" for _, state in current):
+    raise SystemExit("all 24 approved tasks must be checked at final conformance")
+
+plan_lines = Path(sys.argv[3]).read_text().splitlines()
+overview = {}
+owners = {}
+in_overview = False
+in_ownership = False
+for line in plan_lines:
+    if line == "## Execution overview":
+        in_overview = True
+        continue
+    if in_overview and line.startswith("## "):
+        in_overview = False
+    if line == "### Task ownership":
+        in_ownership = True
+        continue
+    if in_ownership and line.startswith("## "):
+        in_ownership = False
+    if in_overview and re.match(r"^\| VS-\d\d ", line):
+        cells = [cell.strip() for cell in line.strip("|").split("|")]
+        overview[cells[0]] = (cells[4], cells[5], cells[6])
+    if in_ownership and re.match(r"^\| \d+\.\d+ ", line):
+        cells = [cell.strip() for cell in line.strip("|").split("|")]
+        task_id = cells[0].split(maxsplit=1)[0]
+        if task_id in owners:
+            raise SystemExit(f"duplicate ownership row for task {task_id}")
+        owners[task_id] = set(re.findall(r"VS-\d\d", cells[1]))
+
+approved_ids = [task_id for task_id, _ in baseline]
+if list(owners) != approved_ids:
+    raise SystemExit("frozen ownership matrix task IDs/count/order are not exact")
+for task_id in approved_ids:
+    if not owners[task_id]:
+        raise SystemExit(f"task {task_id} has no explicit owner")
+    for owner in owners[task_id]:
+        status, commit, handoff = overview.get(owner, ("", "-", "-"))
+        if status != "COMPLETE" or commit == "-" or handoff == "-":
+            raise SystemExit(
+                f"task {task_id} owner {owner} lacks passed gate/accepted metadata"
+            )
+PY
+```
+
+After every approved-artifact and task audit succeeds, run the remaining final gate in a
+single fail-fast shell. A successful exit means every listed command and assertion passed:
+
+```bash
+set -euo pipefail
+final_gate_dir=$(mktemp -d)
+current_branch=$(git branch --show-current)
+test "$current_branch" = "feature/add-prometheus-metric-provider"
+openspec validate add-prometheus-metric-provider --strict
+make check
+git diff --check
+git status --porcelain > "$final_gate_dir/status"
+test ! -s "$final_gate_dir/status"
+```
+
 **Counterexample guards:** compatibility runs use a production-invalid source that shared
 Settings still accepts; preflight tests record attempts and warnings so replacing it with
 the production policy fails; persistence tests include every Metric terminal result and
 rollback path; static scans cover both imports and serialized artifacts; secret scan uses
 sentinel values absent from placeholder docs.
 
-**Focused verification:** focused provider/configuration/preflight/Metrics/integration
-tests; strict change validation; full `make check`; approved-SHA implementation and
-approved-artifact integrity audits; `git diff --check`; final clean status.
+**Focused verification:** in one fail-fast Coordinator gate, run the committed/index/
+worktree immutable, task-transition, task-ownership, and frozen-plan audits above; the
+24/24 final task assertion; focused provider/configuration/preflight/Metrics/integration
+tests; `openspec validate add-prometheus-metric-provider --strict`; `make check`;
+approved-SHA implementation-diff and scope audits; `git diff --check`; and the final clean
+status assertion. Every shell block starts with `set -euo pipefail`, and loop comparisons
+use explicit `if ! ...; then exit 1; fi` handling.
 
 **Context pack:** accepted VS-03 handoff and all earlier handoffs; complete approved
 OpenSpec; all architecture/ADR sources listed above; `.agents/PROJECT_KNOWLEDGE.md`;
@@ -665,7 +821,8 @@ changed production/tests/docs and all focused existing regressions.
 
 **Handoff expectations:** VS04-AC01 through VS04-AC05 evidence; documentation checklist;
 public docstring audit; exact focused and full command results; regression counts;
-baseline diff/artifact/task/plan integrity results; dependency/schema/API/import/secret
+approved-SHA committed/index/worktree artifact/task/plan integrity results; explicit
+24/24 checked-task and all-owner acceptance result; dependency/schema/API/import/secret
 audits; final clean status; deviations and shared-knowledge candidates; explicit note
 that the change remains unarchived pending whole-change verification/review.
 
@@ -675,8 +832,9 @@ that the change remains unarchived pending whole-change verification/review.
 production/test edits in VS-04;
 documentation and docstrings are complete and secret-safe; task ownership is reconciled;
 focused tests, strict OpenSpec validation, baseline implementation diff, approved-artifact
-integrity, checkbox-only task audit, mutable-only plan audit, scope/dependency/schema/API/
-secret audits, clean status, and `make check` pass. Any implementation/test gap is routed
+integrity, checkbox-only transition audit, exact 24/24 completion/ownership assertion,
+mutable-only plan audit, scope/dependency/schema/API/secret audits, clean status, and
+`make check` pass under fail-fast command execution. Any implementation/test gap is routed
 back to its owning high-risk slice rather than fixed here. One atomic documentation/
 conformance commit and handoff exist, followed by Coordinator acceptance metadata. The
 change remains unarchived pending whole-change verification and independent implementation
@@ -692,7 +850,7 @@ gate.
 
 | Approved requirement | Owning slice(s) | Verification |
 |---|---|---|
-| Resolve a server-managed Prometheus source without exposing credentials | VS-01, VS-02 | VS01-AC01/02/05/06; VS02-AC02 |
+| Resolve a server-managed Prometheus source without exposing credentials | VS-01, VS-02 | VS01-AC01/02/05/06/08; VS02-AC02 |
 | Query the exact current or reference window through HTTP API v1 | VS-02, VS-03 | VS02-AC01/09; VS03-AC02 |
 | Map one float series into the provider-neutral sample contract | VS-02 | VS02-AC03/04 |
 | Fail closed on warning annotations or excessive Prometheus responses | VS-02 | VS02-AC05/06/08 |
@@ -755,7 +913,7 @@ gate.
 
 | OpenSpec task | Owning slice(s) | Verification |
 |---|---|---|
-| 1.1 Preserve shared loading; selected-source production validation | VS-01 | VS01-AC02/05 |
+| 1.1 Preserve shared loading; selected-source production validation | VS-01 | VS01-AC02/05/08 |
 | 1.2 Production boundary and credential safety tests | VS-01, VS-02 | VS01-AC02/06; VS02-AC02/08 |
 | 1.3 Source-aware provider composer/resolver | VS-01 | VS01-AC01/02/07 |
 | 1.4 Lifespan/state port-only wiring | VS-01 | VS01-AC03/07 |
@@ -774,7 +932,7 @@ gate.
 | 4.3 HTTP/auth/current-reference boundary tests | VS-02, VS-03 | VS02-AC01/02/09; VS03-AC02 |
 | 4.4 Response/error/annotation/body matrix | VS-02, VS-03 | VS02-AC03-08; VS03-AC04-06 |
 | 4.5 Injected Metrics pipeline tests | VS-01, VS-02, VS-03 | VS01-AC03/04; VS02-AC09; VS03-AC07 |
-| 4.6 Startup/capabilities/create/preflight regressions | VS-01 | VS01-AC05 |
+| 4.6 Startup/capabilities/create/preflight regressions | VS-01 | VS01-AC05/08 |
 | 5.1 Docstrings and developer/deployment documentation | VS-01, VS-02, VS-03, VS-04 | Per-slice gates; VS04-AC01 |
 | 5.2 Scope/dependency/schema/semantics audit | VS-04 | VS04-AC03/04 |
 | 5.3 Focused provider/configuration/preflight/pipeline tests | VS-01, VS-02, VS-03, VS-04 | Every slice gate; VS04-AC02/03/05 |
