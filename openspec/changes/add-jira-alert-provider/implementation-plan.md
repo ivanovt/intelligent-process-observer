@@ -1051,3 +1051,6 @@ acceptance obligations, proof-level changes, or redesign decisions here.
   strict credential-safe allowlist. All slices are complete, but repository governance
   requires human triage before any targeted correction. The change remains unarchived;
   no correction worker is active.
+- IR-001 correction assignment (2026-09-03): human triage accepted the targeted strict
+  raw-URL validation correction. A fresh correction implementer is active; no correction
+  commit is accepted yet. Frozen slice structure and approved behavior remain unchanged.
