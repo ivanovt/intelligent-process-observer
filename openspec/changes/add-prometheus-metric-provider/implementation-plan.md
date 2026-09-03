@@ -366,7 +366,7 @@ VS-01 -> VS-02 -> VS-03 -> VS-04
 | Slice | Goal | Depends on | Risk | Status | Commit | Handoff |
 |---|---|---|---|---|---|---|
 | VS-01 | Source-safe transport-free walking skeleton through the existing Metric port | none | high-risk | COMPLETE | 1217266598aa5f20b902e9ae2edfe1da2ffed6c2 | `implementation/VS-01-handoff.md` |
-| VS-02 | Complete bounded single-attempt request, mapping, and status classification | VS-01 | high-risk | IN_PROGRESS | - | - |
+| VS-02 | Complete bounded single-attempt request, mapping, and status classification | VS-01 | high-risk | COMPLETE | `99bce08`, `d01a104`, `0d35520`, `ee4d364` | `implementation/VS-02-handoff.md` |
 | VS-03 | Hard deadlines, deterministic retries, and terminal resilience integration | VS-02 | high-risk | PLANNED | - | - |
 | VS-04 | Compatibility, operational documentation, and whole-change conformance | VS-03 | normal | PLANNED | - | - |
 
@@ -1015,3 +1015,12 @@ acceptance obligations, proof-level changes, or redesign decisions here.
   evidence gap only. VS02-AC09 requires empty-current completed-insufficient behavior
   through the real composed provider, not a fake provider. A fresh corrective implementer
   is active; VS-02 remains `IN_PROGRESS` and VS-03 is not ready.
+- VS-02 acceptance (2026-09-04): focused gate independently reproduced as 193 passed,
+  28 existing PostgreSQL-gated skips; targeted Ruff/format and diff checks passed.
+  Initial high-risk review findings were corrected through bounded VS-02 evidence-only
+  commits. The final fresh re-review returned `SLICE REVIEW PASS` with no findings;
+  accepted code commits are `99bce0803fb8781151b085d06925d1edf3dacae2`,
+  `d01a10477158d316b18eac43fc48abca5ddd01db`,
+  `0d355201d94da59db062afbad794cbce96a98e67`, and
+  `ee4d364bb95a954b84b93dd33f0203fa9d72cb1b`, with handoff
+  `implementation/VS-02-handoff.md`. No shared-knowledge candidates.

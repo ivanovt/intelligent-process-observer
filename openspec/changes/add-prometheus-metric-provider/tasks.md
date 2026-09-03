@@ -4,7 +4,7 @@
   add stricter URL/transport validation only after the production
   `MetricSeriesProvider` resolves the selected configured source, returning failure
   with zero HTTP attempts when that production-only validation rejects it.
-- [ ] 1.2 Add production-boundary and credential-safety tests covering valid HTTPS and
+- [x] 1.2 Add production-boundary and credential-safety tests covering valid HTTPS and
   loopback targets, every rejected URL component/host/scheme, absent and unknown
   sources, and proof that invalid selected targets send no request; define secret
   material as Bearer token/Basic password while also excluding Authorization and the
@@ -35,14 +35,14 @@
 - [ ] 2.2 Implement strict bounded response-body streaming with the 1 MiB cap and
   cancellation-safe resource cleanup; reject declared or observed over-cap responses
   without returning truncated data.
-- [ ] 2.3 Implement strict success-envelope/matrix/label/sample validation and mapping
+- [x] 2.3 Implement strict success-envelope/matrix/label/sample validation and mapping
   to the unchanged `MetricSeriesAvailable` contract: zero series to empty available,
   exactly one float series to UTC samples, multi-series/native-histogram/malformed data
   to failure, and at most 61 samples.
-- [ ] 2.4 Preserve decoded sample order, duplicate timestamps, window membership, and
+- [x] 2.4 Preserve decoded sample order, duplicate timestamps, window membership, and
   `NaN|+Inf|-Inf` values for existing deterministic preparation; discard labels and all
   raw Prometheus transport objects at the provider boundary.
-- [ ] 2.5 Reject non-empty warnings under the explicit conservative project policy
+- [x] 2.5 Reject non-empty warnings under the explicit conservative project policy
   because the provider-neutral contract cannot represent or qualify them, without
   assigning one universal meaning to Prometheus warnings; treat valid infos only as
   bounded operational telemetry without retaining provider text, and ensure bodies,
@@ -86,13 +86,13 @@
 
 ## 4. Mapping and integration verification
 
-- [ ] 4.1 Add exact request-target tests for empty and `/` root paths, their normalized
+- [x] 4.1 Add exact request-target tests for empty and `/` root paths, their normalized
   forms, valid prefixes such as `/prometheus` and `/team.v1/_prom~etheus-2/metrics/`
   with exact accepted-segment preservation, and rejection before request of concrete
   repeated/empty/dot/backslash/encoding cases such as `/a//b`, `/a//`, `/./a`,
   `/a/../b`, `/a\\b`, `/%41`, `/%2F`, and `/%2e%2e`, plus uppercase/lowercase encoded
   separator or dot variants and other ambiguous path forms.
-- [ ] 4.2 Add parameterized deterministic-step tests for sub-second and fractional
+- [x] 4.2 Add parameterized deterministic-step tests for sub-second and fractional
   windows and exact boundary cases including `0.5s -> 1`, `1.25s -> 1`,
   `59.999s -> 1`, `60s -> 1`, `60.001s -> 2`, `119.999s -> 2`, `120s -> 2`,
   `120.001s -> 3`, `3599.999s -> 60`, `3600s -> 60`, and
