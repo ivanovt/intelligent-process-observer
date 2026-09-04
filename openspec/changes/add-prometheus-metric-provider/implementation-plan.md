@@ -1,6 +1,6 @@
 # Implementation Plan — add-prometheus-metric-provider
 
-**Status:** EXECUTION IN PROGRESS — FINAL VERIFICATION
+**Status:** EXECUTION STOPPED — FINAL CHANGES REQUIRED
 **Artifact type:** Non-normative execution plan
 **Approved OpenSpec change:** `add-prometheus-metric-provider`
 **Implementation branch:** `feature/add-prometheus-metric-provider`
@@ -90,7 +90,7 @@ FINAL. It is not a Prometheus implementation phase and adds no node to this grap
 | VS-02 | Bounded single-attempt acquisition and classification | VS-01 | accepted high-risk | COMPLETE | see anchor | accepted |
 | VS-03 | Deadlines, retries, state-inert cleanup, bounded capacity | VS-02 | accepted high-risk | COMPLETE | see anchor | accepted |
 | C-01 | Complete all remaining task 5.1 documentation conformance | VS-03 | normal | COMPLETE | `028a8d5` | handoff accepted; independent review `ACCEPT` |
-| FINAL | Standard final conformance and implementation review | C-01 | normal | IN_PROGRESS | - | verification-only execution active |
+| FINAL | Standard final conformance and implementation review | C-01 | normal | BLOCKED | - | independent review `CHANGES REQUIRED`; see `implementation/FINAL-handoff.md` |
 
 ## Accepted implementation summary
 
@@ -379,5 +379,8 @@ them.
 - RSP-001: SATISFIED. Updated `main` is merged into the feature branch, all six reusable
   workflow-skill files match `main` and are absent from the cumulative feature delta, and
   the remaining delta contains only `add-prometheus-metric-provider` work.
-- FINAL: IN_PROGRESS. Verification-only execution started after confirming every
-  repository-state prerequisite; no corrective work is authorized inside FINAL.
+- FINAL: CHANGES REQUIRED and stopped without correction. Repository and OpenSpec checks
+  passed, but fresh independent implementation review reported two `MEDIUM` bounded
+  correction candidates: IR-001 for an implicit HTTPX timeout that undercuts the approved
+  timing policy, and IR-002 for capacity ownership that does not cover retry waits. See
+  `implementation/FINAL-handoff.md`; no structural/normative escalation was identified.
