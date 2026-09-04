@@ -1,23 +1,27 @@
 # Implementation Plan — add-prometheus-metric-provider
 
-**Status:** APPROVED — EXECUTION BLOCKED
+**Status:** DRAFT — READY FOR INDEPENDENT SLICE-PLAN REVIEW
 **Artifact type:** Non-normative execution plan
 **Approved OpenSpec change:** `add-prometheus-metric-provider`
 **Implementation branch:** `feature/add-prometheus-metric-provider`
-**Human-approved planning SHA:** `b24e82bdf80893a93e313836666fdb1e4840ef37`
+**Human-approved planning SHA:** `b24e82bdf80893a93e313836666fdb1e4840ef37` (superseded for remaining execution)
 **Human-approved deadline/cleanup source revision:** `2180c7d14862187635de21d716f27f6b3b9ff93f`
 **Accepted VS-02 execution baseline SHA:** `81270d9537329eea0477254094ef9fcdce6f17e6`
+**Accepted VS-03 review tip:** `bf7cb3469119a8869625aa7f4125b21ed11c00d5`
+**Accepted VS-03 production/test diff SHA-256:** `0d77d5458efce23f5cc7f1c9b9544155c77a812771cd1821b4c8afea83c26f9c`
+**Accepted VS-03 execution baseline SHA:** `7baae2b4d3e05c55ba2ae8d5a82f2cc03f630a9a`
 **Replacement planning-review SHA:** pending
 
 ## Approval state
 
-VS-01 and VS-02 are accepted execution history and remain unchanged. The proposal,
-delta specifications, design, and tasks, including the human-approved deadline/cleanup
-revision at `2180c7d14862187635de21d716f27f6b3b9ff93f`, are approved inputs to this
-re-planning pass. This corrected implementation plan is not approved for VS-03 or
-VS-04 execution. The replacement planning snapshot defined below must be committed,
-independently reviewed at that exact SHA, and explicitly human-approved at that same SHA
-before VS-03 may resume.
+VS-01, VS-02, and VS-03 are independently reviewed, accepted, and frozen execution
+history. Their code, tests, handoffs, evidence, task state, and acceptance metadata remain
+unchanged. The earlier documentation/conformance-only VS-04 correctly stopped when it
+found missing public-interface docstrings and made no correction. This replacement plan
+authorizes only a new narrow VS-04 documentation-conformance correction followed by a
+separate non-corrective VS-05 final conformance slice. The replacement planning snapshot
+must be committed, independently reviewed at that exact SHA, and explicitly human-approved
+at that same SHA before the new VS-04 may begin.
 
 ## Authority and constraints
 
@@ -87,8 +91,8 @@ Repository constraints:
 
 At the exact replacement planning commit SHA approved after independent review, the
 approved OpenSpec content and plan structure become the frozen normative planning
-baseline. It is not the implementation-diff baseline. The separate resumed implementation
-baseline is the accepted VS-02 execution tip recorded above. Acceptance sources and
+baseline. It is not the implementation-diff baseline. The corrective implementation
+baseline is the accepted VS-03 execution tip recorded above. Acceptance sources and
 GIVEN/WHEN/THEN assertions provide normative traceability; task numbers are supplementary
 traceability. A task checkbox becomes complete only after every owning slice portion has
 passed its gate.
@@ -135,7 +139,7 @@ Before the independent review and human approval of this corrected plan:
      exit 1
    fi
    git diff --quiet
-   git commit -m "docs: replan Prometheus deadline cleanup"
+   git commit -m "docs: replan Prometheus docstring conformance"
    planning_review_sha=$(git rev-parse HEAD)
    test -n "$planning_review_sha"
    git status --porcelain > "$snapshot_audit_dir/status"
@@ -173,7 +177,7 @@ immutable_paths=(
 )
 ```
 
-Run every audit below both immediately before VS-03 delegation and during VS-04 final
+Run every audit below both immediately before new VS-04 delegation and during VS-05 final
 conformance. These are approved-artifact integrity checks, not implementation-diff checks.
 The fenced blocks are consecutive fragments of one Bash audit script, split only for
 readability: concatenate and execute them in order in one process. Each fragment repeats
@@ -324,7 +328,7 @@ for current in head index worktree; do
 done
 ```
 
-Before VS-03 resume, also require the expected branch, successful strict change
+Before new VS-04 execution, also require the expected branch, successful strict change
 validation, and an empty index/worktree, including no untracked files:
 
 ```bash
@@ -337,139 +341,143 @@ git status --porcelain > "$readiness_audit_dir/status"
 test ! -s "$readiness_audit_dir/status"
 ```
 
-Before delegation, the Coordinator must also run the cumulative implementation audit in
-the next section with `VS03_REVIEW_TIP` set to the exact human-approved replacement
-planning SHA. This records the pre-existing unaccepted VS-03 production/test inventory
-from accepted VS-02 tip `81270d9537329eea0477254094ef9fcdce6f17e6` through the resume
-point. It is resume-scope evidence, not VS-03 acceptance; the final reviewer reruns the
-same audit through the later candidate tip.
+Before delegation, the Coordinator must also verify the accepted VS-03 review tip/digest
+and the new corrective implementation baseline through the audit in the next section.
 
-Any failure is a Coordinator stop condition. It is not delegated to resumed VS-03 and
+Any failure is a Coordinator stop condition. It is not delegated to new VS-04 and
 cannot be waived by an implementer.
 
-### Separate planning and resumed-implementation baselines
+### Accepted history and corrective implementation baseline
 
 The replacement human-approved planning SHA governs normative artifact and frozen-plan
-integrity only. It MUST NOT be used to determine implementation scope because its
-ancestry already contains unaccepted VS-03 production/test work.
+integrity only. Accepted execution history remains anchored independently:
 
-The resumed implementation baseline is the exact last accepted VS-02 execution tip from
-Coordinator metadata:
+- accepted VS-02 execution baseline:
+  `81270d9537329eea0477254094ef9fcdce6f17e6`;
+- accepted cumulative VS-03 review tip:
+  `bf7cb3469119a8869625aa7f4125b21ed11c00d5`;
+- accepted VS-03 cumulative production/test diff SHA-256:
+  `0d77d5458efce23f5cc7f1c9b9544155c77a812771cd1821b4c8afea83c26f9c`;
+- accepted VS-03 execution/Coordinator-acceptance tip:
+  `7baae2b4d3e05c55ba2ae8d5a82f2cc03f630a9a`.
 
-```text
-81270d9537329eea0477254094ef9fcdce6f17e6
-```
-
-The already-present unaccepted VS-03 production/test commits are:
-
-```text
-4baf129efeb84ba40c507934ad9e4451cf59b5b0
-5c35ae84e141169375faff4e7f1c909ccb774cbb
-3a3ef1b6e865afb257ab6ba72052cc80415a3acb
-71566e0b7b98251cd40f58361659ff52b76379df
-```
-
-This is the existing inclusive VS-03 implementation history from first production commit
-`4baf129` through current production tip `71566e0`, including interleaved handoff/review
-metadata. None is accepted. Replacement-plan and OpenSpec-clarification commits later in
-the ancestry do not narrow or reset the implementation scope.
-
-For every resumed VS-03 handoff, correction re-review, and final high-risk review, set the
-exact candidate tip and run this fail-closed cumulative audit. It reviews all repository
-changes and separately materializes every production/test change since accepted VS-02;
-therefore every later VS-03 correction is automatically added to the same cumulative
-scope:
+The new VS-04 corrective implementation baseline is exactly the last item. Intervening
+blocked-conformance and replacement-plan commits are documentation/metadata only and do
+not redefine accepted VS-03. Before new VS-04 delegation, reproduce the accepted VS-03
+history and prove no production/test change occurred after its reviewed tip through its
+execution-acceptance tip:
 
 ```bash
 set -euo pipefail
 accepted_vs02_sha=81270d9537329eea0477254094ef9fcdce6f17e6
-vs03_review_tip="${VS03_REVIEW_TIP:?set VS03_REVIEW_TIP}"
-review_audit_dir=$(mktemp -d)
-production_test_paths=(backend/src backend/tests frontend/src)
-existing_unaccepted_vs03_commits=(
-  4baf129efeb84ba40c507934ad9e4451cf59b5b0
-  5c35ae84e141169375faff4e7f1c909ccb774cbb
-  3a3ef1b6e865afb257ab6ba72052cc80415a3acb
-  71566e0b7b98251cd40f58361659ff52b76379df
-)
-
-git cat-file -e "$accepted_vs02_sha^{commit}"
-git cat-file -e "$vs03_review_tip^{commit}"
-git merge-base --is-ancestor "$accepted_vs02_sha" "$vs03_review_tip"
-for commit in "${existing_unaccepted_vs03_commits[@]}"; do
-  git cat-file -e "$commit^{commit}"
-  git merge-base --is-ancestor "$accepted_vs02_sha" "$commit"
-  git merge-base --is-ancestor "$commit" "$vs03_review_tip"
-done
-
-git log --reverse --format='%H %s' \
-  "$accepted_vs02_sha".."$vs03_review_tip" \
-  > "$review_audit_dir/all-commits.txt"
-git diff --name-status "$accepted_vs02_sha" "$vs03_review_tip" \
-  > "$review_audit_dir/all-paths.txt"
-git diff --binary "$accepted_vs02_sha" "$vs03_review_tip" \
-  > "$review_audit_dir/all.diff"
-
-git log --reverse --format='%H %s' \
-  "$accepted_vs02_sha".."$vs03_review_tip" -- "${production_test_paths[@]}" \
-  > "$review_audit_dir/production-test-commits.txt"
-git diff --name-status "$accepted_vs02_sha" "$vs03_review_tip" -- \
-  "${production_test_paths[@]}" > "$review_audit_dir/production-test-paths.txt"
-git diff --binary "$accepted_vs02_sha" "$vs03_review_tip" -- \
-  "${production_test_paths[@]}" > "$review_audit_dir/production-test.diff"
-test -s "$review_audit_dir/production-test-commits.txt"
-test -s "$review_audit_dir/production-test-paths.txt"
-test -s "$review_audit_dir/production-test.diff"
-sha256sum "$review_audit_dir/production-test.diff" \
-  > "$review_audit_dir/production-test.diff.sha256"
-git diff --check "$accepted_vs02_sha" "$vs03_review_tip" -- \
-  "${production_test_paths[@]}"
-```
-
-The handoff and independent high-risk review report must record the accepted VS-02 SHA,
-candidate review-tip SHA, four existing unaccepted commit SHAs, every later correction
-commit SHA, complete production/test name-status list, and the cumulative diff SHA-256.
-The reviewer reviews `all.diff` for scope and the complete `production-test.diff` for
-behavior; reviewing only the replacement-plan ancestry suffix, only the newest correction,
-or `4baf129..71566e0` without the first commit's parent is invalid.
-
-Coordinator acceptance of VS-03 additionally records the exact accepted review tip and
-cumulative production/test diff SHA-256 in mutable execution metadata. VS-04 reruns the
-same accepted-VS-02-to-accepted-VS-03-tip audit and compares the digest to that record. It
-also proves its documentation/conformance-only work introduced no later production/test
-change in committed `HEAD`, index, or worktree:
-
-```bash
-set -euo pipefail
-accepted_vs02_sha=81270d9537329eea0477254094ef9fcdce6f17e6
-accepted_vs03_tip="${ACCEPTED_VS03_REVIEW_TIP:?set ACCEPTED_VS03_REVIEW_TIP}"
-expected_delta_sha256="${VS03_PRODUCTION_TEST_DIFF_SHA256:?set VS03_PRODUCTION_TEST_DIFF_SHA256}"
-final_history_audit_dir=$(mktemp -d)
+accepted_vs03_review_tip=bf7cb3469119a8869625aa7f4125b21ed11c00d5
+accepted_vs03_execution_sha=7baae2b4d3e05c55ba2ae8d5a82f2cc03f630a9a
+expected_vs03_digest=0d77d5458efce23f5cc7f1c9b9544155c77a812771cd1821b4c8afea83c26f9c
+history_audit_dir=$(mktemp -d)
 production_test_paths=(backend/src backend/tests frontend/src)
 
-git cat-file -e "$accepted_vs03_tip^{commit}"
-git merge-base --is-ancestor "$accepted_vs02_sha" "$accepted_vs03_tip"
-git diff --binary "$accepted_vs02_sha" "$accepted_vs03_tip" -- \
-  "${production_test_paths[@]}" > "$final_history_audit_dir/vs03-production-test.diff"
-actual_delta_sha256=$(sha256sum "$final_history_audit_dir/vs03-production-test.diff" \
+git merge-base --is-ancestor "$accepted_vs02_sha" "$accepted_vs03_review_tip"
+git merge-base --is-ancestor "$accepted_vs03_review_tip" "$accepted_vs03_execution_sha"
+git diff --binary "$accepted_vs02_sha" "$accepted_vs03_review_tip" -- \
+  "${production_test_paths[@]}" > "$history_audit_dir/vs03-production-test.diff"
+actual_vs03_digest=$(sha256sum "$history_audit_dir/vs03-production-test.diff" \
   | awk '{print $1}')
-test "$actual_delta_sha256" = "$expected_delta_sha256"
-if ! git diff --exit-code "$accepted_vs03_tip" HEAD -- \
+test "$actual_vs03_digest" = "$expected_vs03_digest"
+if ! git diff --exit-code "$accepted_vs03_review_tip" \
+  "$accepted_vs03_execution_sha" -- "${production_test_paths[@]}"; then exit 1; fi
+```
+
+For each new VS-04 handoff or correction, audit from the accepted VS-03 execution baseline
+through the exact candidate tip. The only permitted production path is
+`backend/src/app/metrics/ports.py`; no test or other production path may change. The
+complete file must be AST-equivalent after docstrings are removed, proving signatures,
+types, statements, and runtime behavior are unchanged:
+
+```bash
+set -euo pipefail
+accepted_vs03_execution_sha=7baae2b4d3e05c55ba2ae8d5a82f2cc03f630a9a
+corrective_tip="${VS04_CORRECTIVE_TIP:?set VS04_CORRECTIVE_TIP}"
+corrective_audit_dir=$(mktemp -d)
+target=backend/src/app/metrics/ports.py
+production_test_paths=(backend/src backend/tests frontend/src)
+
+git cat-file -e "$corrective_tip^{commit}"
+git merge-base --is-ancestor "$accepted_vs03_execution_sha" "$corrective_tip"
+git diff --name-status "$accepted_vs03_execution_sha" "$corrective_tip" -- \
+  "${production_test_paths[@]}" > "$corrective_audit_dir/paths"
+printf 'M\t%s\n' "$target" > "$corrective_audit_dir/expected-paths"
+if ! diff -u "$corrective_audit_dir/expected-paths" \
+  "$corrective_audit_dir/paths"; then exit 1; fi
+git show "$accepted_vs03_execution_sha:$target" > "$corrective_audit_dir/before.py"
+git show "$corrective_tip:$target" > "$corrective_audit_dir/after.py"
+python3 - "$corrective_audit_dir/before.py" "$corrective_audit_dir/after.py" <<'PY'
+import ast
+import sys
+from pathlib import Path
+
+
+def without_docstrings(path: str) -> str:
+    tree = ast.parse(Path(path).read_text())
+    for node in ast.walk(tree):
+        body = getattr(node, "body", None)
+        if body and isinstance(body[0], ast.Expr):
+            value = body[0].value
+            if isinstance(value, ast.Constant) and isinstance(value.value, str):
+                del body[0]
+    return ast.dump(tree, include_attributes=False)
+
+
+before = Path(sys.argv[1]).read_text()
+after = Path(sys.argv[2]).read_text()
+if without_docstrings(sys.argv[1]) != without_docstrings(sys.argv[2]):
+    raise SystemExit("ports.py changed beyond docstrings")
+tree = ast.parse(after)
+provider = next(
+    (node for node in tree.body if isinstance(node, ast.ClassDef)
+     and node.name == "MetricSeriesProvider"),
+    None,
+)
+if provider is None or not ast.get_docstring(provider, clean=True):
+    raise SystemExit("MetricSeriesProvider lacks a meaningful docstring")
+acquire = next(
+    (node for node in provider.body if isinstance(node, ast.AsyncFunctionDef)
+     and node.name == "acquire"),
+    None,
+)
+if acquire is None or not ast.get_docstring(acquire, clean=True):
+    raise SystemExit("MetricSeriesProvider.acquire lacks a meaningful docstring")
+if len(ast.get_docstring(provider, clean=True).split()) < 5:
+    raise SystemExit("MetricSeriesProvider docstring is not purpose-descriptive")
+if len(ast.get_docstring(acquire, clean=True).split()) < 5:
+    raise SystemExit("acquire docstring is not behavior-descriptive")
+PY
+git diff --check "$accepted_vs03_execution_sha" "$corrective_tip"
+```
+
+Coordinator acceptance records the exact corrective tip and handoff. VS-05 uses that
+accepted corrective tip as its implementation baseline and proves committed `HEAD`, index,
+and worktree contain no later production/test changes:
+
+```bash
+set -euo pipefail
+accepted_corrective_tip="${ACCEPTED_VS04_CORRECTIVE_TIP:?set ACCEPTED_VS04_CORRECTIVE_TIP}"
+production_test_paths=(backend/src backend/tests frontend/src)
+git cat-file -e "$accepted_corrective_tip^{commit}"
+if ! git diff --exit-code "$accepted_corrective_tip" HEAD -- \
   "${production_test_paths[@]}"; then exit 1; fi
-if ! git diff --cached --exit-code "$accepted_vs03_tip" -- \
+if ! git diff --cached --exit-code "$accepted_corrective_tip" -- \
   "${production_test_paths[@]}"; then exit 1; fi
-if ! git diff --exit-code "$accepted_vs03_tip" -- \
+if ! git diff --exit-code "$accepted_corrective_tip" -- \
   "${production_test_paths[@]}"; then exit 1; fi
 ```
 
-A merge-base-to-main diff may supplement these checks but must not substitute for the
-replacement-planning-SHA integrity audit, the accepted-VS-02 cumulative implementation
-audit, or the committed/index/worktree no-later-production/test audit.
+A merge-base-to-main diff may
+supplement but never replace these accepted-history and corrective-baseline audits.
 
 ## Slice graph
 
 ```text
-VS-01 -> VS-02 -> VS-03 -> VS-04
+VS-01 -> VS-02 -> VS-03 -> VS-04 -> VS-05
 ```
 
 ## Execution overview
@@ -479,7 +487,8 @@ VS-01 -> VS-02 -> VS-03 -> VS-04
 | VS-01 | Source-safe transport-free walking skeleton through the existing Metric port | none | high-risk | COMPLETE | 1217266598aa5f20b902e9ae2edfe1da2ffed6c2 | `implementation/VS-01-handoff.md` |
 | VS-02 | Complete bounded single-attempt request, mapping, and status classification | VS-01 | high-risk | COMPLETE | `99bce08`, `d01a104`, `0d35520`, `ee4d364` | `implementation/VS-02-handoff.md` |
 | VS-03 | Observable deadline/result boundary, state-inert late cleanup, bounded capacity, deterministic retries, and terminal resilience integration | VS-02 | high-risk | COMPLETE | bf7cb3469119a8869625aa7f4125b21ed11c00d5 | `implementation/VS-03-handoff.md` |
-| VS-04 | Compatibility, operational documentation, and whole-change conformance | VS-03 | normal | BLOCKED | 32371bccd11ead0138962e1d2bd3e73227a49ed0 | `implementation/VS-04-handoff.md` |
+| VS-04 | Add missing Metric provider-port docstrings without behavior change | VS-03 | normal | PLANNED | - | - |
+| VS-05 | Compatibility, operational documentation, and whole-change conformance | VS-04 | normal | PLANNED | - | - |
 
 ## Slice definitions
 
@@ -824,7 +833,88 @@ high-risk review of the complete cumulative production/test delta from accepted 
 acceptance metadata record the baseline, all unaccepted/correction commits, reviewed tip,
 complete name-status set, cumulative diff SHA-256, focused results, and accepted handoff.
 
-### VS-04 — Compatibility, documentation, and whole-change conformance
+### VS-04 — Metric provider-port docstring conformance
+
+**Behavioral goal:** Bring the existing public Metric provider port into repository
+documentation conformance by adding concise, meaningful purpose and behavior docstrings
+to `MetricSeriesProvider` and its public `acquire` method, with no signature, type,
+runtime, provider, pipeline, or public-contract change.
+
+**OpenSpec coverage:** only the missing public-class/interface-method docstring portion
+of task 5.1. All functional requirements/scenarios and tasks 1.1 through 4.6 are already
+accepted and are regression boundaries, not implementation ownership for this slice.
+
+**Dependencies:** VS-03 accepted at execution/Coordinator tip
+`7baae2b4d3e05c55ba2ae8d5a82f2cc03f630a9a`, with reviewed production/test tip
+`bf7cb3469119a8869625aa7f4125b21ed11c00d5` and cumulative digest
+`0d77d5458efce23f5cc7f1c9b9544155c77a812771cd1821b4c8afea83c26f9c`.
+
+**Vertical boundary:** accepted `app.metrics.ports` source -> add class purpose docstring
+and `acquire` behavior docstring -> AST-equivalent module after docstring removal ->
+unchanged public protocol/signature/types/runtime behavior -> focused static/lint proof.
+
+**Expected code impact:** only
+`backend/src/app/metrics/ports.py::MetricSeriesProvider` and
+`MetricSeriesProvider.acquire` docstring bodies. Add no test, helper, import, annotation,
+signature, statement, formatting-only rewrite, or unrelated cleanup. Coordinator-owned
+plan/task metadata and new handoff
+`implementation/VS-04-docstring-correction-handoff.md` are separate execution metadata;
+the blocked historical `implementation/VS-04-handoff.md` remains unchanged.
+
+**Contracts consumed/changed:** documents the purpose of the existing public
+`MetricSeriesProvider` protocol and the behavior of its existing `acquire(scope, window)`
+interface. No Python or serialized contract changes; no runtime behavior changes.
+
+**Non-goals:** changing any provider implementation, composition, transport, retry,
+deadline, cleanup, capacity, pipeline, analytical, reference, History, agent, persistence,
+API, schema, dependency, or test behavior; refactoring or formatting unrelated code;
+editing OpenSpec or architecture.
+
+#### Acceptance evidence
+
+| ID | Approved source | Given | When | Then | Proof level | Planned verification |
+|---|---|---|---|---|---|---|
+| VS04-AC01 | Root `AGENTS.md` public class documentation rule | Existing public `MetricSeriesProvider` protocol | Inspect its runtime docstring | A concise meaningful docstring explains that the protocol supplies provider-neutral Metric series acquisition | static + review | `ast.get_docstring` presence/word-count assertion plus human behavior-focused wording review |
+| VS04-AC02 | Root `AGENTS.md` public interface-method documentation rule | Existing public `MetricSeriesProvider.acquire(scope, window)` method | Inspect its runtime docstring | A concise meaningful docstring explains acquisition for the supplied immutable provider scope and exact analysis window without changing signature or semantics | static + review | `ast.get_docstring` assertion and signature/annotation comparison |
+| VS04-AC03 | Behavior-preserving correction boundary | Accepted VS-03 execution baseline and corrective candidate tip | Compare the complete production/test delta and AST with docstrings removed | The only production path is `backend/src/app/metrics/ports.py`, no test changes exist, and the module is AST-identical after docstring removal | repository audit | exact name-status allowlist and docstring-stripped AST equality command above |
+| VS04-AC04 | Focused quality gate | The two docstrings and otherwise unchanged module | Run focused compilation/Ruff/static checks | The file parses, lint and format checks pass, and no behavioral/signature change or unrelated diff exists | static + lint | `python3 -m compileall`, targeted Ruff check/format, `git diff --check`, cumulative corrective audit |
+
+**Counterexample guards:** the AST comparison covers the complete module rather than only
+the protocol signature, so a changed annotation, decorator, import, default, ellipsis,
+method body, or unrelated statement fails. Exact path auditing fails any provider,
+pipeline, test, OpenSpec, architecture, or unrelated file change. Presence-only one-word
+docstrings fail the minimum purpose/behavior check and human wording review.
+
+**Focused verification:** `cd backend && uv run ruff check
+src/app/metrics/ports.py`; `cd backend && uv run ruff format --check
+src/app/metrics/ports.py`; `cd backend && uv run python -m compileall -q
+src/app/metrics/ports.py`; the accepted-history and cumulative corrective audits above;
+`git diff --check`. No production behavior test is added or changed.
+
+**Context pack:** root `AGENTS.md` sections 3-4 and 7; this replacement plan's accepted
+VS-03 anchors and corrective audit; current `backend/src/app/metrics/ports.py`; accepted
+VS-01/VS-02/VS-03 handoffs and execution metadata only as frozen regression boundaries;
+blocked historical `implementation/VS-04-handoff.md` identifying the exact docstring gap.
+
+**Handoff expectations:** VS04-AC01 through VS04-AC04 evidence; accepted VS-03 execution
+baseline SHA; exact corrective commit/tip; before/after docstrings; exact production/test
+name-status allowlist; docstring-stripped AST equality result; unchanged signature/type
+confirmation; focused command results; explicit no-test/no-behavior/no-unrelated-change
+audit; deviations and shared-knowledge candidates; new handoff path
+`implementation/VS-04-docstring-correction-handoff.md` without rewriting the blocked
+historical VS-04 handoff.
+
+**Risk:** normal
+
+**Completion gate:** both meaningful docstrings are present; only the exact target file
+changed from accepted VS-03 execution baseline; docstring-stripped ASTs are identical;
+signatures/types/runtime semantics and every accepted provider/pipeline behavior remain
+unchanged; focused compile/Ruff/format/diff checks pass; one atomic corrective commit and
+the new correction handoff exist; Coordinator records the accepted corrective tip and
+evidence. VS-01,
+VS-02, and VS-03 remain frozen and are not re-reviewed or re-executed.
+
+### VS-05 — Compatibility, documentation, and whole-change conformance
 
 **Behavioral goal:** Make the completed provider operationally understandable and prove
 as a whole that it remains an infrastructure-only injected capability: shared startup,
@@ -834,14 +924,14 @@ Document the approved observable-deadline rule: timeout return wins over
 cancellation-resistant cleanup, which is private, state-inert, capacity-bounded, and
 cannot alter the committed result.
 
-**OpenSpec coverage:** conformance rerun of every requirement/scenario already implemented
-and owned by VS-01 through VS-03; documentation and final audit tasks 5.1-5.4 only. Tasks
-4.5 and 4.6 must already be complete through their behavioral owning slices; VS-04 does
-not implement or add missing coverage for them. Its cleanup/capacity conformance work
-consumes accepted VS-03 evidence; it does not redesign, implement, or add resilience
-tests.
+**OpenSpec coverage:** conformance rerun of every approved requirement/scenario already
+implemented and owned by frozen VS-01 through VS-03; accepted VS-04 docstring evidence;
+remaining developer/deployment documentation and final audit tasks 5.1-5.4. Tasks 4.5 and
+4.6 remain accepted historical behavior. VS-05 implements no production or test behavior.
 
-**Dependencies:** VS-03 accepted.
+**Dependencies:** VS-04 accepted against VS-03 execution baseline
+`7baae2b4d3e05c55ba2ae8d5a82f2cc03f630a9a` with its exact corrective tip recorded in
+Coordinator metadata.
 
 **Vertical boundary:** placeholder-only deployment configuration and developer guidance
 -> application startup/composed provider -> mocked production current/reference runs and
@@ -851,13 +941,10 @@ surface.
 
 **Expected code impact:** `.env.example`, `docs/development-guide.md`, Coordinator-owned
 task checkboxes, and mutable execution metadata only. No production code or test code may
-be added or changed in this slice. Public provider/interface-method docstrings must
-already have been added by their owning implementation slice and are audited here. A
-discovered production/test gap stops VS-04. Only a gap owned by the currently re-approved
-VS-03 may return to VS-03 under this replacement plan and must repeat the cumulative
-high-risk review before VS-04 restarts. A defect attributable to accepted/frozen VS-01 or
-VS-02 MUST NOT reopen either slice: stop and require a new approved re-plan/execution
-decision.
+be added or changed in this slice. Public provider/interface-method docstrings must already
+be present from accepted VS-04 and are audited here. Any newly discovered implementation
+defect stops execution and requires a new approved re-plan/execution decision; VS-05 may
+not repair it or reopen VS-01 through VS-04.
 
 **Contracts consumed/changed:** documents and verifies existing contracts only. No
 production or test contract changes. Public production-provider class/interface-method
@@ -872,13 +959,13 @@ orchestration; archive/PR/push; fixing an unrelated pre-existing failure.
 
 | ID | Approved source | Given | When | Then | Proof level | Planned verification |
 |---|---|---|---|---|---|---|
-| VS04-AC01 | Documentation task | Placeholder source configuration and approved production policy | Read deployment/developer docs and public provider docstrings | HTTPS/loopback and exact prefix grammar, auth/exclusions, secrets, resolution/limits/warnings, attempts/retries/classification, and lookback/staleness are concise and exact; docs also state the 15s attempt/50s observable result deadlines, timeout commitment, cancellation/close signalling, state-inert late cleanup, finite private active-plus-cleanup capacity, pre-transport fixed-safe capacity failure, and no public capacity setting/field/reason without real credentials | documentation review + secret scan | `.env.example`/guide/docstring audit against the complete task 5.1 and clarified cleanup/capacity checklist |
-| VS04-AC02 | Shared behavior preservation | Production-valid and production-invalid shared sources | Run startup, capabilities, Observation create, and preflight suites | Existing outputs, 15-second/no-retry preflight, labels/warnings, and public error mapping remain compatible; production-invalid source affects only production acquire | API + service regression | focused existing and added tests with separate ledgers |
-| VS04-AC03 | Provider-neutral pipeline and persistence | Existing fake provider matrix plus completed VS-01 through VS-03 real-provider tests | Rerun Metric tests and inspect modules/artifacts without editing them | Zero/one/multiple references remain independent; fake tests use no transport; all result variants and rollback behavior round-trip unchanged; no raw transport/provider data persists | service + persistence + static audit | existing completed test suites and import scan |
-| VS04-AC04 | Scope/dependency/schema/API audit | Accepted VS-02 execution baseline, accepted cumulative VS-03 review tip/digest, and manifests/migrations/routes/contracts | Review change | Every accepted VS-03 production/test byte is traceable from the VS-02 baseline; VS-04 adds no production/test change; no dependency, migration/schema, public API, Metric result/analysis, History, Agent, reference semantics, persistence, or Observation orchestration change exists | repository audit | accepted-VS-02 cumulative diff/digest, no-post-VS03 committed/index/worktree diff, lock/manifest/migration/route/contract checks |
-| VS04-AC05 | Final verification | Completed sequential slices, accepted VS03 late-cleanup/capacity evidence, and clean execution state | Run focused tests, strict OpenSpec validation, documentation audit, and `make check` | Every command passes accurately; the approved `2180c7d` clarification and replacement reviewed plan remain intact; task ownership is reconciled; the cleanup/capacity documentation matches accepted VS03 evidence; the cumulative VS03 implementation audit is unchanged; worktree is clean after accepted commits/metadata | repository gate | recorded commands, approved-source/plan integrity audit, accepted-VS02-to-VS03 implementation audit, task/plan mutable-only audit, and documentation-to-VS03-evidence trace |
+| VS05-AC01 | Documentation task | Placeholder source configuration, approved production policy, and accepted public port docstrings | Read deployment/developer docs and docstrings | Provider configuration/policy and deadline/cleanup/capacity behavior are documented exactly; accepted VS-04 docstrings remain meaningful; no real credentials appear | documentation review + secret scan | `.env.example`/guide/docstring audit against task 5.1 |
+| VS05-AC02 | Shared behavior preservation | Production-valid and production-invalid shared sources | Rerun startup, capabilities, Observation create, and preflight suites without edits | Existing outputs, independent preflight behavior, and provider isolation remain compatible | API + service regression | accepted existing tests with separate ledgers |
+| VS05-AC03 | Provider-neutral pipeline and persistence | Existing fake/real provider matrices from accepted slices | Rerun Metric and persistence tests without edits | Reference, History, agent, result, rollback, and persistence behavior remain unchanged; no raw provider data persists | service + persistence + static audit | accepted existing suites and import scan |
+| VS05-AC04 | Scope/dependency/schema/API audit | Accepted VS-03 execution baseline, accepted VS-04 corrective tip, and complete final tree | Review change | VS-04 changed only target docstrings; VS-05 adds no production/test change; no dependency, schema, API, analytical, persistence, or orchestration change exists | repository audit | corrective AST/path audit, no-post-corrective committed/index/worktree diff, manifest/migration/route/contract checks |
+| VS05-AC05 | Final verification and review | Accepted slices, complete task state, and clean tree | Run full audits, strict validation, repository checks, official OpenSpec verification when installed, and `ipo-review-implementation` independently | All gates pass; all tasks reconcile; final independent implementation review has no unresolved blocking finding; any new defect stops rather than being repaired | repository gate + independent review | recorded integrity/task/scope/check results, optional official verification result, and final repository review report |
 
-VS04-AC05 includes this separate final-completion assertion after the authorized
+VS05-AC05 includes this separate final-completion assertion after the authorized
 transition audit above. It fail-closes unless the approved snapshot, current `tasks.md`,
 and frozen task ownership matrix contain the same 24 unique ordered task IDs; every
 current task is checked; and every owner is `COMPLETE` with accepted commit and handoff
@@ -990,45 +1077,46 @@ sentinel values absent from placeholder docs.
 worktree immutable, task-transition, task-ownership, and frozen-plan audits above; the
 24/24 final task assertion; focused provider/configuration/preflight/Metrics/integration
 tests; `openspec validate add-prometheus-metric-provider --strict`; `make check`;
-accepted-VS-02-to-accepted-VS-03 cumulative implementation-diff/digest audit;
-no-post-VS03 committed/index/worktree production/test audit; replacement-planning-SHA
-normative integrity audit; `git diff --check`; and the final clean-status assertion. Every
-shell block starts with `set -euo pipefail`, and loop comparisons use explicit
-`if ! ...; then exit 1; fi` handling.
+accepted VS-03 history digest audit; accepted VS-04 corrective AST/path audit;
+no-post-corrective committed/index/worktree production/test audit; replacement-planning-
+SHA normative integrity audit; `git diff --check`; final independent implementation
+review through `ipo-review-implementation` (preceded by `openspec-verify-change` when
+installed); and the final clean-status assertion. Every shell block starts with
+`set -euo pipefail`, and loop comparisons use explicit `if ! ...; then exit 1; fi`.
 
-**Context pack:** accepted VS-03 handoff and all earlier handoffs; complete approved
+**Context pack:** accepted VS-04 corrective handoff; frozen VS-03 and earlier handoffs;
+blocked historical VS-04 handoff as stop evidence; complete approved
 OpenSpec; all architecture/ADR sources listed above; `.agents/PROJECT_KNOWLEDGE.md`;
 development guide/workflow; root Makefile and manifests; replacement-planning-SHA
-integrity results and accepted-VS-02-to-VS03 cumulative implementation diff;
-accepted VS-02 execution baseline, accepted cumulative VS-03 review tip/digest, changed
-production/tests/docs, and all focused existing regressions.
+integrity results; accepted VS-03 review/execution anchors and digest; accepted VS-04
+corrective tip/AST/path evidence; final changed documentation and all existing regressions.
 
-**Handoff expectations:** VS04-AC01 through VS04-AC05 evidence; documentation checklist
+**Handoff expectations:** VS05-AC01 through VS05-AC05 evidence; documentation checklist
 including observable deadline/late-cleanup/private-capacity policy; public docstring
 audit; exact focused and full command results; regression counts;
 approved-SHA committed/index/worktree artifact/task/plan integrity results; explicit
-24/24 checked-task and all-owner acceptance result; accepted-VS-02 baseline, accepted
-VS-03 tip, complete cumulative production/test name-status and matching diff digest;
-proof of no later committed/index/worktree production/test change; dependency/schema/API/
-import/secret audits; final clean status; deviations and shared-knowledge candidates;
-explicit note that the change remains unarchived pending whole-change verification/review.
+24/24 checked-task and all-owner acceptance result; accepted VS-03 execution baseline and
+accepted VS-04 corrective tip; docstring-only AST/path proof; no later committed/index/
+worktree production/test change; dependency/schema/API/import/secret audits; final
+independent implementation-review result; final clean status; deviations and shared-
+knowledge candidates; explicit archive-readiness or stop statement.
+The new final handoff path is `implementation/VS-05-handoff.md`.
 
 **Risk:** normal
 
-**Completion gate:** VS04 evidence and all earlier acceptance IDs regress green without
-production/test behavior edits in VS-04; documentation and docstrings are complete,
+**Completion gate:** VS05 evidence and all earlier acceptance IDs regress green without
+production/test edits in VS-05; documentation and docstrings are complete,
 secret-safe, and match the approved observable-deadline/state-inert-cleanup/private-
-capacity policy and accepted VS03 evidence; task ownership is reconciled;
-focused tests, strict OpenSpec validation, accepted-VS-02 cumulative implementation diff,
-approved-artifact
-integrity, checkbox-only transition audit, exact 24/24 completion/ownership assertion,
-mutable-only plan audit, scope/dependency/schema/API/secret audits, clean status, and
-`make check` pass under fail-fast command execution. Any implementation/test gap stops
-VS-04. Only a re-approved VS-03-owned gap may return to VS-03 under this plan; a VS-01/
-VS-02 defect requires a new approved re-plan/execution decision and does not reopen those
-accepted slices. One atomic documentation/conformance commit and handoff exist, followed
-by Coordinator acceptance metadata. The change remains unarchived pending whole-change
-verification and independent implementation review.
+capacity policy and accepted VS03 evidence; accepted VS-04 remains docstring-only; task
+ownership is reconciled; focused tests, strict OpenSpec validation, accepted-history and
+corrective-baseline audits, approved-artifact integrity, checkbox-only transition audit,
+exact 24/24 completion/ownership assertion, mutable-only plan audit, scope/dependency/
+schema/API/secret audits, clean status, and `make check` pass. The final independent
+`ipo-review-implementation` review must complete with no unresolved blocking finding;
+run official `openspec-verify-change` first when installed. Any newly found
+implementation defect stops execution for a new approved decision; VS-05 makes no silent
+repair. One atomic documentation/conformance commit and handoff exist, followed by
+Coordinator acceptance metadata.
 
 ## Coverage matrix
 
@@ -1047,7 +1135,7 @@ gate.
 | Bound acquisition time and map failures through existing typed outcomes | VS-01, VS-02, VS-03 | VS01-AC01-04; VS02-AC05/07/08; VS03-AC01-09 |
 | Compose and verify the provider behind the existing Metric port | VS-01, VS-02, VS-03 | VS01-AC03/04/07; VS02-AC09; VS03-AC07-09 |
 | Acquire metric series only through the internal provider boundary | VS-01, VS-02, VS-03 | VS01-AC03/07; VS02-AC09; VS03-AC07-09 |
-| Persist terminal Metric outcome atomically through the existing repository | VS-04 | VS04-AC03/04 |
+| Persist terminal Metric outcome atomically through the existing repository | VS-05 | VS05-AC03/04 |
 
 ### Scenario ownership
 
@@ -1096,9 +1184,9 @@ gate.
 | Acquire one configured reference | VS-02 | VS02-AC09 |
 | Acquire multiple references independently | VS-02 | VS02-AC09 |
 | Test without provider transport | VS-01 | VS01-AC03/07 |
-| Round-trip all Metric result variants | VS-04 | VS04-AC03 |
-| Roll back persistence failure | VS-04 | VS04-AC03 |
-| Avoid transport, model, and framework coupling | VS-01, VS-04 | VS01-AC07; VS04-AC03/04 |
+| Round-trip all Metric result variants | VS-05 | VS05-AC03 |
+| Roll back persistence failure | VS-05 | VS05-AC03 |
+| Avoid transport, model, and framework coupling | VS-01, VS-05 | VS01-AC07; VS05-AC03/04 |
 
 ### Task ownership
 
@@ -1124,10 +1212,10 @@ gate.
 | 4.4 Response/error/annotation/body matrix | VS-02, VS-03 | VS02-AC03-08; VS03-AC04-06 |
 | 4.5 Injected Metrics pipeline tests | VS-01, VS-02, VS-03 | VS01-AC03/04; VS02-AC09; VS03-AC07/08 |
 | 4.6 Startup/capabilities/create/preflight regressions | VS-01 | VS01-AC05/08 |
-| 5.1 Docstrings and developer/deployment documentation | VS-01, VS-02, VS-03, VS-04 | VS03 per-symbol docstrings; VS04-AC01 cleanup/capacity documentation audit |
-| 5.2 Scope/dependency/schema/semantics audit | VS-04 | VS04-AC03/04 |
-| 5.3 Focused provider/configuration/preflight/pipeline tests | VS-01, VS-02, VS-03, VS-04 | Every slice gate; VS04-AC02/03/05 |
-| 5.4 Strict OpenSpec validation and `make check` | VS-04 | VS04-AC05 |
+| 5.1 Docstrings and developer/deployment documentation | VS-01, VS-02, VS-03, VS-04, VS-05 | VS04-AC01/02; VS05-AC01 |
+| 5.2 Scope/dependency/schema/semantics audit | VS-05 | VS05-AC03/04 |
+| 5.3 Focused provider/configuration/preflight/pipeline tests | VS-01, VS-02, VS-03, VS-05 | Accepted slice gates; VS05-AC02/03/05 |
+| 5.4 Strict OpenSpec validation and `make check` | VS-05 | VS05-AC05 |
 
 ## Frozen plan and mutable execution state
 
@@ -1136,9 +1224,9 @@ Frozen at the exact independently reviewed and explicitly human-approved plannin
 - the planning-review snapshot/approval protocol, human-approved SHA definition,
   pre-execution readiness protocol, approved-artifact
   integrity rule, and task checkbox-only rule;
-- the distinct normative-planning versus implementation-history baseline model, accepted
-  VS-02 execution baseline SHA, known pre-existing unaccepted VS-03 commits, and
-  cumulative review/digest protocol;
+- the distinct normative-planning versus implementation-history baseline model; accepted
+  VS-02/VS-03 execution and review anchors/digest; corrective baseline, path allowlist,
+  AST-equivalence audit, and final no-later-production/test protocol;
 - implementation branch, slice count/order/graph, goals, dependencies, vertical
   boundaries, risk classifications, and completion gates;
 - acceptance IDs, approved sources, GIVEN/WHEN/THEN assertions, proof levels,
@@ -1152,21 +1240,19 @@ Mutable only by the Coordinator after approval:
 - `tasks.md` checkbox state only as `[ ] -> [x]`, after every owning slice portion passes;
 - plan and slice execution statuses;
 - active assignments, accepted implementation/correction commit SHAs, and handoff paths;
-- resumed VS-03 candidate/review tip, later correction commit SHAs, cumulative
-  production/test name-status evidence and diff SHA-256, and final accepted VS-03 review
-  tip/digest;
+- VS-04 corrective assignment/tip/handoff, docstring/AST/path verification evidence, and
+  VS-05 final conformance/review results;
 - command results, evidence locations, reviewer/verifier outcomes, deviation dispositions,
   shared-knowledge disposition, and exact stop/escalation records;
 - execution notes that do not add or alter requirements, proof levels, dependencies,
   boundaries, or design.
 
 A later slice may detect a regression but may not silently take ownership of missing
-earlier behavior. VS-01 and VS-02 are accepted/frozen and cannot be reopened by this
-replacement plan. Before VS-03 acceptance, a code-path correction inside the re-approved
-VS-03 boundary remains cumulative VS-03 scope and repeats full high-risk review. During
-VS-04, only a VS-03-owned gap may return to VS-03; a VS-01/VS-02 defect, source conflict,
-new behavior, missing dependency approval, contract/schema/API change, or slice-structure
-problem stops for a new approved re-plan/execution decision.
+earlier behavior. VS-01, VS-02, and VS-03 are accepted/frozen and cannot be reopened by
+this replacement plan. VS-04 may correct only the two approved docstring omissions. VS-05
+is non-corrective: any implementation defect, source conflict, new behavior, missing
+dependency approval, contract/schema/API change, or slice-structure problem stops for a
+new approved re-plan/execution decision.
 
 ## Execution notes
 
@@ -1179,10 +1265,9 @@ acceptance obligations, proof-level changes, or redesign decisions here.
   production code or tests were changed during planning. The reviewer must record the
   resulting exact SHA, and human approval must identify that same SHA. The Coordinator
   records it in mutable metadata only after approval.
-- Default execution order is VS-01 through VS-04 with no concurrent slice dispatch.
-- VS-01 through VS-03 require fresh independent high-risk slice review before
-  Coordinator acceptance. VS-04 is normal risk and still requires Coordinator evidence
-  review.
+- Accepted execution order through VS-03 is frozen. Remaining execution is sequential:
+  new normal-risk VS-04 correction, then normal-risk VS-05 final conformance. No
+  concurrent dispatch.
 - Every implementer uses a fresh context, reads the exact context pack and accepted
   predecessor handoff, runs focused verification/self-review, creates one atomic commit
   by default, and writes the repository-standard handoff.
@@ -1306,6 +1391,12 @@ acceptance obligations, proof-level changes, or redesign decisions here.
   PostgreSQL-gated skips, with targeted Ruff/format, diff, strict OpenSpec, and clean
   worktree checks passing. No shared-knowledge candidates. VS-03 is COMPLETE; VS-04 is
   READY for documentation/conformance-only execution.
+- Accepted VS-03 execution baseline (2026-09-04): reviewed production/test tip
+  `bf7cb3469119a8869625aa7f4125b21ed11c00d5` retains cumulative digest
+  `0d77d5458efce23f5cc7f1c9b9544155c77a812771cd1821b4c8afea83c26f9c`;
+  Coordinator acceptance/task metadata was committed at
+  `7baae2b4d3e05c55ba2ae8d5a82f2cc03f630a9a`. The latter is the exact implementation
+  baseline for any newly approved post-VS03 corrective slice.
 - VS-04 active assignment (2026-09-04): delegated to a fresh Slice Implementer after
   accepted VS-03 review tip `bf7cb3469119a8869625aa7f4125b21ed11c00d5` and cumulative
   production/test diff SHA-256
@@ -1324,3 +1415,9 @@ acceptance obligations, proof-level changes, or redesign decisions here.
   accepted-VS03 production/test inventory/digest, and requests a new approved re-plan/
   execution decision. Execution is BLOCKED; do not dispatch a further slice, archive,
   push, merge, or open a pull request.
+- Remaining-execution re-plan (2026-09-04): accepted VS-01/VS-02/VS-03 remain frozen.
+  The blocked historical VS-04 is not resumed. The replacement structure adds a new
+  VS-04 limited to `MetricSeriesProvider` and `acquire` docstrings from accepted VS-03
+  execution baseline `7baae2b4d3e05c55ba2ae8d5a82f2cc03f630a9a`, followed by separate
+  non-corrective VS-05 final conformance. No implementation is active; both remaining
+  slices await review and explicit approval of the new planning snapshot.
