@@ -51,9 +51,14 @@
 
 ## 3. Deadlines, retries, and typed outcome mapping
 
-- [ ] 3.1 Implement injected monotonic hard deadlines of 15 seconds per complete
-  request/body-read attempt and 50 seconds per complete acquire, including waits and
-  every attempt; cancel in-flight work and close response/transport resources on expiry.
+- [ ] 3.1 Implement injected monotonic hard execution/result deadlines of 15 seconds per
+  complete request/body-read attempt and 50 seconds per complete acquire, including
+  waits and every attempt. On expiry, commit the existing typed timeout, signal
+  cancellation/close, discard late transport information, and return without allowing
+  cancellation-resistant cleanup to extend the deadline. Keep post-timeout cleanup
+  best-effort and state-inert; bound active acquisition plus cleanup capacity so it
+  cannot accumulate indefinitely, failing new pre-transport acquisition safely when that
+  private capacity is exhausted.
 - [ ] 3.2 Implement at most two retries only for `httpx.ConnectError` and HTTP
   `429|500|502|504`, with exact no-jitter waits of 0.5 and 1.0 seconds and admission only
   when the complete wait plus a new 15-second attempt fits the acquire budget; do not
@@ -70,7 +75,9 @@
   retry category and only fixed bounded diagnostic categories/status codes.
 - [ ] 3.4 Add deterministic retry/deadline/precedence tests for exact attempt counts and
   waits, retry admission/rejection, in-flight request and slow-body cancellation,
-  cleanup, and no work after 50 seconds; explicitly map `ConnectError` to retry,
+  timeout commitment, discarded late transport outcomes, state-inert best-effort cleanup,
+  finite active-plus-cleanup capacity, and no provider execution/retry/new attempt after
+  50 seconds; explicitly map `ConnectError` to retry,
   `ConnectTimeout`/`ReadTimeout` to timeout without retry, and `ReadError`, `WriteError`,
   `RemoteProtocolError`, and `DecodingError` to failure without retry, plus representative
   remaining named hierarchy categories and hard-deadline precedence over exceptions.

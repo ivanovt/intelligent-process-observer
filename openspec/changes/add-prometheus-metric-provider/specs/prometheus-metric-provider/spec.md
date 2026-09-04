@@ -289,10 +289,26 @@ samples SHALL NOT be persisted or placed in diagnostics.
 ### Requirement: Bound acquisition time and map failures through existing typed outcomes
 
 Each HTTP attempt, including the complete response-body read, SHALL have a hard
-monotonic 15-second deadline. One provider-port acquisition, including every attempt,
-body read, and retry wait, SHALL have a hard monotonic 50-second deadline. Deadline
-expiry SHALL return the existing typed timeout outcome. In-flight work SHALL be
-cancelled and transport resources closed when a hard deadline expires.
+monotonic 15-second **execution/result deadline**. One provider-port acquisition,
+including every attempt, body read, and retry wait, SHALL have a hard monotonic
+50-second **execution/result deadline**. Those deadlines bound the observable return of
+`MetricSeriesProvider.acquire()`, not the physical lifetime of arbitrary transport
+resource cleanup. Deadline expiry SHALL commit the acquisition to the existing typed
+timeout outcome. That commitment is final: no late response, body, error, exception, or
+cleanup completion SHALL produce or replace a provider outcome, begin a retry, begin a
+new HTTP attempt, or mutate analytical, pipeline, Lens, runtime, or persistence state.
+
+On deadline commitment, the provider SHALL signal cancellation and close to the active
+transport operation, discard all late transport information, and return the typed timeout
+without waiting indefinitely for cancellation-resistant cleanup. Transport resource
+cleanup MAY continue after that return only as best-effort cleanup; it is not execution
+or analytical work and SHALL have no outcome/state authority. The provider SHALL account
+for active acquisitions and post-timeout cleanup in one finite private execution/resource
+capacity. A cleanup task SHALL retain its capacity until it terminates, so
+cancellation-resistant cleanup cannot accumulate without bound; when capacity is
+exhausted, the provider SHALL fail a newly admitted acquisition before transport with the
+existing typed acquisition-failure outcome and a fixed safe diagnostic. This private
+capacity policy SHALL add no public configuration, reason code, or provider-port field.
 
 The provider SHALL retry an eligible failed read-only range request at most twice after
 the initial attempt, stopping on success, a non-retryable outcome, retry exhaustion, or
@@ -315,9 +331,11 @@ attempt after all admitted attempts were actually executed is
 For every attempt, classification SHALL follow this ordered decision table; a later
 rule SHALL NOT override an earlier applicable rule:
 
-1. Hard local attempt or acquisition deadline exhaustion SHALL return
+1. Hard local attempt or acquisition deadline exhaustion SHALL commit and return
    `MetricSeriesAcquisitionTimeout`. This rule takes precedence over every HTTPX
-   exception observed at the same boundary.
+   exception observed at the same boundary. It signals cancellation/close, discards late
+   transport information, and prevents every later retry, HTTP attempt, or provider-state
+   transition; best-effort cleanup has no authority to alter that committed outcome.
 2. An HTTPX exception raised during request or body acquisition SHALL be classified in
    this exact subclass order:
    - any `httpx.TimeoutException`, including `ConnectTimeout`, `ReadTimeout`,
@@ -452,7 +470,22 @@ reference outcome omits only that comparison and contributes
 - **GIVEN** an attempt/acquisition deadline or a valid Prometheus timeout/canceled error envelope occurs
 - **WHEN** acquisition terminates
 - **THEN** it returns the existing typed timeout outcome
-- **AND** no work or retry wait continues past the 50-second hard deadline
+- **AND** no provider execution, retry wait, HTTP attempt, late transport outcome, or
+  provider/pipeline/Lens/runtime state transition continues past the 50-second hard
+  deadline; best-effort transport resource cleanup may continue only without outcome or
+  state authority and within the provider's finite private capacity
+
+#### Scenario: Bound post-timeout transport cleanup
+
+- **GIVEN** a hard attempt or acquisition deadline commits an acquisition to timeout and
+  its cancellation-resistant transport cleanup does not terminate immediately
+- **WHEN** `MetricSeriesProvider.acquire()` returns its committed timeout
+- **THEN** no late transport response, body, error, exception, retry, HTTP attempt, or
+  provider/pipeline/Lens/runtime state transition can alter that result or begin
+- **AND** cleanup may continue only as state-inert best-effort resource cleanup while it
+  holds finite private execution/resource capacity
+- **AND** capacity exhaustion rejects a newly admitted acquisition before transport with
+  the existing typed acquisition-failure outcome and a fixed safe diagnostic
 
 #### Scenario: Require a strict timeout or canceled error envelope
 

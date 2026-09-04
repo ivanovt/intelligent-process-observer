@@ -210,11 +210,24 @@ that would redesign the provider-neutral and public analytical contracts.
 ### Apply hard local deadlines and narrow deterministic retries
 
 Prometheus receives `timeout=10s` for query evaluation. The application separately owns
-a hard monotonic 15-second deadline for the complete attempt and body read, and a
-50-second deadline for the entire acquire call. The latter contains the worst admitted
-three-attempt sequence: `15 + 0.5 + 15 + 1.0 + 15 = 46.5` seconds plus local overhead.
-A retry is admitted only when its selected wait and a complete attempt fit; cancellation
-closes an in-flight response/client.
+a hard monotonic 15-second execution/result deadline for the complete attempt and body
+read, and a 50-second execution/result deadline for the observable `acquire()` call. The
+latter contains the worst admitted three-attempt sequence:
+`15 + 0.5 + 15 + 1.0 + 15 = 46.5` seconds plus local overhead. A retry is admitted only
+when its selected wait and a complete attempt fit.
+
+Deadline expiry commits the provider to the existing typed timeout result. It signals
+cancellation and close to an in-flight response/client, but does not wait indefinitely
+for cancellation-resistant cleanup: the execution/result deadline governs return, while
+transport resource-cleanup lifetime is best-effort and separate. A late transport
+completion is discarded and cannot start a retry, replace the committed timeout, or
+mutate analytical, pipeline, Lens, runtime, or persistence state. To prevent detached
+cleanup from accumulating, a private finite execution/resource capacity accounts for
+both live acquisition work and cleanup that remains after timeout. Cleanup retains that
+capacity until it terminates; capacity exhaustion fails a newly admitted acquisition
+before transport through the existing typed acquisition-failure outcome with a fixed safe
+diagnostic. This is an infrastructure-private safeguard, not a new public setting,
+reason code, or provider-port contract.
 
 Retry admission is itself terminal when the remaining acquisition budget is too small.
 If an otherwise eligible retry cannot fit its selected 0.5/1.0-second wait plus a full
@@ -297,7 +310,8 @@ shared; they must prove compatible source loading and canonical public behavior 
 change. The production provider accepts injected HTTP transport/client construction,
 monotonic clock, sleeper, and hard-deadline runner or equivalent seams. Tests use mocked
 HTTP exchanges and cancellation-observable bodies to cover exact requests, all
-response/mapping branches, bounds, retry admission, cleanup, composition, and pipeline
+response/mapping branches, bounds, retry admission, timeout commitment, discarded late
+transport information, bounded cleanup capacity, composition, and pipeline
 current/reference behavior.
 
 Alternative considered: inject the preflight adapter directly into the pipeline.
