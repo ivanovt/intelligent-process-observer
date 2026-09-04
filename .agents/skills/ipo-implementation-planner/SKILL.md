@@ -59,9 +59,11 @@ Avoid horizontal plans such as "all models -> all repositories -> all algorithms
 
 ## Proportional risk classification
 
-Classify every slice independently as `normal` or `high-risk` based on the semantics of that slice's actual delta. Use `high-risk` when the slice materially affects public or domain contracts, persistence or migrations, lifecycle or failure semantics, concurrency/deadline/cancellation, security or credentials, external transport semantics, dependencies, or architecture-sensitive integration.
+Classify every slice independently as `normal` or `high-risk` based on the expected semantics of that slice's implementation delta. Use `high-risk` when the slice is expected to materially affect public or domain contracts, persistence or migrations, lifecycle or failure semantics, concurrency/deadline/cancellation, security or credentials, external transport semantics, dependencies, or architecture-sensitive integration.
 
 Do not mark every slice high-risk because the overall feature contains one high-risk area. Preserve fresh independent review for the slices whose own deltas are genuinely high-risk.
+
+This planned classification is the initial expected review risk, not an irrevocable fact about the later implementation. Do not try to predict every implementation detail. Before acceptance, the Coordinator inspects the completed delta and increases review depth when the actual delta is high-risk. Fresh high-risk review is required when either the planned classification is `high-risk` or the actual completed delta is high-risk.
 
 ## Verification proportionality
 

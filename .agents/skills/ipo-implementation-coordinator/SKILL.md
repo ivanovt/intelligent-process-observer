@@ -37,11 +37,12 @@ For the next `READY` slice:
 2. spawn/delegate to a fresh Slice Implementer thread with only the bounded slice assignment plus required source/context references; prefer fresh/minimal context rather than inheriting the Coordinator's full conversation history;
 3. require focused verification, self-review, a clean working tree, one atomic slice commit by default, a structured handoff, and candidate-knowledge reporting;
 4. independently verify the completion evidence rather than trusting the worker's declaration;
-5. for `high-risk` slices, spawn a fresh independent slice reviewer before accepting completion;
-6. process candidate shared knowledge;
-7. reconcile `tasks.md` against the accepted slice coverage: mark an approved task `- [x]` only after every slice portion assigned to it has passed its completion gate; leave multi-slice tasks unchecked until their final assigned portion passes. Checkbox updates are completion metadata only and MUST NOT rewrite approved task scope;
-8. mark the slice `COMPLETE` only after the gate passes;
-9. automatically continue to the next ready slice.
+5. inspect the actual completed delta and classify its review risk using the pre-acceptance check below;
+6. if the planned classification is `high-risk` or the actual completed delta is high-risk, spawn a fresh independent High-Risk Slice Reviewer before accepting completion;
+7. process candidate shared knowledge;
+8. reconcile `tasks.md` against the accepted slice coverage: mark an approved task `- [x]` only after every slice portion assigned to it has passed its completion gate; leave multi-slice tasks unchecked until their final assigned portion passes. Checkbox updates are completion metadata only and MUST NOT rewrite approved task scope;
+9. mark the slice `COMPLETE` only after the gate passes;
+10. automatically continue to the next ready slice.
 
 If a slice needs corrective work, delegate the correction; do not implement it yourself.
 
@@ -76,7 +77,7 @@ Flow: scoped correction -> focused diff/static/test verification -> Coordinator 
 
 For either category:
 
-1. record the narrow correction scope and expected affected paths in mutable execution metadata;
+1. record the narrow correction scope, expected affected paths, and expected `normal|high-risk` review classification in mutable execution metadata;
 2. delegate only that scope and require an atomic correction commit plus a compact handoff;
 3. inspect the actual diff and Git history and run or confirm the focused tests/static checks that prove the correction;
 4. obtain independent review when required by the delta-risk rules below;
@@ -85,6 +86,23 @@ For either category:
 Normal Git diff/history, focused tests, static checks, and independent review are the standard scope controls. Do not require custom checksum protocols, source-byte reconstruction, AST inventory machinery, or repeated raw commit SHA references unless a concrete repository-specific risk requires one. When Git history already identifies the accepted correction, avoid duplicating its SHA across multiple records.
 
 ## Delta-risk review
+
+Before accepting every completed slice or bounded correction, perform a lightweight risk check of its actual Git delta. Compare the changed behavior and affected boundaries with the approved assignment and sources. Treat the actual delta as high-risk when it materially affects:
+
+- public or domain contracts;
+- persistence or transaction behavior;
+- migrations or schema;
+- lifecycle or failure behavior;
+- concurrency, deadlines, or cancellation;
+- security or credentials;
+- external transport semantics;
+- dependencies;
+- agent, framework, or tool-budget boundaries; or
+- architecture-sensitive integration.
+
+Planned or expected risk is the classification recorded before a slice or correction is implemented. Actual-delta risk is the Coordinator's pre-acceptance classification of the completed work. Require fresh High-Risk Slice Review when either the planned/expected classification is `high-risk` or the actual completed delta is high-risk. If both are normal, the Coordinator may accept the assignment after its completion gate without independent high-risk review.
+
+Upward reclassification is for review depth. It does not change the frozen plan or require structural re-planning when the actual high-risk delta remains within approved behavior, contracts, architecture, persistence/schema/migration design, ownership, dependencies, and scope. If the delta crosses any approved structural or normative boundary, stop and use the structural re-plan path; high-risk review alone is insufficient.
 
 Review depth is determined by the risk of the new delta, not by the historical maximum risk of the feature. A correction does not become high-risk merely because it touches a feature or accepted slice that previously contained high-risk work.
 
@@ -108,6 +126,8 @@ Require Planner revision -> Slice Plan Reviewer -> renewed human approval when t
 - materially expanded scope beyond the already approved implementation boundary.
 
 If a proposed bounded correction reveals any such normative or structural change, stop, record the reason, and escalate to the human for structural re-planning. Do not stretch the correction scope to absorb it.
+
+The same boundary check applies to an upward-reclassified slice. A high-risk delta inside its approved boundary receives fresh high-risk review; a delta outside that boundary stops for structural escalation instead of being accepted through review alone.
 
 ## Knowledge validation
 

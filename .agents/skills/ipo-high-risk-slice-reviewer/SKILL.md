@@ -18,6 +18,8 @@ Read repository governance, the approved OpenSpec/ADRs/contracts relevant to the
 
 High-risk review applies because the current implementation delta is high-risk, not because the containing feature previously had high-risk work.
 
+The Coordinator may assign this review because the slice or correction had a planned/expected `high-risk` classification or because the Coordinator upward-reclassified a completed normal-planned slice or normal-expected correction after inspecting its actual delta. Apply the same review standards in either case. The Coordinator owns routing; do not search for or attempt to discover unreviewed normal assignments independently.
+
 Independently determine whether the assigned delta materially affects:
 
 - public or domain contracts;
@@ -30,7 +32,7 @@ Independently determine whether the assigned delta materially affects:
 - agent, framework, or tool-budget boundaries; or
 - architecture-sensitive integration.
 
-If the actual delta does not affect high-risk semantics, report the classification mismatch to the Coordinator; do not manufacture high-risk scope. Do not expand review merely because earlier slices were high-risk.
+If the actual delta does not affect high-risk semantics, report the classification mismatch to the Coordinator and complete the assigned review without manufacturing high-risk scope. Do not expand review merely because earlier slices were high-risk.
 
 ## Review scope
 
