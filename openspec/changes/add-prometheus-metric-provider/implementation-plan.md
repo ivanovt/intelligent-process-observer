@@ -1,11 +1,12 @@
 # Implementation Plan — add-prometheus-metric-provider
 
-**Status:** DRAFT — RE-PLANNING REVIEW REQUIRED
+**Status:** DRAFT — READY FOR INDEPENDENT SLICE-PLAN REVIEW
 **Artifact type:** Non-normative execution plan
 **Approved OpenSpec change:** `add-prometheus-metric-provider`
 **Implementation branch:** `feature/add-prometheus-metric-provider`
 **Human-approved planning SHA:** `75b97960704af790b2d8c3e8b6ce84a9e400151a` (superseded for VS-03/VS-04)
 **Human-approved deadline/cleanup source revision:** `2180c7d14862187635de21d716f27f6b3b9ff93f`
+**Accepted VS-02 execution baseline SHA:** `81270d9537329eea0477254094ef9fcdce6f17e6`
 **Replacement planning-review SHA:** pending
 
 ## Approval state
@@ -84,8 +85,10 @@ Repository constraints:
 - Do not modify approved OpenSpec or `docs/architecture/`. Do not archive, push, open a
   pull request, or merge during execution of this plan.
 
-At the exact commit SHA approved after independent review, the approved OpenSpec content
-and plan structure become the frozen execution baseline. Acceptance sources and
+At the exact replacement planning commit SHA approved after independent review, the
+approved OpenSpec content and plan structure become the frozen normative planning
+baseline. It is not the implementation-diff baseline. The separate resumed implementation
+baseline is the accepted VS-02 execution tip recorded above. Acceptance sources and
 GIVEN/WHEN/THEN assertions provide normative traceability; task numbers are supplementary
 traceability. A task checkbox becomes complete only after every owning slice portion has
 passed its gate.
@@ -321,8 +324,8 @@ for current in head index worktree; do
 done
 ```
 
-Before VS-01, also require the expected branch, successful strict change validation, and
-an empty index/worktree, including no untracked files:
+Before VS-03 resume, also require the expected branch, successful strict change
+validation, and an empty index/worktree, including no untracked files:
 
 ```bash
 set -euo pipefail
@@ -334,26 +337,134 @@ git status --porcelain > "$readiness_audit_dir/status"
 test ! -s "$readiness_audit_dir/status"
 ```
 
-Any failure is a Coordinator stop condition. It is not delegated to VS-01 and cannot be
-waived by an implementer.
+Before delegation, the Coordinator must also run the cumulative implementation audit in
+the next section with `VS03_REVIEW_TIP` set to the exact human-approved replacement
+planning SHA. This records the pre-existing unaccepted VS-03 production/test inventory
+from accepted VS-02 tip `81270d9537329eea0477254094ef9fcdce6f17e6` through the resume
+point. It is resume-scope evidence, not VS-03 acceptance; the final reviewer reruns the
+same audit through the later candidate tip.
 
-### Separate implementation-diff audit
+Any failure is a Coordinator stop condition. It is not delegated to resumed VS-03 and
+cannot be waived by an implementer.
 
-Implementation scope is audited separately from approved-artifact integrity. During
-VS-04 compare the human-approved planning SHA to implementation `HEAD`, inspect every
-commit/path/diff, and classify production, test, documentation, task-state, and mutable
-plan-metadata changes:
+### Separate planning and resumed-implementation baselines
+
+The replacement human-approved planning SHA governs normative artifact and frozen-plan
+integrity only. It MUST NOT be used to determine implementation scope because its
+ancestry already contains unaccepted VS-03 production/test work.
+
+The resumed implementation baseline is the exact last accepted VS-02 execution tip from
+Coordinator metadata:
+
+```text
+81270d9537329eea0477254094ef9fcdce6f17e6
+```
+
+The already-present unaccepted VS-03 production/test commits are:
+
+```text
+4baf129efeb84ba40c507934ad9e4451cf59b5b0
+5c35ae84e141169375faff4e7f1c909ccb774cbb
+3a3ef1b6e865afb257ab6ba72052cc80415a3acb
+71566e0b7b98251cd40f58361659ff52b76379df
+```
+
+This is the existing inclusive VS-03 implementation history from first production commit
+`4baf129` through current production tip `71566e0`, including interleaved handoff/review
+metadata. None is accepted. Replacement-plan and OpenSpec-clarification commits later in
+the ancestry do not narrow or reset the implementation scope.
+
+For every resumed VS-03 handoff, correction re-review, and final high-risk review, set the
+exact candidate tip and run this fail-closed cumulative audit. It reviews all repository
+changes and separately materializes every production/test change since accepted VS-02;
+therefore every later VS-03 correction is automatically added to the same cumulative
+scope:
 
 ```bash
 set -euo pipefail
-git cat-file -e "$approved_sha^{commit}"
-git log --oneline "$approved_sha"..HEAD
-git diff --name-status "$approved_sha"..HEAD
-git diff "$approved_sha"..HEAD
+accepted_vs02_sha=81270d9537329eea0477254094ef9fcdce6f17e6
+vs03_review_tip="${VS03_REVIEW_TIP:?set VS03_REVIEW_TIP}"
+review_audit_dir=$(mktemp -d)
+production_test_paths=(backend/src backend/tests frontend/src)
+existing_unaccepted_vs03_commits=(
+  4baf129efeb84ba40c507934ad9e4451cf59b5b0
+  5c35ae84e141169375faff4e7f1c909ccb774cbb
+  3a3ef1b6e865afb257ab6ba72052cc80415a3acb
+  71566e0b7b98251cd40f58361659ff52b76379df
+)
+
+git cat-file -e "$accepted_vs02_sha^{commit}"
+git cat-file -e "$vs03_review_tip^{commit}"
+git merge-base --is-ancestor "$accepted_vs02_sha" "$vs03_review_tip"
+for commit in "${existing_unaccepted_vs03_commits[@]}"; do
+  git cat-file -e "$commit^{commit}"
+  git merge-base --is-ancestor "$accepted_vs02_sha" "$commit"
+  git merge-base --is-ancestor "$commit" "$vs03_review_tip"
+done
+
+git log --reverse --format='%H %s' \
+  "$accepted_vs02_sha".."$vs03_review_tip" \
+  > "$review_audit_dir/all-commits.txt"
+git diff --name-status "$accepted_vs02_sha" "$vs03_review_tip" \
+  > "$review_audit_dir/all-paths.txt"
+git diff --binary "$accepted_vs02_sha" "$vs03_review_tip" \
+  > "$review_audit_dir/all.diff"
+
+git log --reverse --format='%H %s' \
+  "$accepted_vs02_sha".."$vs03_review_tip" -- "${production_test_paths[@]}" \
+  > "$review_audit_dir/production-test-commits.txt"
+git diff --name-status "$accepted_vs02_sha" "$vs03_review_tip" -- \
+  "${production_test_paths[@]}" > "$review_audit_dir/production-test-paths.txt"
+git diff --binary "$accepted_vs02_sha" "$vs03_review_tip" -- \
+  "${production_test_paths[@]}" > "$review_audit_dir/production-test.diff"
+test -s "$review_audit_dir/production-test-commits.txt"
+test -s "$review_audit_dir/production-test-paths.txt"
+test -s "$review_audit_dir/production-test.diff"
+sha256sum "$review_audit_dir/production-test.diff" \
+  > "$review_audit_dir/production-test.diff.sha256"
+git diff --check "$accepted_vs02_sha" "$vs03_review_tip" -- \
+  "${production_test_paths[@]}"
 ```
 
-A merge-base-to-main diff may supplement this check but must not substitute for either
-the approved-SHA implementation diff or the committed/index/worktree integrity audits.
+The handoff and independent high-risk review report must record the accepted VS-02 SHA,
+candidate review-tip SHA, four existing unaccepted commit SHAs, every later correction
+commit SHA, complete production/test name-status list, and the cumulative diff SHA-256.
+The reviewer reviews `all.diff` for scope and the complete `production-test.diff` for
+behavior; reviewing only the replacement-plan ancestry suffix, only the newest correction,
+or `4baf129..71566e0` without the first commit's parent is invalid.
+
+Coordinator acceptance of VS-03 additionally records the exact accepted review tip and
+cumulative production/test diff SHA-256 in mutable execution metadata. VS-04 reruns the
+same accepted-VS-02-to-accepted-VS-03-tip audit and compares the digest to that record. It
+also proves its documentation/conformance-only work introduced no later production/test
+change in committed `HEAD`, index, or worktree:
+
+```bash
+set -euo pipefail
+accepted_vs02_sha=81270d9537329eea0477254094ef9fcdce6f17e6
+accepted_vs03_tip="${ACCEPTED_VS03_REVIEW_TIP:?set ACCEPTED_VS03_REVIEW_TIP}"
+expected_delta_sha256="${VS03_PRODUCTION_TEST_DIFF_SHA256:?set VS03_PRODUCTION_TEST_DIFF_SHA256}"
+final_history_audit_dir=$(mktemp -d)
+production_test_paths=(backend/src backend/tests frontend/src)
+
+git cat-file -e "$accepted_vs03_tip^{commit}"
+git merge-base --is-ancestor "$accepted_vs02_sha" "$accepted_vs03_tip"
+git diff --binary "$accepted_vs02_sha" "$accepted_vs03_tip" -- \
+  "${production_test_paths[@]}" > "$final_history_audit_dir/vs03-production-test.diff"
+actual_delta_sha256=$(sha256sum "$final_history_audit_dir/vs03-production-test.diff" \
+  | awk '{print $1}')
+test "$actual_delta_sha256" = "$expected_delta_sha256"
+if ! git diff --exit-code "$accepted_vs03_tip" HEAD -- \
+  "${production_test_paths[@]}"; then exit 1; fi
+if ! git diff --cached --exit-code "$accepted_vs03_tip" -- \
+  "${production_test_paths[@]}"; then exit 1; fi
+if ! git diff --exit-code "$accepted_vs03_tip" -- \
+  "${production_test_paths[@]}"; then exit 1; fi
+```
+
+A merge-base-to-main diff may supplement these checks but must not substitute for the
+replacement-planning-SHA integrity audit, the accepted-VS-02 cumulative implementation
+audit, or the committed/index/worktree no-later-production/test audit.
 
 ## Slice graph
 
@@ -588,7 +699,10 @@ portions of 3.3, 3.4, transport-attempt portions of 3.5, retry/deadline portions
 4.3/4.4, current timeout/final retry failure and reference timeout/failure portions of
 4.5, plus per-symbol docstrings from 5.1.
 
-**Dependencies:** VS-02 accepted.
+**Dependencies:** VS-02 accepted at execution tip
+`81270d9537329eea0477254094ef9fcdce6f17e6`. All later production/test work remains
+unaccepted VS-03 scope regardless of intervening planning, clarification, handoff, or
+review-metadata commits.
 
 **Vertical boundary:** VS-02 immutable request and complete one-attempt function ->
 private capacity admission for eligible transport work -> injected monotonic 50-second
@@ -660,7 +774,9 @@ tests/test_prometheus_metric_provider.py
 tests/test_prometheus_metric_provider_configuration.py
 tests/test_metric_analysis_pipeline.py tests/test_prometheus_adapter.py -q`; deterministic
 async deadline/cleanup/capacity tests must use no live time or network; targeted Ruff and
-format checks; `git diff --check`.
+format checks; `git diff --check`; and the cumulative accepted-VS-02-to-candidate-tip
+implementation audit above. Focused verification of only a new correction commit is
+insufficient.
 
 **Context pack:** approved source revision `2180c7d14862187635de21d716f27f6b3b9ff93f`;
 accepted VS-01 and VS-02 handoffs and VS-02 attempt-result decision matrix; approved
@@ -669,7 +785,10 @@ deadlines, late cleanup, private capacity, retry admission, exhaustion, and orde
 exception precedence; exact-query logical-request identity; ADR-045, ADR-133-135,
 ADR-157; current typed provider outcomes and Metrics pipeline mappings; current provider
 deadline helper and resilience tests; HTTPX 0.28 exception hierarchy as used by the
-installed dependency.
+installed dependency; accepted VS-02 execution baseline
+`81270d9537329eea0477254094ef9fcdce6f17e6`; existing unaccepted VS-03 production/test
+commits `4baf129`, `5c35ae8`, `3a3ef1b`, and `71566e0`; complete cumulative diff from the
+accepted VS-02 baseline to the assigned candidate tip.
 
 **Handoff expectations:** VS03-AC01 through VS03-AC09 evidence; exact observable
 deadline-return traces; cancellation/close and cleanup-gate ledgers; a late-success,
@@ -677,7 +796,11 @@ late-error, and late-close-completion non-interference table; private-capacity
 admission/retention/release table; no-client/no-request evidence for capacity rejection;
 orchestration table linked to VS-02 attempt variants; attempts/waits/budget traces;
 identical-request snapshots; HTTPX taxonomy; final pipeline outcomes; confirmation that
-VS-01/VS-02 contracts and tests remain unchanged; deviations; focused results; shared-
+VS-01/VS-02 contracts and tests remain unchanged; accepted VS-02 implementation baseline
+SHA `81270d9537329eea0477254094ef9fcdce6f17e6`; existing unaccepted VS-03 inclusive
+history from `4baf129` through `71566e0` and its four production/test commit SHAs; every
+new VS-03 correction commit; exact candidate review-tip SHA; complete cumulative
+production/test name-status list and diff SHA-256; deviations; focused results; shared-
 knowledge candidates.
 
 **Risk:** high-risk
@@ -694,8 +817,12 @@ terminal-versus-retry orchestration branch is tested; VS-01 source behavior and 
 classification remain unchanged; logical request identity and secret-safe outcomes hold
 across attempts; current/reference semantics remain unchanged; the slice remains bounded
 to infrastructure orchestration and integration; focused checks pass; independent
-high-risk review returns `SLICE REVIEW PASS`; one atomic implementation commit and
-handoff exist, followed by Coordinator acceptance metadata.
+high-risk review of the complete cumulative production/test delta from accepted VS-02 tip
+`81270d9537329eea0477254094ef9fcdce6f17e6` through the exact candidate tip returns
+`SLICE REVIEW PASS`; the review explicitly includes existing commits `4baf129`,
+`5c35ae8`, `3a3ef1b`, `71566e0` and every later correction. The handoff and Coordinator
+acceptance metadata record the baseline, all unaccepted/correction commits, reviewed tip,
+complete name-status set, cumulative diff SHA-256, focused results, and accepted handoff.
 
 ### VS-04 — Compatibility, documentation, and whole-change conformance
 
@@ -726,8 +853,11 @@ surface.
 task checkboxes, and mutable execution metadata only. No production code or test code may
 be added or changed in this slice. Public provider/interface-method docstrings must
 already have been added by their owning implementation slice and are audited here. A
-discovered production/test gap stops VS-04 and routes a targeted correction through
-VS-01, VS-02, or VS-03 ownership and the required high-risk review before VS-04 restarts.
+discovered production/test gap stops VS-04. Only a gap owned by the currently re-approved
+VS-03 may return to VS-03 under this replacement plan and must repeat the cumulative
+high-risk review before VS-04 restarts. A defect attributable to accepted/frozen VS-01 or
+VS-02 MUST NOT reopen either slice: stop and require a new approved re-plan/execution
+decision.
 
 **Contracts consumed/changed:** documents and verifies existing contracts only. No
 production or test contract changes. Public production-provider class/interface-method
@@ -745,8 +875,8 @@ orchestration; archive/PR/push; fixing an unrelated pre-existing failure.
 | VS04-AC01 | Documentation task | Placeholder source configuration and approved production policy | Read deployment/developer docs and public provider docstrings | HTTPS/loopback and exact prefix grammar, auth/exclusions, secrets, resolution/limits/warnings, attempts/retries/classification, and lookback/staleness are concise and exact; docs also state the 15s attempt/50s observable result deadlines, timeout commitment, cancellation/close signalling, state-inert late cleanup, finite private active-plus-cleanup capacity, pre-transport fixed-safe capacity failure, and no public capacity setting/field/reason without real credentials | documentation review + secret scan | `.env.example`/guide/docstring audit against the complete task 5.1 and clarified cleanup/capacity checklist |
 | VS04-AC02 | Shared behavior preservation | Production-valid and production-invalid shared sources | Run startup, capabilities, Observation create, and preflight suites | Existing outputs, 15-second/no-retry preflight, labels/warnings, and public error mapping remain compatible; production-invalid source affects only production acquire | API + service regression | focused existing and added tests with separate ledgers |
 | VS04-AC03 | Provider-neutral pipeline and persistence | Existing fake provider matrix plus completed VS-01 through VS-03 real-provider tests | Rerun Metric tests and inspect modules/artifacts without editing them | Zero/one/multiple references remain independent; fake tests use no transport; all result variants and rollback behavior round-trip unchanged; no raw transport/provider data persists | service + persistence + static audit | existing completed test suites and import scan |
-| VS04-AC04 | Scope/dependency/schema/API audit | Baseline-to-HEAD implementation diff and manifests/migrations/routes/contracts | Review change | No dependency, migration/schema, public API, Metric result/analysis, History, Agent, reference semantics, persistence, or Observation orchestration change exists | repository audit | diff/name-status, lock/manifest/migration/route/contract checks |
-| VS04-AC05 | Final verification | Completed sequential slices, accepted VS03 late-cleanup/capacity evidence, and clean execution state | Run focused tests, strict OpenSpec validation, documentation audit, and `make check` | Every command passes accurately; the approved `2180c7d` clarification and replacement reviewed plan remain intact; task ownership is reconciled; the cleanup/capacity documentation matches accepted VS03 evidence; worktree is clean after accepted commits/metadata | repository gate | recorded commands, approved-source/plan integrity audit, task/plan mutable-only audit, and documentation-to-VS03-evidence trace |
+| VS04-AC04 | Scope/dependency/schema/API audit | Accepted VS-02 execution baseline, accepted cumulative VS-03 review tip/digest, and manifests/migrations/routes/contracts | Review change | Every accepted VS-03 production/test byte is traceable from the VS-02 baseline; VS-04 adds no production/test change; no dependency, migration/schema, public API, Metric result/analysis, History, Agent, reference semantics, persistence, or Observation orchestration change exists | repository audit | accepted-VS-02 cumulative diff/digest, no-post-VS03 committed/index/worktree diff, lock/manifest/migration/route/contract checks |
+| VS04-AC05 | Final verification | Completed sequential slices, accepted VS03 late-cleanup/capacity evidence, and clean execution state | Run focused tests, strict OpenSpec validation, documentation audit, and `make check` | Every command passes accurately; the approved `2180c7d` clarification and replacement reviewed plan remain intact; task ownership is reconciled; the cleanup/capacity documentation matches accepted VS03 evidence; the cumulative VS03 implementation audit is unchanged; worktree is clean after accepted commits/metadata | repository gate | recorded commands, approved-source/plan integrity audit, accepted-VS02-to-VS03 implementation audit, task/plan mutable-only audit, and documentation-to-VS03-evidence trace |
 
 VS04-AC05 includes this separate final-completion assertion after the authorized
 transition audit above. It fail-closes unless the approved snapshot, current `tasks.md`,
@@ -860,22 +990,28 @@ sentinel values absent from placeholder docs.
 worktree immutable, task-transition, task-ownership, and frozen-plan audits above; the
 24/24 final task assertion; focused provider/configuration/preflight/Metrics/integration
 tests; `openspec validate add-prometheus-metric-provider --strict`; `make check`;
-approved-SHA implementation-diff and scope audits; `git diff --check`; and the final clean
-status assertion. Every shell block starts with `set -euo pipefail`, and loop comparisons
-use explicit `if ! ...; then exit 1; fi` handling.
+accepted-VS-02-to-accepted-VS-03 cumulative implementation-diff/digest audit;
+no-post-VS03 committed/index/worktree production/test audit; replacement-planning-SHA
+normative integrity audit; `git diff --check`; and the final clean-status assertion. Every
+shell block starts with `set -euo pipefail`, and loop comparisons use explicit
+`if ! ...; then exit 1; fi` handling.
 
 **Context pack:** accepted VS-03 handoff and all earlier handoffs; complete approved
 OpenSpec; all architecture/ADR sources listed above; `.agents/PROJECT_KNOWLEDGE.md`;
-development guide/workflow; root Makefile and manifests; full baseline-to-HEAD diff;
-changed production/tests/docs and all focused existing regressions.
+development guide/workflow; root Makefile and manifests; replacement-planning-SHA
+integrity results and accepted-VS-02-to-VS03 cumulative implementation diff;
+accepted VS-02 execution baseline, accepted cumulative VS-03 review tip/digest, changed
+production/tests/docs, and all focused existing regressions.
 
 **Handoff expectations:** VS04-AC01 through VS04-AC05 evidence; documentation checklist
 including observable deadline/late-cleanup/private-capacity policy; public docstring
 audit; exact focused and full command results; regression counts;
 approved-SHA committed/index/worktree artifact/task/plan integrity results; explicit
-24/24 checked-task and all-owner acceptance result; dependency/schema/API/import/secret
-audits; final clean status; deviations and shared-knowledge candidates; explicit note
-that the change remains unarchived pending whole-change verification/review.
+24/24 checked-task and all-owner acceptance result; accepted-VS-02 baseline, accepted
+VS-03 tip, complete cumulative production/test name-status and matching diff digest;
+proof of no later committed/index/worktree production/test change; dependency/schema/API/
+import/secret audits; final clean status; deviations and shared-knowledge candidates;
+explicit note that the change remains unarchived pending whole-change verification/review.
 
 **Risk:** normal
 
@@ -883,14 +1019,16 @@ that the change remains unarchived pending whole-change verification/review.
 production/test behavior edits in VS-04; documentation and docstrings are complete,
 secret-safe, and match the approved observable-deadline/state-inert-cleanup/private-
 capacity policy and accepted VS03 evidence; task ownership is reconciled;
-focused tests, strict OpenSpec validation, baseline implementation diff, approved-artifact
+focused tests, strict OpenSpec validation, accepted-VS-02 cumulative implementation diff,
+approved-artifact
 integrity, checkbox-only transition audit, exact 24/24 completion/ownership assertion,
 mutable-only plan audit, scope/dependency/schema/API/secret audits, clean status, and
-`make check` pass under fail-fast command execution. Any implementation/test gap is routed
-back to its owning high-risk slice rather than fixed here. One atomic documentation/
-conformance commit and handoff exist, followed by Coordinator acceptance metadata. The
-change remains unarchived pending whole-change verification and independent implementation
-review.
+`make check` pass under fail-fast command execution. Any implementation/test gap stops
+VS-04. Only a re-approved VS-03-owned gap may return to VS-03 under this plan; a VS-01/
+VS-02 defect requires a new approved re-plan/execution decision and does not reopen those
+accepted slices. One atomic documentation/conformance commit and handoff exist, followed
+by Coordinator acceptance metadata. The change remains unarchived pending whole-change
+verification and independent implementation review.
 
 ## Coverage matrix
 
@@ -998,6 +1136,9 @@ Frozen at the exact independently reviewed and explicitly human-approved plannin
 - the planning-review snapshot/approval protocol, human-approved SHA definition,
   pre-execution readiness protocol, approved-artifact
   integrity rule, and task checkbox-only rule;
+- the distinct normative-planning versus implementation-history baseline model, accepted
+  VS-02 execution baseline SHA, known pre-existing unaccepted VS-03 commits, and
+  cumulative review/digest protocol;
 - implementation branch, slice count/order/graph, goals, dependencies, vertical
   boundaries, risk classifications, and completion gates;
 - acceptance IDs, approved sources, GIVEN/WHEN/THEN assertions, proof levels,
@@ -1011,16 +1152,21 @@ Mutable only by the Coordinator after approval:
 - `tasks.md` checkbox state only as `[ ] -> [x]`, after every owning slice portion passes;
 - plan and slice execution statuses;
 - active assignments, accepted implementation/correction commit SHAs, and handoff paths;
+- resumed VS-03 candidate/review tip, later correction commit SHAs, cumulative
+  production/test name-status evidence and diff SHA-256, and final accepted VS-03 review
+  tip/digest;
 - command results, evidence locations, reviewer/verifier outcomes, deviation dispositions,
   shared-knowledge disposition, and exact stop/escalation records;
 - execution notes that do not add or alter requirements, proof levels, dependencies,
   boundaries, or design.
 
 A later slice may detect a regression but may not silently take ownership of missing
-earlier behavior. A code-path change inside the same approved vertical boundary may be
-recorded as a local deviation; a source conflict, new behavior, missing dependency
-approval, contract/schema/API change, or slice-structure problem stops execution for
-re-planning, independent review, and renewed human approval.
+earlier behavior. VS-01 and VS-02 are accepted/frozen and cannot be reopened by this
+replacement plan. Before VS-03 acceptance, a code-path correction inside the re-approved
+VS-03 boundary remains cumulative VS-03 scope and repeats full high-risk review. During
+VS-04, only a VS-03-owned gap may return to VS-03; a VS-01/VS-02 defect, source conflict,
+new behavior, missing dependency approval, contract/schema/API change, or slice-structure
+problem stops for a new approved re-plan/execution decision.
 
 ## Execution notes
 
@@ -1077,6 +1223,11 @@ acceptance obligations, proof-level changes, or redesign decisions here.
   `0d355201d94da59db062afbad794cbce96a98e67`, and
   `ee4d364bb95a954b84b93dd33f0203fa9d72cb1b`, with handoff
   `implementation/VS-02-handoff.md`. No shared-knowledge candidates.
+- Accepted VS-02 execution baseline (2026-09-04): Coordinator acceptance metadata was
+  committed at `81270d9537329eea0477254094ef9fcdce6f17e6`; this is the exact last
+  accepted VS-02 execution tip and the immutable resumed-implementation baseline. It
+  contains all accepted VS-01/VS-02 code, evidence, task state, handoffs, and acceptance
+  metadata. No later production/test commit is accepted.
 - VS-03 active assignment (2026-09-04): delegated to a fresh Slice Implementer after
   accepted VS-02 handoff and final high-risk gate.
 - VS-03 high-risk review (2026-09-04): `SLICE CHANGES REQUIRED` with HIGH findings that
@@ -1105,3 +1256,14 @@ acceptance obligations, proof-level changes, or redesign decisions here.
   VS-01/VS-02 graph, commits, handoffs, and evidence, replaces only the frozen VS-03/
   VS-04 plan content, and requires a new independently reviewed planning snapshot and
   explicit approval before VS-03 resumes.
+- Replacement-plan review record (2026-09-04): snapshot
+  `9fc35298419efdab2025d08c938b35b83b22df0e` received `PLAN CHANGES REQUIRED` because
+  it incorrectly risked using its own ancestry as the implementation baseline. It is
+  superseded and must not be approved. Existing unaccepted VS-03 production/test commits
+  are `4baf129efeb84ba40c507934ad9e4451cf59b5b0`,
+  `5c35ae84e141169375faff4e7f1c909ccb774cbb`,
+  `3a3ef1b6e865afb257ab6ba72052cc80415a3acb`, and
+  `71566e0b7b98251cd40f58361659ff52b76379df`; resumed review begins at accepted VS-02
+  tip `81270d9537329eea0477254094ef9fcdce6f17e6` and includes all four plus every later
+  VS-03 correction. VS-03 remains stopped pending a new reviewed and approved replacement
+  planning SHA; no implementation is active and VS-04 is not ready.
