@@ -1,10 +1,10 @@
 # Implementation Plan — add-prometheus-metric-provider
 
-**Status:** DRAFT — READY FOR INDEPENDENT SLICE-PLAN REVIEW
+**Status:** APPROVED — EXECUTION IN PROGRESS
 **Artifact type:** Non-normative execution plan
 **Approved OpenSpec change:** `add-prometheus-metric-provider`
 **Implementation branch:** `feature/add-prometheus-metric-provider`
-**Human-approved planning SHA:** `75b97960704af790b2d8c3e8b6ce84a9e400151a` (superseded for VS-03/VS-04)
+**Human-approved planning SHA:** `b24e82bdf80893a93e313836666fdb1e4840ef37`
 **Human-approved deadline/cleanup source revision:** `2180c7d14862187635de21d716f27f6b3b9ff93f`
 **Accepted VS-02 execution baseline SHA:** `81270d9537329eea0477254094ef9fcdce6f17e6`
 **Replacement planning-review SHA:** pending
@@ -478,7 +478,7 @@ VS-01 -> VS-02 -> VS-03 -> VS-04
 |---|---|---|---|---|---|---|
 | VS-01 | Source-safe transport-free walking skeleton through the existing Metric port | none | high-risk | COMPLETE | 1217266598aa5f20b902e9ae2edfe1da2ffed6c2 | `implementation/VS-01-handoff.md` |
 | VS-02 | Complete bounded single-attempt request, mapping, and status classification | VS-01 | high-risk | COMPLETE | `99bce08`, `d01a104`, `0d35520`, `ee4d364` | `implementation/VS-02-handoff.md` |
-| VS-03 | Observable deadline/result boundary, state-inert late cleanup, bounded capacity, deterministic retries, and terminal resilience integration | VS-02 | high-risk | PLANNED | - | - |
+| VS-03 | Observable deadline/result boundary, state-inert late cleanup, bounded capacity, deterministic retries, and terminal resilience integration | VS-02 | high-risk | IN_PROGRESS | - | - |
 | VS-04 | Compatibility, operational documentation, and whole-change conformance | VS-03 | normal | PLANNED | - | - |
 
 ## Slice definitions
@@ -1267,3 +1267,15 @@ acceptance obligations, proof-level changes, or redesign decisions here.
   tip `81270d9537329eea0477254094ef9fcdce6f17e6` and includes all four plus every later
   VS-03 correction. VS-03 remains stopped pending a new reviewed and approved replacement
   planning SHA; no implementation is active and VS-04 is not ready.
+- Resumed VS-03 readiness (2026-09-04): human approved replacement planning snapshot
+  `b24e82bdf80893a93e313836666fdb1e4840ef37`. The complete committed/index/worktree
+  approved-artifact, task-transition/ownership, and frozen-plan integrity audit passed;
+  strict OpenSpec validation, expected branch, and empty-status checks passed. The
+  required cumulative accepted-VS-02-to-resume-tip audit passed from
+  `81270d9537329eea0477254094ef9fcdce6f17e6` through `b24e82bdf80893a93e313836666fdb1e4840ef37`.
+  It recorded existing unaccepted commits `4baf129`, `5c35ae8`, `3a3ef1b`, and `71566e0`,
+  production/test paths `backend/src/app/infrastructure/prometheus/composition.py`,
+  `backend/tests/test_metric_analysis_pipeline.py`, and
+  `backend/tests/test_prometheus_metric_provider_resilience.py`, and cumulative diff
+  SHA-256 `5db57215f87d55859e95f70039e87dbdbf72b7cf166162973c49fd8071b3faef`.
+  VS-03 is IN_PROGRESS; a fresh Slice Implementer is the only active assignment.
