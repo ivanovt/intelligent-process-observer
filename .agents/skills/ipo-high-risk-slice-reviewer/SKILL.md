@@ -46,9 +46,11 @@ Otherwise, do not automatically re-review every accepted historical line of the 
 
 ## High-risk bounded corrections
 
-A Coordinator-authorized bounded correction may itself be high-risk. For example, an incorrectly implemented approved retry policy may be corrected without structural re-planning, then independently reviewed across the correction delta and affected retry/deadline semantics.
+Approved/normative semantics are the behavior defined by the approved OpenSpec, accepted ADRs and architecture, and public/domain contracts. Implementation behavior is the behavior currently produced by the code.
 
-Do not require structural re-planning solely because the correction delta is high-risk when approved behavior, contracts, architecture, ownership, and dependencies remain unchanged. If the correction reveals that any of those must change, report the structural or normative conflict and escalate to the Coordinator.
+A Coordinator-authorized bounded correction may itself be high-risk. It may materially change runtime retry, deadline, cancellation, security, or lifecycle behavior when that change restores conformance to unchanged approved/normative semantics and remains inside the approved structural boundary. Verify that tests prove the restored behavior across the affected high-risk boundary.
+
+Do not require structural re-planning solely because the correction changes implementation behavior or its delta is high-risk. If correct resolution requires changing the approved/normative semantic definition or another approved structural boundary, report the conflict and escalate to the Coordinator. Structural status and implementation-delta risk are independent.
 
 ## Review focus
 

@@ -48,9 +48,11 @@ If a slice needs corrective work, delegate the correction; do not implement it y
 
 ## Bounded corrections after acceptance
 
+Approved/normative semantics are the behavior defined by the approved OpenSpec, accepted ADRs and architecture, and public/domain contracts. Implementation behavior is the behavior currently produced by the code. A change to implementation behavior is not a change to normative semantics when it restores conformance to that unchanged definition.
+
 The Coordinator may authorize and coordinate a bounded correction to an accepted slice when all of these conditions hold:
 
-- approved OpenSpec behavior remains unchanged;
+- approved/normative OpenSpec behavior remains unchanged;
 - accepted architecture and ADR decisions remain unchanged;
 - no public or domain contract is redefined;
 - no slice goal, ownership, or dependency graph changes;
@@ -59,7 +61,14 @@ The Coordinator may authorize and coordinate a bounded correction to an accepted
 - the correction has explicit narrow scope; and
 - focused verification can prove the intended fix.
 
-This is execution work, not structural re-planning. Keep the accepted slice structure frozen and delegate the correction to a bounded implementation worker. A fix that restores already-approved behavior is not structural merely because the defect concerns a query, retry, invariant, or another important implementation detail.
+This is execution work, not structural re-planning. Keep the accepted slice structure frozen and delegate the correction to a bounded implementation worker. A fix that restores already-approved behavior is not structural merely because it changes runtime query, retry, deadline, cancellation, security, invariant, or other implementation behavior.
+
+Evaluate two independent questions:
+
+1. **Structural status:** Does the fix require changing approved/normative semantics or another approved structural boundary? If yes, stop and escalate. If no, the bounded correction remains eligible.
+2. **Delta risk:** How risky is the actual implementation delta? A high-risk delta requires fresh High-Risk Slice Review; a normal delta receives proportional normal review.
+
+A correction may therefore be both bounded and high-risk. Restoring approved deadline or cancellation behavior leaves normative semantics unchanged, but the actual implementation delta remains high-risk and requires fresh independent review.
 
 Use only these practical correction categories. Neither requires structural re-planning by default.
 
@@ -110,7 +119,7 @@ Review depth is determined by the risk of the new delta, not by the historical m
 - For a normal-risk behavioral correction, require focused behavioral tests and Coordinator diff review; add independent review when the correction is non-trivial or the evidence does not make correctness clear.
 - If the correction actually affects high-risk implementation semantics, require a fresh independent high-risk review before acceptance. High-risk areas include strict contract/invariant enforcement, lifecycle or failure behavior, concurrency or deadlines, security boundaries, persistence/transaction behavior, framework/tool-budget boundaries, and major integration points.
 
-Restoring already-approved high-risk semantics may remain a bounded correction, but it receives high-risk review because of the correction's actual delta. Changing those semantics is structural and must follow the re-plan path.
+Restoring defective implementation behavior to already-approved high-risk semantics may remain a bounded correction, but it receives high-risk review because of the correction's actual delta. Changing the approved/normative semantics themselves is structural and must follow the re-plan path.
 
 ## Structural re-plan boundary
 
@@ -120,8 +129,8 @@ Require Planner revision -> Slice Plan Reviewer -> renewed human approval when t
 - architecture or ADR decisions;
 - public or domain contracts;
 - slice goals, ownership, or dependency graph;
-- persistence, schema, or migration semantics;
-- lifecycle, failure, concurrency, deadline, or security semantics;
+- approved/normative persistence, schema, or migration semantics;
+- approved/normative lifecycle, failure, concurrency, deadline, cancellation, or security semantics;
 - dependencies; or
 - materially expanded scope beyond the already approved implementation boundary.
 

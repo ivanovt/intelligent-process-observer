@@ -26,15 +26,17 @@ Do not create new planning requirements because an implementation detail needs a
 
 Classify discoveries before deciding whether to continue.
 
+Approved/normative semantics are the behavior defined by the approved OpenSpec, accepted ADRs and architecture, and public/domain contracts. Implementation behavior is the behavior currently produced by the code. Changing defective implementation behavior to conform to unchanged approved/normative semantics is implementation work, not a structural semantic change.
+
 ### Local implementation issue
 
-Handle the issue inside the assignment when it preserves approved behavior and remains within the approved implementation boundary. Examples include adjusting a nearby helper, adding a focused missing regression test, changing an implementation detail, or making a small supporting refactor needed for correct implementation.
+Handle the issue inside the assignment when it preserves approved/normative semantics and remains within the approved implementation boundary. This may include changing runtime retry, deadline, cancellation, lifecycle, or security behavior when the current implementation violates an existing approved requirement. Other examples include adjusting a nearby helper, adding a focused missing regression test, changing an implementation detail, or making a small supporting refactor needed for correct implementation.
 
-Local work must remain coherent and reviewable. It must not redefine contracts, introduce schema or dependency changes, alter lifecycle/security/concurrency semantics, or take ownership from another slice.
+Local work must remain coherent and reviewable. It must not redefine an approved contract, require an unapproved schema or dependency change, change approved/normative lifecycle, failure, concurrency, deadline, cancellation, or security semantics, or take ownership from another slice.
 
 ### Structural or normative conflict
 
-Stop when approved OpenSpec behavior cannot be implemented as written, architecture or an ADR conflicts with the assignment, a public/domain contract must change, schema/dependency/lifecycle/security semantics must change, or slice ownership/dependency structure is insufficient.
+Stop only when correct implementation requires changing an approved normative source or another approved structural boundary: approved OpenSpec behavior cannot be implemented as written, architecture or an ADR must change, a public/domain contract must be redefined, an unapproved schema or dependency change is required, approved/normative lifecycle, failure, concurrency, deadline, cancellation, or security semantics must change, or slice ownership/dependency structure is insufficient.
 
 Return `PLAN CHANGE REQUESTED` or `IMPLEMENTATION BLOCKED BY CONTRACT CONFLICT` with the exact evidence and required decision, then return control to the Coordinator. Do not silently broaden scope or invent a resolution.
 
@@ -42,7 +44,7 @@ Return `PLAN CHANGE REQUESTED` or `IMPLEMENTATION BLOCKED BY CONTRACT CONFLICT` 
 
 Treat a Coordinator-authorized bounded correction as normal implementation work. It may repair an implementation bug inside already approved behavior, add a missing docstring, make a narrow lint/type conformance fix, or add missing focused regression coverage.
 
-Do not demand a new plan or approval merely because the correction follows an accepted slice. Stay within the explicit correction scope, verify the intended delta, and stop under the structural-conflict rule if the correction reveals a normative or structural change.
+Do not demand a new plan or approval merely because the correction follows an accepted slice or materially changes defective runtime behavior. Stay within the explicit correction scope, verify conformance to the unchanged approved/normative semantics, and stop under the structural-conflict rule only if correct resolution requires a normative or structural change. The Coordinator determines review depth independently from structural status.
 
 ## Minimal, coherent implementation
 

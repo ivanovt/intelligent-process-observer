@@ -75,9 +75,11 @@ If exact Git identity is needed, define one authoritative execution-anchor locat
 
 ## Bounded corrections after approval
 
-Bounded implementation corrections do not require a new slice graph when approved behavior, architecture/ADRs, public and domain contracts, slice ownership or dependency graph, schema, dependencies, and lifecycle/security/concurrency semantics all remain unchanged. They remain execution work inside a narrow approved boundary.
+Approved/normative semantics are the behavior defined by the approved OpenSpec, accepted ADRs and architecture, and public/domain contracts. Implementation behavior is the behavior currently produced by the code.
 
-Require structural re-planning, independent plan review, and renewed human approval when a correction materially changes any of those boundaries. Do not pre-create speculative correction slices.
+Bounded implementation corrections do not require a new slice graph when the approved/normative semantics and other approved structural boundaries remain unchanged. A bounded correction may materially change defective implementation behavior to restore conformance. For example, changing an implementation from one retry to the approved two retries is a behavioral bounded correction, not a change to the approved retry semantics.
+
+Require structural re-planning, independent plan review, and renewed human approval only when the correction requires changing the approved/normative definition itself or another approved boundary such as slice ownership/dependencies, schema/migrations, dependencies, or scope. Review the correction's implementation risk separately. Do not pre-create speculative correction slices.
 
 ## Final conformance
 
