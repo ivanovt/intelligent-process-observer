@@ -28,7 +28,7 @@ Where analytically applicable, stage order SHALL be: resolve immutable context; 
 
 ### Requirement: Acquire metric series only through the internal provider boundary
 
-The pipeline SHALL depend on a framework-neutral single-series provider port accepting the immutable provider address and an exact requested window. It SHALL use that port for current and reference acquisition and SHALL NOT depend on Prometheus HTTP/client types, implement transport authentication/retry, or select a production provider implementation.
+The pipeline SHALL depend on a framework-neutral single-series provider port accepting the immutable provider address and an exact requested window. It SHALL use that port for current and reference acquisition and SHALL NOT depend on Prometheus HTTP/client types, implement transport authentication/retry, or choose source configuration. Application composition MAY select and inject the separately specified production Prometheus provider implementation behind that unchanged port.
 
 Each configured reference window SHALL have the current window's duration and be shifted backward by its exact positive configured offset. An explicit empty offset list SHALL cause no reference request and SHALL receive no default.
 
