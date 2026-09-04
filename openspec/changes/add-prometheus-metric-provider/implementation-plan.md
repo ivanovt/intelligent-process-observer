@@ -1,6 +1,6 @@
 # Implementation Plan — add-prometheus-metric-provider
 
-**Status:** EXECUTION PAUSED — FINAL READY TO RERUN
+**Status:** EXECUTION IN PROGRESS — FINAL VERIFICATION RERUN
 **Artifact type:** Non-normative execution plan
 **Approved OpenSpec change:** `add-prometheus-metric-provider`
 **Implementation branch:** `feature/add-prometheus-metric-provider`
@@ -90,7 +90,7 @@ FINAL. It is not a Prometheus implementation phase and adds no node to this grap
 | VS-02 | Bounded single-attempt acquisition and classification | VS-01 | accepted high-risk | COMPLETE | see anchor | accepted |
 | VS-03 | Deadlines, retries, state-inert cleanup, bounded capacity | VS-02 | accepted high-risk | COMPLETE | see anchor | accepted |
 | C-01 | Complete all remaining task 5.1 documentation conformance | VS-03 | normal | COMPLETE | `028a8d5` | handoff accepted; independent review `ACCEPT` |
-| FINAL | Standard final conformance and implementation review | C-01 | normal | READY | - | C-02 accepted; FINAL not restarted |
+| FINAL | Standard final conformance and implementation review | C-01 | normal | IN_PROGRESS | - | verification-only rerun after C-02 acceptance |
 
 ## Accepted implementation summary
 
@@ -416,3 +416,6 @@ them.
 - C-02: COMPLETE and accepted at `42dbb50`. Focused and repository-wide verification
   passed; fresh independent high-risk review returned `SLICE REVIEW PASS` with no
   findings. IR-001 and IR-002 are resolved, and FINAL is ready to rerun separately.
+- FINAL rerun: IN_PROGRESS. Precondition inspection reconfirmed the clean synchronized
+  Prometheus-only feature delta, accepted history, and absence of reusable workflow-skill
+  files before verification-only execution resumed.
