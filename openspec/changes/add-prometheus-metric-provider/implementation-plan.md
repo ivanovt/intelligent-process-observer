@@ -294,14 +294,36 @@ structured phase-specific projection. The exact mutable fields are:
 - top-level `Status` and `Human-approved planning SHA`;
 - VS-04 execution-overview `Status`, `Commit`, and `Handoff` cells;
 - during VS-05 only, the same three VS-05 cells;
-- append-only execution-note records whose first line is exactly one supported event
-  prefix listed in the script below and whose continuation lines use the existing
-  two-space-indented metadata format.
+- append-only, one-line, LF-terminated execution-note records matching exactly one schema
+  below. Continuation lines and unstructured prose are forbidden.
+
+`Status` is exactly one of `DRAFT|REVIEWED|HUMAN_APPROVED|IN_PROGRESS|COMPLETE|BLOCKED`.
+`Human-approved planning SHA` must be exactly the externally supplied 40-character
+lowercase `APPROVED_PLANNING_SHA`. Mutable overview status is
+`PLANNED|READY|IN_PROGRESS|COMPLETE|BLOCKED`; commit is `-` or an ordered comma-separated
+list of full lowercase SHAs; handoff is `-` or the exact slice handoff path.
+
+Canonical event schemas, including required field order, are:
+
+```text
+- VS-04 corrective assignment (YYYY-MM-DD): status=IN_PROGRESS; baseline=<fixed accepted VS03 execution SHA>; assignee=<bounded path-safe slug>
+- VS-04 corrective verification (YYYY-MM-DD): result=PASS|FAIL; tip=<full SHA>; handoff=implementation/VS-04-docstring-correction-handoff.md
+- VS-04 corrective acceptance (YYYY-MM-DD): status=COMPLETE; commit=<full SHA>; handoff=implementation/VS-04-docstring-correction-handoff.md; verification=PASS
+- VS-04 corrective stop/escalation (YYYY-MM-DD): status=BLOCKED; reason_code=<bounded snake-case token>; commit=none|<full SHA>; handoff=none|implementation/VS-04-docstring-correction-handoff.md
+- VS-05 active assignment (YYYY-MM-DD): status=IN_PROGRESS; baseline=<full accepted VS04 corrective SHA>; assignee=<bounded path-safe slug>
+- VS-05 verification (YYYY-MM-DD): result=PASS|FAIL; tip=<full SHA>; make_check=PASS|FAIL; openspec=PASS|FAIL; task_audit=PASS|FAIL
+- VS-05 final implementation review (YYYY-MM-DD): result=PASS|CHANGES_REQUIRED; tip=<full SHA>; blocker=<nonnegative integer>; high=<nonnegative integer>; medium=<nonnegative integer>; report=<bounded path-safe slug>
+- VS-05 acceptance (YYYY-MM-DD): status=COMPLETE; commit=<full SHA>; handoff=implementation/VS-05-handoff.md; review=PASS
+- VS-05 stop/escalation (YYYY-MM-DD): status=BLOCKED; reason_code=<bounded snake-case token>; commit=none|<full SHA>; handoff=none|implementation/VS-05-handoff.md
+```
 
 All execution notes already present in the approved planning snapshot are an immutable
 byte-for-byte prefix. The audit does not ignore the section. It rejects edits, deletion,
 insertion among prior notes, new headings/tables/free text, unsupported event names,
-duplicate terminal events, and any mutation to VS-01/VS-02/VS-03 metadata. Graph, goals,
+unknown/duplicate/reordered fields, continuation text, duplicate/out-of-order events,
+multiple terminal events, and any mutation to VS-01/VS-02/VS-03 metadata. VS-04
+acceptance requires a passing verification record. VS-05 acceptance requires passing
+verification and review with `blocker=0; high=0; medium=0`. Graph, goals,
 ownership, boundaries, risks, coverage, verification, context packs, and gates remain
 byte-for-byte frozen.
 
@@ -309,6 +331,7 @@ byte-for-byte frozen.
 set -euo pipefail
 plan_path="$change_dir/implementation-plan.md"
 plan_audit_phase="${PLAN_AUDIT_PHASE:?set PLAN_AUDIT_PHASE to vs04 or vs05}"
+accepted_corrective_sha="${ACCEPTED_VS04_CORRECTIVE_TIP:-}"
 git show "$approved_sha:$plan_path" > "$audit_dir/plan.baseline"
 git show "HEAD:$plan_path" > "$audit_dir/plan.head"
 git show ":$plan_path" > "$audit_dir/plan.index"
@@ -316,113 +339,205 @@ cp "$plan_path" "$audit_dir/plan.worktree"
 
 for current in head index worktree; do
   python3 - "$audit_dir/plan.baseline" "$audit_dir/plan.$current" \
-    "$plan_audit_phase" <<'PY'
+    "$plan_audit_phase" "$approved_sha" "$accepted_corrective_sha" <<'PY'
 import re
 import sys
+from datetime import date
 from pathlib import Path
 
-baseline = Path(sys.argv[1]).read_text().splitlines()
-current = Path(sys.argv[2]).read_text().splitlines()
+baseline = Path(sys.argv[1]).read_bytes()
+current = Path(sys.argv[2]).read_bytes()
 phase = sys.argv[3]
+approved_sha = sys.argv[4]
+accepted_corrective_sha = sys.argv[5]
 if phase not in {"vs04", "vs05"}:
     raise SystemExit("PLAN_AUDIT_PHASE must be vs04 or vs05")
+if re.fullmatch(r"[0-9a-f]{40}", approved_sha) is None:
+    raise SystemExit("approved planning SHA must be an exact lowercase full SHA")
+if phase == "vs05" and re.fullmatch(r"[0-9a-f]{40}", accepted_corrective_sha) is None:
+    raise SystemExit("VS-05 audit requires the exact accepted VS-04 corrective SHA")
 
-marker = "## Execution notes"
-try:
-    baseline_marker = baseline.index(marker)
-    current_marker = current.index(marker)
-except ValueError as error:
-    raise SystemExit("implementation plan lacks Execution notes marker") from error
+marker = b"## Execution notes\n"
+if baseline.count(marker) != 1 or current.count(marker) != 1:
+    raise SystemExit("implementation plan lacks one exact LF Execution notes marker")
+baseline_prefix, baseline_notes = baseline.split(marker, maxsplit=1)
+current_prefix, current_notes = current.split(marker, maxsplit=1)
 
 mutable_slices = {"VS-04"} if phase == "vs04" else {"VS-04", "VS-05"}
+allowed_status = {
+    b"DRAFT",
+    b"REVIEWED",
+    b"HUMAN_APPROVED",
+    b"IN_PROGRESS",
+    b"COMPLETE",
+    b"BLOCKED",
+}
 
 
-def frozen_prefix(lines: list[str], marker_index: int) -> list[str]:
-    result: list[str] = []
-    for line in lines[:marker_index]:
-        if line.startswith("**Status:**"):
-            result.append("**Status:** [MUTABLE]")
+def projected_prefix(raw: bytes, *, candidate: bool) -> bytes:
+    result: list[bytes] = []
+    for line in raw.splitlines(keepends=True):
+        if line.startswith(b"**Status:**"):
+            if candidate:
+                match = re.fullmatch(rb"\*\*Status:\*\* ([A-Z_]+)\n", line)
+                if match is None or match.group(1) not in allowed_status:
+                    raise SystemExit("invalid top-level Status value or serialization")
+            result.append(b"**Status:** [MUTABLE]\n")
             continue
-        if line.startswith("**Human-approved planning SHA:**"):
-            result.append("**Human-approved planning SHA:** [MUTABLE]")
+        if line.startswith(b"**Human-approved planning SHA:**"):
+            if candidate:
+                expected = (
+                    b"**Human-approved planning SHA:** `"
+                    + approved_sha.encode("ascii")
+                    + b"`\n"
+                )
+                if line != expected:
+                    raise SystemExit("Human-approved planning SHA is not the approved SHA")
+            result.append(b"**Human-approved planning SHA:** [MUTABLE]\n")
             continue
-        if re.match(r"^\| VS-\d\d ", line):
-            cells = [cell.strip() for cell in line.strip("|").split("|")]
+        if re.match(rb"^\| VS-\d\d ", line):
+            if not line.endswith(b"\n") or b"\r" in line:
+                raise SystemExit("execution-overview row must use canonical LF")
+            cells = [cell.strip() for cell in line[:-1].strip(b"|").split(b"|")]
             if len(cells) != 7:
                 raise SystemExit("malformed execution-overview row")
-            if cells[0] in mutable_slices:
-                if cells[4] not in {"PLANNED", "READY", "IN_PROGRESS", "COMPLETE", "BLOCKED"}:
-                    raise SystemExit(f"invalid execution status for {cells[0]}")
-                commit_value = cells[5].replace("`", "")
-                if commit_value != "-" and re.fullmatch(
-                    r"[0-9a-f]{7,40}(?:, [0-9a-f]{7,40})*", commit_value
+            slice_id = cells[0].decode("ascii")
+            if slice_id in mutable_slices:
+                if candidate and cells[4] not in {
+                    b"PLANNED", b"READY", b"IN_PROGRESS", b"COMPLETE", b"BLOCKED"
+                }:
+                    raise SystemExit(f"invalid execution status for {slice_id}")
+                commit_value = cells[5].replace(b"`", b"")
+                if candidate and commit_value != b"-" and re.fullmatch(
+                    rb"[0-9a-f]{40}(?:, [0-9a-f]{40})*", commit_value
                 ) is None:
-                    raise SystemExit(f"invalid commit metadata for {cells[0]}")
+                    raise SystemExit(f"invalid commit metadata for {slice_id}")
                 expected_handoff = {
-                    "VS-04": "`implementation/VS-04-docstring-correction-handoff.md`",
-                    "VS-05": "`implementation/VS-05-handoff.md`",
-                }[cells[0]]
-                if cells[6] not in {"-", expected_handoff}:
-                    raise SystemExit(f"invalid handoff metadata for {cells[0]}")
-                cells[4:] = ["[MUTABLE]", "[MUTABLE]", "[MUTABLE]"]
-                line = "| " + " | ".join(cells) + " |"
+                    "VS-04": b"`implementation/VS-04-docstring-correction-handoff.md`",
+                    "VS-05": b"`implementation/VS-05-handoff.md`",
+                }[slice_id]
+                if candidate and cells[6] not in {b"-", expected_handoff}:
+                    raise SystemExit(f"invalid handoff metadata for {slice_id}")
+                cells[4:] = [b"[MUTABLE]", b"[MUTABLE]", b"[MUTABLE]"]
+                line = b"| " + b" | ".join(cells) + b" |\n"
         result.append(line)
-    return result
+    return b"".join(result)
 
 
-if frozen_prefix(baseline, baseline_marker) != frozen_prefix(current, current_marker):
+if projected_prefix(baseline_prefix, candidate=False) != projected_prefix(
+    current_prefix, candidate=True
+):
     raise SystemExit("non-allowlisted implementation-plan content changed")
 
-baseline_notes = baseline[baseline_marker + 1:]
-current_notes = current[current_marker + 1:]
-if current_notes[:len(baseline_notes)] != baseline_notes:
+if not current_notes.startswith(baseline_notes):
     raise SystemExit("approved execution-note history changed")
 appended = current_notes[len(baseline_notes):]
 
-allowed = {
-    "vs04": {
-        "VS-04 corrective assignment",
-        "VS-04 corrective verification",
-        "VS-04 corrective acceptance",
-        "VS-04 corrective stop/escalation",
-    },
-    "vs05": {
-        "VS-04 corrective assignment",
-        "VS-04 corrective verification",
-        "VS-04 corrective acceptance",
-        "VS-04 corrective stop/escalation",
-        "VS-05 active assignment",
-        "VS-05 verification",
-        "VS-05 final implementation review",
-        "VS-05 acceptance",
-        "VS-05 stop/escalation",
-    },
-}[phase]
+sha = rb"[0-9a-f]{40}"
+slug = rb"[A-Za-z0-9][A-Za-z0-9._/-]{0,127}"
+reason = rb"[a-z][a-z0-9_]{1,63}"
+schemas = {
+    "VS-04 corrective assignment": (
+        ["status", "baseline", "assignee"],
+        [rb"IN_PROGRESS", rb"7baae2b4d3e05c55ba2ae8d5a82f2cc03f630a9a", slug],
+    ),
+    "VS-04 corrective verification": (
+        ["result", "tip", "handoff"],
+        [rb"PASS|FAIL", sha,
+         rb"implementation/VS-04-docstring-correction-handoff\.md"],
+    ),
+    "VS-04 corrective acceptance": (
+        ["status", "commit", "handoff", "verification"],
+        [rb"COMPLETE", sha,
+         rb"implementation/VS-04-docstring-correction-handoff\.md", rb"PASS"],
+    ),
+    "VS-04 corrective stop/escalation": (
+        ["status", "reason_code", "commit", "handoff"],
+        [rb"BLOCKED", reason, rb"none|" + sha,
+         rb"none|implementation/VS-04-docstring-correction-handoff\.md"],
+    ),
+    "VS-05 active assignment": (
+        ["status", "baseline", "assignee"],
+        [rb"IN_PROGRESS", accepted_corrective_sha.encode("ascii"), slug],
+    ),
+    "VS-05 verification": (
+        ["result", "tip", "make_check", "openspec", "task_audit"],
+        [rb"PASS|FAIL", sha, rb"PASS|FAIL", rb"PASS|FAIL", rb"PASS|FAIL"],
+    ),
+    "VS-05 final implementation review": (
+        ["result", "tip", "blocker", "high", "medium", "report"],
+        [rb"PASS|CHANGES_REQUIRED", sha, rb"[0-9]+", rb"[0-9]+", rb"[0-9]+", slug],
+    ),
+    "VS-05 acceptance": (
+        ["status", "commit", "handoff", "review"],
+        [rb"COMPLETE", sha, rb"implementation/VS-05-handoff\.md", rb"PASS"],
+    ),
+    "VS-05 stop/escalation": (
+        ["status", "reason_code", "commit", "handoff"],
+        [rb"BLOCKED", reason, rb"none|" + sha,
+         rb"none|implementation/VS-05-handoff\.md"],
+    ),
+}
+allowed_events = list(schemas)[:4] if phase == "vs04" else list(schemas)
+event_rank = {event: index for index, event in enumerate(allowed_events)}
 seen: set[str] = set()
-active_record = False
-terminal_by_slice: dict[str, str] = {}
+terminals: set[str] = set()
+records: dict[str, bytes] = {}
+last_rank = -1
 record_pattern = re.compile(
-    r"^- (?P<event>.+) \(\d{4}-\d{2}-\d{2}\):(?: .+)?$"
+    rb"^- (?P<event>[^\r\n]+) \((?P<date>\d{4}-\d{2}-\d{2})\): "
+    rb"(?P<payload>[^\r\n]+)\n$"
 )
-for line in appended:
-    if line.startswith("- "):
-        match = record_pattern.fullmatch(line)
-        if match is None or match.group("event") not in allowed:
-            raise SystemExit(f"unsupported execution-note record: {line}")
-        event = match.group("event")
-        if event in seen:
-            raise SystemExit(f"duplicate execution-note event: {event}")
-        seen.add(event)
-        active_record = True
-        if event.endswith(("acceptance", "stop/escalation")):
-            slice_id = event.split(maxsplit=1)[0]
-            if slice_id in terminal_by_slice:
-                raise SystemExit(f"multiple terminal records for {slice_id}")
-            terminal_by_slice[slice_id] = event
-    elif line.startswith("  ") and line.strip() and active_record:
-        continue
-    else:
-        raise SystemExit(f"unstructured appended execution-note content: {line}")
+for line in appended.splitlines(keepends=True):
+    match = record_pattern.fullmatch(line)
+    if match is None:
+        raise SystemExit("execution metadata must be canonical one-line LF records")
+    try:
+        date.fromisoformat(match.group("date").decode("ascii"))
+    except ValueError as error:
+        raise SystemExit("execution metadata contains an invalid date") from error
+    event = match.group("event").decode("ascii")
+    if event not in allowed_events or event in seen:
+        raise SystemExit(f"unsupported or duplicate execution event: {event}")
+    if event_rank[event] < last_rank:
+        raise SystemExit("execution events are out of canonical order")
+    last_rank = event_rank[event]
+    seen.add(event)
+    records[event] = match.group("payload")
+    parts = match.group("payload").split(b"; ")
+    names: list[str] = []
+    values: list[bytes] = []
+    for part in parts:
+        if part.count(b"=") != 1:
+            raise SystemExit(f"malformed field in {event}")
+        name, value = part.split(b"=", maxsplit=1)
+        names.append(name.decode("ascii"))
+        values.append(value)
+    expected_names, value_patterns = schemas[event]
+    if names != expected_names:
+        raise SystemExit(f"wrong fields/order in {event}")
+    for name, value, pattern in zip(names, values, value_patterns, strict=True):
+        if re.fullmatch(pattern, value) is None:
+            raise SystemExit(f"invalid {name} in {event}")
+    slice_id = event.split(maxsplit=1)[0]
+    if event.endswith(("acceptance", "stop/escalation")):
+        if slice_id in terminals:
+            raise SystemExit(f"duplicate terminal event for {slice_id}")
+        terminals.add(slice_id)
+
+if seen and allowed_events[0] not in seen:
+    raise SystemExit("phase metadata must begin with its assignment event")
+if "VS-04 corrective acceptance" in seen:
+    if records.get("VS-04 corrective verification", b"").split(b"; ")[0] != b"result=PASS":
+        raise SystemExit("VS-04 acceptance requires passing verification")
+if "VS-05 acceptance" in seen:
+    if records.get("VS-05 verification", b"").split(b"; ")[0] != b"result=PASS":
+        raise SystemExit("VS-05 acceptance requires passing verification")
+    review = records.get("VS-05 final implementation review", b"")
+    if b"result=PASS" not in review or any(
+        field not in review for field in (b"blocker=0", b"high=0", b"medium=0")
+    ):
+        raise SystemExit("VS-05 acceptance requires zero unresolved BLOCKER/HIGH/MEDIUM")
 PY
 done
 ```
@@ -622,6 +737,14 @@ def docstring_source_inventory(path: str) -> tuple[dict[str, bytes], dict[str, t
     return inventory, spans
 
 
+def absolute_bounds(source: bytes, span: tuple[int, int, int, int]) -> tuple[int, int]:
+    lines = source.splitlines(keepends=True)
+    start_line, start_column, end_line, end_column = span
+    start = sum(len(line) for line in lines[:start_line - 1]) + start_column
+    end = sum(len(line) for line in lines[:end_line - 1]) + end_column
+    return start, end
+
+
 if without_docstrings(sys.argv[1]) != without_docstrings(sys.argv[2]):
     raise SystemExit("ports.py changed beyond docstrings")
 before_inventory, before_spans = docstring_source_inventory(sys.argv[1])
@@ -661,6 +784,46 @@ if len(provider_doc.split()) < 5:
     raise SystemExit("MetricSeriesProvider docstring is not purpose-descriptive")
 if len(acquire_doc.split()) < 5:
     raise SystemExit("acquire docstring is not behavior-descriptive")
+
+# Final source-byte authority: remove exactly the two canonical insertion spans from
+# candidate bytes, without parsing/formatting/newline normalization, and recover baseline.
+before_bytes = Path(sys.argv[1]).read_bytes()
+after_bytes = Path(sys.argv[2]).read_bytes()
+class_raw = after_inventory["MetricSeriesProvider"]
+acquire_raw = after_inventory["MetricSeriesProvider.acquire"]
+if b"\n" in class_raw or b"\n" in acquire_raw:
+    raise SystemExit("approved new docstrings must use canonical one-line source spans")
+class_start, class_end = absolute_bounds(
+    after_bytes, after_spans["MetricSeriesProvider"]
+)
+acquire_start, acquire_end = absolute_bounds(
+    after_bytes, after_spans["MetricSeriesProvider.acquire"]
+)
+class_suffix = b"\n\n    "
+acquire_prefix = b"\n        "
+acquire_suffix = b"\n       "
+if after_bytes[class_start:class_end] != class_raw:
+    raise SystemExit("class docstring span does not match exact candidate bytes")
+if after_bytes[class_end:class_end + len(class_suffix)] != class_suffix:
+    raise SystemExit("class docstring insertion envelope is not canonical")
+if after_bytes[acquire_start - len(acquire_prefix):acquire_start] != acquire_prefix:
+    raise SystemExit("acquire docstring insertion prefix is not canonical")
+if after_bytes[acquire_start:acquire_end] != acquire_raw:
+    raise SystemExit("acquire docstring span does not match exact candidate bytes")
+if after_bytes[acquire_end:acquire_end + len(acquire_suffix)] != acquire_suffix:
+    raise SystemExit("acquire docstring insertion suffix is not canonical")
+removals = sorted(
+    [
+        (class_start, class_end + len(class_suffix)),
+        (acquire_start - len(acquire_prefix), acquire_end + len(acquire_suffix)),
+    ],
+    reverse=True,
+)
+reconstructed = after_bytes
+for start, end in removals:
+    reconstructed = reconstructed[:start] + reconstructed[end:]
+if reconstructed != before_bytes:
+    raise SystemExit("candidate differs from baseline beyond the two docstring spans")
 for label, inventory, spans in (
     ("baseline", before_inventory, before_spans),
     ("candidate", after_inventory, after_spans),
@@ -1074,7 +1237,8 @@ runtime behavior -> full-tree allowlist and focused static/lint proof.
 
 **Expected code impact:** only
 `backend/src/app/metrics/ports.py::MetricSeriesProvider` and
-`MetricSeriesProvider.acquire` docstring bodies. Add no test, helper, import, annotation,
+`MetricSeriesProvider.acquire` canonical one-line docstring insertion spans. Add no test,
+helper, import, annotation,
 signature, statement, formatting-only rewrite, or unrelated cleanup. Coordinator-owned
 plan metadata and new handoff
 `implementation/VS-04-docstring-correction-handoff.md` are separate execution metadata;
@@ -1096,7 +1260,7 @@ editing OpenSpec or architecture.
 | VS04-AC01 | Root `AGENTS.md` public class documentation rule | Existing public `MetricSeriesProvider` protocol | Inspect its runtime docstring | A concise meaningful docstring explains that the protocol supplies provider-neutral Metric series acquisition | static + review | `ast.get_docstring` presence/word-count assertion plus human behavior-focused wording review |
 | VS04-AC02 | Root `AGENTS.md` public interface-method documentation rule | Existing public `MetricSeriesProvider.acquire(scope, window)` method | Inspect its runtime docstring | A concise meaningful docstring explains acquisition for the supplied immutable provider scope and exact analysis window without changing signature or semantics | static + review | `ast.get_docstring` assertion and signature/annotation comparison |
 | VS04-AC03 | Full-tree corrective scope | Accepted VS-03 execution baseline and corrective candidate tip | Compare the complete repository name-status delta | It equals the exact four-path allowlist: target port file, mutable plan metadata, unchanged historical stop handoff, and new corrective handoff; every other path fails | repository audit | sorted full-tree name-status comparison and historical-handoff integrity check above |
-| VS04-AC04 | Exact behavior/docstring delta | Baseline and candidate `ports.py` | Compare executable AST and complete module/class/function/method docstring inventories | ASTs are identical after removing docstrings; all existing docstrings are byte-identical; exactly the class and its public `acquire` gain meaningful docstrings, with no third addition | static + review | docstring-stripped AST equality plus exact inventory-set/value comparison above |
+| VS04-AC04 | Exact behavior/docstring/source delta | Baseline and candidate `ports.py` | Compare executable AST, complete source-level docstring inventories, and raw reconstructed bytes | ASTs are identical after removing docstrings; every existing docstring span/text is byte-identical; exactly the class and `acquire` gain meaningful docstrings; removing exactly their canonical raw insertion spans reconstructs the accepted baseline byte-for-byte | static + byte audit + review | independent AST equality, source-span/inventory equality, exact two additions, and authoritative reconstruction comparison above |
 | VS04-AC05 | Focused quality gate | The two docstrings and otherwise unchanged module | Run focused compilation/Ruff/static checks | The file parses, lint and format checks pass, and no behavioral/signature change or unrelated diff exists | static + lint | `python3 -m compileall`, targeted Ruff check/format, `git diff --check`, cumulative corrective audit |
 
 **Counterexample guards:** the executable AST comparison covers the complete module, so a
@@ -1105,13 +1269,17 @@ statement fails. The independent inventory compares every existing docstring loc
 raw value; a third addition, removal, or modification anywhere fails. Full-tree auditing
 fails any unlisted test, source, frontend, OpenSpec, architecture, documentation,
 dependency/configuration, governance, or knowledge path. Presence-only one-word target
-docstrings fail the minimum purpose/behavior check and human wording review.
+docstrings fail the minimum purpose/behavior check and human wording review. The final
+reconstruction removes only the two fixed raw insertion envelopes and compares bytes, so
+comments, whitespace, blank lines, formatting, newline style, or any other source change
+cannot hide behind semantic AST/docstring equality.
 
 **Focused verification:** `cd backend && uv run ruff check
 src/app/metrics/ports.py`; `cd backend && uv run ruff format --check
 src/app/metrics/ports.py`; `cd backend && uv run python -m compileall -q
-src/app/metrics/ports.py`; the accepted-history, full-tree allowlist, executable-AST, and
-docstring-inventory audits above; `git diff --check`. No test is added or changed.
+src/app/metrics/ports.py`; the accepted-history, full-tree allowlist, executable-AST,
+source-level docstring-inventory, and authoritative byte-reconstruction audits above;
+`git diff --check`. No test is added or changed.
 
 **Context pack:** root `AGENTS.md` sections 3-4 and 7; this replacement plan's accepted
 VS-03 anchors and corrective audit; current `backend/src/app/metrics/ports.py`; accepted
@@ -1121,7 +1289,8 @@ blocked historical `implementation/VS-04-handoff.md` identifying the exact docst
 **Handoff expectations:** VS04-AC01 through VS04-AC05 evidence; accepted VS-03 execution
 baseline SHA; exact corrective commit/tip; before/after docstrings; exact production/test
 and full-tree name-status allowlist; historical-handoff integrity; docstring-stripped AST
-equality; complete before/after docstring inventories and exact two-location delta;
+equality; complete before/after source-span/byte inventories and exact two-location delta;
+candidate-minus-two-spans byte-identical reconstruction;
 unchanged signature/type confirmation; focused command results; explicit no-test/no-
 behavior/no-unrelated-change audit; deviations and shared-knowledge candidates; new handoff path
 `implementation/VS-04-docstring-correction-handoff.md` without rewriting the blocked
@@ -1132,7 +1301,8 @@ historical VS-04 handoff.
 **Completion gate:** both meaningful docstrings are present; the full-tree delta equals
 the exact four-path allowlist; docstring-stripped ASTs are identical; the complete
 docstring inventory preserves every existing entry and adds exactly the two approved
-locations; signatures/types/runtime semantics and every accepted provider/pipeline
+locations; removal of exactly those two canonical insertion spans reconstructs the
+accepted VS-03 file byte-for-byte; signatures/types/runtime semantics and every accepted provider/pipeline
 behavior remain unchanged; focused compile/Ruff/format/diff checks pass; one atomic corrective commit and
 the new correction handoff exist; Coordinator records the accepted corrective tip and
 evidence. VS-01,
