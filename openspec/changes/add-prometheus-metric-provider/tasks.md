@@ -23,7 +23,7 @@
 
 ## 2. Bounded Prometheus range acquisition
 
-- [ ] 2.1 Implement the infrastructure-only production port adapter using form-encoded
+- [x] 2.1 Implement the infrastructure-only production port adapter using form-encoded
   `POST <validated-origin><normalized-prefix>/api/v1/query_range`; terminate absent,
   unknown, or selected production-invalid sources in a pre-transport phase with zero
   attempts, then prepare one immutable logical request only for a transport-phase
@@ -32,7 +32,7 @@
   deterministic step, `timeout=10s`, `limit=2`, and no lookback/stats extras. Preserve
   verified TLS, disabled redirects/proxies, the exact path grammar, and rejection of
   ambiguous paths before any attempt.
-- [ ] 2.2 Implement strict bounded response-body streaming with the 1 MiB cap and
+- [x] 2.2 Implement strict bounded response-body streaming with the 1 MiB cap and
   cancellation-safe resource cleanup; reject declared or observed over-cap responses
   without returning truncated data.
 - [x] 2.3 Implement strict success-envelope/matrix/label/sample validation and mapping
@@ -51,7 +51,7 @@
 
 ## 3. Deadlines, retries, and typed outcome mapping
 
-- [ ] 3.1 Implement injected monotonic hard execution/result deadlines of 15 seconds per
+- [x] 3.1 Implement injected monotonic hard execution/result deadlines of 15 seconds per
   complete request/body-read attempt and 50 seconds per complete acquire, including
   waits and every attempt. On expiry, commit the existing typed timeout, signal
   cancellation/close, discard late transport information, and return without allowing
@@ -59,13 +59,13 @@
   best-effort and state-inert; bound active acquisition plus cleanup capacity so it
   cannot accumulate indefinitely, failing new pre-transport acquisition safely when that
   private capacity is exhausted.
-- [ ] 3.2 Implement at most two retries only for `httpx.ConnectError` and HTTP
+- [x] 3.2 Implement at most two retries only for `httpx.ConnectError` and HTTP
   `429|500|502|504`, with exact no-jitter waits of 0.5 and 1.0 seconds and admission only
   when the complete wait plus a new 15-second attempt fits the acquire budget; do not
   honor provider-directed delays. If an otherwise eligible retry cannot fit, return
   timeout immediately with no sleep and no additional HTTP attempt; apply this rule
   identically to ConnectError and every retryable status.
-- [ ] 3.3 Implement the exact ordered classification table: hard local deadlines first;
+- [x] 3.3 Implement the exact ordered classification table: hard local deadlines first;
   then HTTPX exceptions in subclass order (`TimeoutException`, `ConnectError`, other
   `TransportError`, request/client errors outside `TransportError`); bounded/deadlined
   body acquisition; strict Prometheus error-envelope validation; proven
@@ -73,7 +73,7 @@
   bare/malformed HTTP 503 and other non-success failure; then successful-status
   envelope/result and success-annotation validation. Use no undefined generic transport
   retry category and only fixed bounded diagnostic categories/status codes.
-- [ ] 3.4 Add deterministic retry/deadline/precedence tests for exact attempt counts and
+- [x] 3.4 Add deterministic retry/deadline/precedence tests for exact attempt counts and
   waits, retry admission/rejection, in-flight request and slow-body cancellation,
   timeout commitment, discarded late transport outcomes, state-inert best-effort cleanup,
   finite active-plus-cleanup capacity, and no provider execution/retry/new attempt after
@@ -84,7 +84,7 @@
   Add near-deadline cases proving insufficient budget after ConnectError and each
   retryable status returns timeout with no sleep/request, sufficient budget admits the
   retry normally, and actual three-attempt exhaustion remains failure.
-- [ ] 3.5 Add acquisition-attempt tests proving absent registry and unknown source each
+- [x] 3.5 Add acquisition-attempt tests proving absent registry and unknown source each
   return unavailable with zero attempts, and a selected production-invalid source
   returns failure with zero attempts; success on attempt 1 uses one POST, success on
   retry #1 uses two, success on retry #2 uses three, and full retry exhaustion uses
@@ -106,10 +106,10 @@
   `3600.001s -> 61`. For every case assert the exact expected step, exact start/end
   preservation, and `floor(duration / step) + 1 <= 61`, alongside unchanged
   POST/query/timeout/limit/no-lookback/no-stats request fields.
-- [ ] 4.3 Add HTTP-boundary tests for Bearer/Basic authentication, exact root/prefixed
+- [x] 4.3 Add HTTP-boundary tests for Bearer/Basic authentication, exact root/prefixed
   targets, current/reference requests, equal-duration resolution, verified TLS, no
   environment proxy trust, no redirect following, and no credential forwarding.
-- [ ] 4.4 Add response tests for empty/one/multiple series, finite and non-finite float
+- [x] 4.4 Add response tests for empty/one/multiple series, finite and non-finite float
   strings, invalid timestamps/values/labels/pairs/envelopes/result types, native and
   mixed histograms, exact 61-sample success, 62-sample failure, exact body-cap success,
   declared/streamed over-cap failure, and absence of raw-data leakage. Add the complete
@@ -118,7 +118,7 @@
   valid warnings; timeout with valid infos; bare 503; malformed 503; retryable status
   with malformed body; successful data with non-empty warnings; and successful data
   with infos only.
-- [ ] 4.5 Add injected Metrics pipeline tests proving successful current acquisition,
+- [x] 4.5 Add injected Metrics pipeline tests proving successful current acquisition,
   configured reference acquisition through the same provider, empty-series insufficient
   behavior, current unavailable/failure/timeout terminal mapping, reference-only partial
   mapping, and preservation of the provider-neutral Metric contracts and analytical

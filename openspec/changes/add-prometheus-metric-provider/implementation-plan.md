@@ -478,7 +478,7 @@ VS-01 -> VS-02 -> VS-03 -> VS-04
 |---|---|---|---|---|---|---|
 | VS-01 | Source-safe transport-free walking skeleton through the existing Metric port | none | high-risk | COMPLETE | 1217266598aa5f20b902e9ae2edfe1da2ffed6c2 | `implementation/VS-01-handoff.md` |
 | VS-02 | Complete bounded single-attempt request, mapping, and status classification | VS-01 | high-risk | COMPLETE | `99bce08`, `d01a104`, `0d35520`, `ee4d364` | `implementation/VS-02-handoff.md` |
-| VS-03 | Observable deadline/result boundary, state-inert late cleanup, bounded capacity, deterministic retries, and terminal resilience integration | VS-02 | high-risk | IN_PROGRESS | - | - |
+| VS-03 | Observable deadline/result boundary, state-inert late cleanup, bounded capacity, deterministic retries, and terminal resilience integration | VS-02 | high-risk | COMPLETE | bf7cb3469119a8869625aa7f4125b21ed11c00d5 | `implementation/VS-03-handoff.md` |
 | VS-04 | Compatibility, operational documentation, and whole-change conformance | VS-03 | normal | PLANNED | - | - |
 
 ## Slice definitions
@@ -1291,3 +1291,18 @@ acceptance obligations, proof-level changes, or redesign decisions here.
   `a05aa4c0f5e9663a4dfecebc325c7b8518c8fe5b736de35c2abece7ec4a8e403`.
   VS-03 remains IN_PROGRESS; a fresh corrective Slice Implementer is active. The prior
   reviewer is complete and VS-04 remains blocked.
+- VS-03 acceptance (2026-09-04): fresh cumulative high-risk re-review of accepted
+  VS-02 baseline `81270d9537329eea0477254094ef9fcdce6f17e6` through exact candidate
+  `bf7cb3469119a8869625aa7f4125b21ed11c00d5` returned `SLICE REVIEW PASS` with no
+  findings. The reviewer confirmed the four required existing unaccepted commits
+  `4baf129`, `5c35ae8`, `3a3ef1b`, and `71566e0` plus corrections `290fd96`, `9ecc0f5`,
+  `201d618`, and `9e5d80d`; complete production/test name-status remains
+  `backend/src/app/infrastructure/prometheus/composition.py` modified,
+  `backend/tests/test_metric_analysis_pipeline.py` modified, and
+  `backend/tests/test_prometheus_metric_provider_resilience.py` added. Cumulative
+  production/test diff SHA-256 is
+  `0d77d5458efce23f5cc7f1c9b9544155c77a812771cd1821b4c8afea83c26f9c`.
+  Focused verification independently reproduced 268 passed and 28 existing
+  PostgreSQL-gated skips, with targeted Ruff/format, diff, strict OpenSpec, and clean
+  worktree checks passing. No shared-knowledge candidates. VS-03 is COMPLETE; VS-04 is
+  READY for documentation/conformance-only execution.
