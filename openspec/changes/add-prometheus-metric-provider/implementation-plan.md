@@ -1,17 +1,22 @@
 # Implementation Plan — add-prometheus-metric-provider
 
-**Status:** APPROVED — EXECUTION BLOCKED
+**Status:** DRAFT — RE-PLANNING REVIEW REQUIRED
 **Artifact type:** Non-normative execution plan
 **Approved OpenSpec change:** `add-prometheus-metric-provider`
 **Implementation branch:** `feature/add-prometheus-metric-provider`
-**Human-approved planning SHA:** `75b97960704af790b2d8c3e8b6ce84a9e400151a`
+**Human-approved planning SHA:** `75b97960704af790b2d8c3e8b6ce84a9e400151a` (superseded for VS-03/VS-04)
+**Human-approved deadline/cleanup source revision:** `2180c7d14862187635de21d716f27f6b3b9ff93f`
+**Replacement planning-review SHA:** pending
 
 ## Approval state
 
-The proposal, delta specifications, design, and tasks are human-approved inputs to this
-planning pass. This implementation plan is not approved for execution. The complete
-planning snapshot defined below must first be committed, independently reviewed at that
-exact commit SHA, and explicitly human-approved at that same SHA before VS-01 may begin.
+VS-01 and VS-02 are accepted execution history and remain unchanged. The proposal,
+delta specifications, design, and tasks, including the human-approved deadline/cleanup
+revision at `2180c7d14862187635de21d716f27f6b3b9ff93f`, are approved inputs to this
+re-planning pass. This corrected implementation plan is not approved for VS-03 or
+VS-04 execution. The replacement planning snapshot defined below must be committed,
+independently reviewed at that exact SHA, and explicitly human-approved at that same SHA
+before VS-03 may resume.
 
 ## Authority and constraints
 
@@ -27,6 +32,8 @@ Approved change sources:
 - `openspec/changes/add-prometheus-metric-provider/specs/prometheus-metric-provider/spec.md`
 - `openspec/changes/add-prometheus-metric-provider/specs/metrics-analysis-pipeline/spec.md`
 - `openspec/changes/add-prometheus-metric-provider/tasks.md`
+- approved deadline/cleanup clarification commit
+  `2180c7d14862187635de21d716f27f6b3b9ff93f`
 
 Architecture and accepted-contract sources:
 
@@ -92,20 +99,18 @@ deviation dispositions, and execution notes after approval.
 
 ### Establish the immutable review and approval anchor
 
-Before the final independent slice-plan review and before human approval of this plan:
+Before the independent review and human approval of this corrected plan:
 
 1. Confirm the current branch is `feature/add-prometheus-metric-provider` and inspect the
    complete index/worktree. Preserve unrelated roadmap files outside this feature
    execution boundary; exclude every roadmap sidecar, `Zone.Identifier`, and other
    unrelated artifact from both the planning commit and later feature commits.
-2. Stage exactly this complete planning snapshot and no other path:
+2. The original full planning snapshot is historical execution evidence. For this
+   correction, verify that the parent tree contains the approved source revision
+   `2180c7d14862187635de21d716f27f6b3b9ff93f`, then stage exactly the corrected plan
+   and no other path:
 
    ```text
-   openspec/changes/add-prometheus-metric-provider/.openspec.yaml
-   openspec/changes/add-prometheus-metric-provider/proposal.md
-   openspec/changes/add-prometheus-metric-provider/design.md
-   openspec/changes/add-prometheus-metric-provider/specs/**
-   openspec/changes/add-prometheus-metric-provider/tasks.md
    openspec/changes/add-prometheus-metric-provider/implementation-plan.md
    ```
 
@@ -118,21 +123,16 @@ Before the final independent slice-plan review and before human approval of this
    snapshot_audit_dir=$(mktemp -d)
    current_branch=$(git branch --show-current)
    test "$current_branch" = "feature/add-prometheus-metric-provider"
-   {
-     printf '%s\n' \
-       "$change_dir/.openspec.yaml" \
-       "$change_dir/design.md" \
-       "$change_dir/implementation-plan.md" \
-       "$change_dir/proposal.md" \
-       "$change_dir/tasks.md"
-     find "$change_dir/specs" -type f -print
-   } | LC_ALL=C sort > "$snapshot_audit_dir/expected"
+   git merge-base --is-ancestor \
+     2180c7d14862187635de21d716f27f6b3b9ff93f HEAD
+   printf '%s\n' "$change_dir/implementation-plan.md" \
+     > "$snapshot_audit_dir/expected"
    git diff --cached --name-only | LC_ALL=C sort > "$snapshot_audit_dir/actual"
    if ! diff -u "$snapshot_audit_dir/expected" "$snapshot_audit_dir/actual"; then
      exit 1
    fi
    git diff --quiet
-   git commit -m "docs: plan Prometheus metric provider implementation"
+   git commit -m "docs: replan Prometheus deadline cleanup"
    planning_review_sha=$(git rev-parse HEAD)
    test -n "$planning_review_sha"
    git status --porcelain > "$snapshot_audit_dir/status"
@@ -143,10 +143,10 @@ Before the final independent slice-plan review and before human approval of this
 4. The independent slice-plan reviewer records that exact SHA in its review report and
    reviews the tree at that SHA, not mutable worktree content. Human approval must
    explicitly identify the same reviewed SHA.
-5. If `.openspec.yaml`, proposal, design, any file in the complete specs tree, task text
-   or structure, or any frozen part of this plan changes after review, the old review and
-   approval are invalid. Create a new complete planning snapshot commit, repeat independent
-   review against the new SHA, and obtain renewed human approval of that exact SHA.
+5. If the approved source revision, task text/structure, or any frozen part of this plan
+   changes after review, the review and approval are invalid. Create a new planning
+   snapshot commit, repeat independent review against the new SHA, and obtain renewed
+   human approval of that exact SHA.
 
 After human approval, the Coordinator may record the approved SHA only in the mutable
 `Human-approved planning SHA` field above and in `Execution notes`. That metadata update
@@ -170,7 +170,7 @@ immutable_paths=(
 )
 ```
 
-Run every audit below both immediately before VS-01 delegation and during VS-04 final
+Run every audit below both immediately before VS-03 delegation and during VS-04 final
 conformance. These are approved-artifact integrity checks, not implementation-diff checks.
 The fenced blocks are consecutive fragments of one Bash audit script, split only for
 readability: concatenate and execute them in order in one process. Each fragment repeats
@@ -367,7 +367,7 @@ VS-01 -> VS-02 -> VS-03 -> VS-04
 |---|---|---|---|---|---|---|
 | VS-01 | Source-safe transport-free walking skeleton through the existing Metric port | none | high-risk | COMPLETE | 1217266598aa5f20b902e9ae2edfe1da2ffed6c2 | `implementation/VS-01-handoff.md` |
 | VS-02 | Complete bounded single-attempt request, mapping, and status classification | VS-01 | high-risk | COMPLETE | `99bce08`, `d01a104`, `0d35520`, `ee4d364` | `implementation/VS-02-handoff.md` |
-| VS-03 | Hard deadlines, deterministic retries, and terminal resilience integration | VS-02 | high-risk | BLOCKED | - | - |
+| VS-03 | Observable deadline/result boundary, state-inert late cleanup, bounded capacity, deterministic retries, and terminal resilience integration | VS-02 | high-risk | PLANNED | - | - |
 | VS-04 | Compatibility, operational documentation, and whole-change conformance | VS-03 | normal | PLANNED | - | - |
 
 ## Slice definitions
@@ -572,89 +572,130 @@ implementation commit and handoff exist, followed by Coordinator acceptance meta
 
 ### VS-03 — Deterministic resilience and typed failure mapping
 
-**Behavioral goal:** Complete production acquisition with hard monotonic attempt/acquire
-deadlines, cancellation-safe cleanup, exact HTTPX exception handling, and a retry
-orchestrator that consumes VS-02's complete single-attempt classifications. Every public
-acquisition terminates with the approved existing typed outcome, exact 1..3 attempt
-behavior, and unchanged current/reference pipeline semantics.
+**Behavioral goal:** Complete production acquisition with an absolute observable
+15-second attempt and 50-second `acquire()` result boundary. At either expiry, timeout
+is committed before cancellation-resistant transport cleanup completes; cancellation and
+close are signalled, detached cleanup becomes state-inert, and finite private
+active-plus-cleanup capacity prevents it accumulating. The slice also preserves the
+existing exact retry/orchestration behavior and current/reference pipeline semantics.
 
 **OpenSpec coverage:** deadline/failure scenarios for retry eligibility/admission,
-initial/retry completion, exhaustion, HTTPX taxonomy, proven hard timeout, and final
-current/reference failure semantics; logical-request-across-retries scenario; complete
-production resilience integration over all VS-02 attempt variants; tasks 3.1, 3.2,
-exception/deadline/retry-orchestration portions of 3.3, 3.4, transport-attempt portions
-of 3.5, retry/deadline portions of 4.3/4.4, current timeout/final retry failure and
-reference timeout/failure portions of 4.5, plus per-symbol docstrings from 5.1.
+initial/retry completion, exhaustion, HTTPX taxonomy, proven hard timeout,
+post-timeout transport cleanup, and final current/reference failure semantics;
+logical-request-across-retries scenario; complete production resilience integration over
+all VS-02 attempt variants; tasks 3.1, 3.2, exception/deadline/retry-orchestration
+portions of 3.3, 3.4, transport-attempt portions of 3.5, retry/deadline portions of
+4.3/4.4, current timeout/final retry failure and reference timeout/failure portions of
+4.5, plus per-symbol docstrings from 5.1.
 
 **Dependencies:** VS-02 accepted.
 
 **Vertical boundary:** VS-02 immutable request and complete one-attempt function ->
-injected monotonic 50-second acquire budget -> 15-second deadline around each request and
-body read -> HTTPX exception classifier or VS-02 attempt result -> remaining-budget
-admission -> exact fixed wait and up to two identical retries -> cancellation/resource
-closure -> existing typed available/failure/timeout -> unchanged current failed or
-reference partial result.
+private capacity admission for eligible transport work -> injected monotonic 50-second
+observable acquire-result boundary -> 15-second observable deadline around each request
+and body read -> commit existing typed timeout before signalling cancellation/close ->
+detach only state-inert resource cleanup while its private capacity remains held ->
+discard late response/body/error/exception -> HTTPX exception classifier or VS-02 attempt
+result before commitment -> remaining-budget admission -> exact fixed wait and up to two
+identical retries -> existing typed available/failure/timeout -> unchanged current failed
+or reference partial result.
 
-**Expected code impact:** extend the production provider's infrastructure-private
-deadline, retry, clock/sleeper, exception-classifier, and orchestration seams plus focused
-production-provider tests and narrow adapter-backed pipeline tests. VS-02 response/body/
-status mapping is consumed, not reimplemented. Do not change Metric domain, pipeline,
-result builder, persistence, or preflight policy.
+**Expected code impact:** replace the current joined cancellation-cleanup deadline helper
+inside the production provider with infrastructure-private deadline-commit, cancellation/
+close, late-cleanup tracking, and finite-capacity seams; retain the existing clock,
+sleeper, exception-classifier, and retry orchestration seams. Add focused resilience
+tests and narrow adapter-backed pipeline tests. VS-02 response/body/status mapping is
+consumed, not reimplemented. Do not change Metric domain, pipeline, result builder,
+persistence, preflight policy, public settings, public port, public outcome/reason, or
+source-resolution behavior.
 
 **Contracts consumed/changed:** only existing `MetricSeriesAcquisitionFailure` and
 `MetricSeriesAcquisitionTimeout` classifications are produced, with fixed bounded safe
 diagnostics and optional safe status codes kept infrastructure-private where the existing
-port cannot represent them. No new public/domain outcome or reason is introduced.
+port cannot represent them. Capacity is provider-private and test-controllable only;
+neither its value nor saturation state is a public setting, port field, result field, or
+reason code. The sole permitted post-return provider bookkeeping is release of the held
+private capacity after cleanup terminates; late cleanup has no authority over outcomes,
+retries, requests, analytical/pipeline/Lens/runtime/persistence state, or observable
+provider result state.
 
-**Non-goals:** changing VS-02 request, authentication, body, envelope, annotation, sample,
-or status classification; retrying timeout or any VS-02 terminal rejection; jitter/
-Retry-After; proxy/redirect support; changing current/reference pipeline mapping;
-Observation-level deadlines or concurrency.
+**Non-goals:** changing VS-01 source lookup/unavailable semantics or VS-02 request,
+authentication, body, envelope, annotation, sample, or status classification; retrying
+timeout or any VS-02 terminal rejection; making capacity public/configurable; using a
+worker, queue, broker, or workflow engine; jitter/Retry-After; proxy/redirect support;
+changing current/reference pipeline mapping; Observation-level deadlines or concurrency.
 
 #### Acceptance evidence
 
 | ID | Approved source | Given | When | Then | Proof level | Planned verification |
 |---|---|---|---|---|---|---|
-| VS03-AC01 | Attempt/acquire hard deadlines | Hanging request, slow-progress body, retry waits, and cancellation-observable resources | Cross 15s attempt or 50s acquire deadline | Typed timeout wins, in-flight work is cancelled, response/client closes, and no work/wait continues after total deadline | deterministic clock + async service | injected deadline runner/clock/body ledgers |
+| VS03-AC01 | Observable attempt/acquire result deadlines | Hanging request, slow-progress body, retry waits, and cancellation-resistant response/client cleanup | Cross 15s attempt or 50s acquire deadline | The existing typed timeout is committed and returned at the deadline; cancellation/close is signalled, but cleanup is not awaited past the result boundary | deterministic clock + async service | injected monotonic deadline, return-time, cancellation, and close ledgers |
 | VS03-AC02 | Retry eligibility/count/identity | ConnectError and each VS-02 retry-eligible 429/500/502/504 result sequence succeeding on attempt 1, retry 1, retry 2, or never | Acquire | Exact attempt counts are 1/2/3/3 with waits 0.5/1.0, never a fourth; every attempt uses byte-identical logical request and same source/auth/configuration | parameterized HTTP boundary | complete attempt/form/auth/config snapshots and sleep ledger |
 | VS03-AC03 | Retry admission | For ConnectError and each retryable status, remaining budgets just below/at/above wait+15s | Admit next retry | Insufficient budget returns timeout with no wait/request; sufficient budget waits exactly and retries; three actually executed eligible failures exhaust as failure | deterministic unit + HTTP boundary | boundary clock vectors for retry 1 and retry 2 |
 | VS03-AC04 | HTTPX hierarchy | Timeout subclasses, ConnectError, remaining TransportError subclasses, and non-Transport request/client errors named by the spec | Classify each | Only ConnectError retries; timeout subclasses time out without retry; every other named class fails without retry; no generic transport retry branch exists | parameterized unit | hierarchy table including representative subclasses and exact counts |
-| VS03-AC05 | Hard-deadline precedence | Deadline completion races an HTTPX exception | Observe attempt/acquire boundary | Hard local timeout classification wins and resources close, regardless of simultaneously observed exception | deterministic concurrency unit | controlled race/cancellation seam |
+| VS03-AC05 | Hard-deadline precedence | Deadline completion races an HTTPX exception, successful result, or retry-eligible `ConnectError` | Observe attempt/acquire boundary | Hard local timeout commitment wins; no late result/exception can replace it, trigger retry, or start a request | deterministic concurrency unit | controlled completion/cancellation race seam and request/sleep ledgers |
 | VS03-AC06 | Terminal versus retry-eligible integration | Every VS-02 terminal attempt result and retry-eligible result | Run full acquisition orchestrator | Terminal outcomes perform no retry/sleep; only retry-eligible statuses enter admission; retry exhaustion becomes failure; no body/status/envelope policy is reclassified by the orchestrator | parameterized service | VS-02 variant-to-attempt-count/outcome matrix |
 | VS03-AC07 | Pipeline failure preservation | Real provider timeout and terminal/retry-exhausted failure on current versus one configured reference | Run existing pipeline | Current produces existing minimal failed Metric result; reference alone is omitted and yields accepted `reference_unavailable/reference_periods` partial while usable current survives | service | real-provider injected current/reference matrix with result equality |
+| VS03-AC08 | State-inert late cleanup | Timeout-committed request/body/client whose cleanup later yields a response, exception, or close completion | Release cleanup after `acquire()` has returned | The committed timeout and all current/reference pipeline outcomes remain unchanged; no retry, sleep, request, provider result/state transition, Lens/runtime transition, persistence action, or late diagnostic occurs | deterministic async service + pipeline integration | controlled cleanup gate, late-result/error injection, complete provider/pipeline/Lens/persistence/request ledgers |
+| VS03-AC09 | Finite active-plus-cleanup capacity | Private test capacity filled by active work and then by timeout-detached cleanup | Admit another valid transport-phase acquisition before and after cleanup termination | While full, the new acquisition returns the existing fixed-safe typed acquisition failure before client construction/request; each cleanup holds one slot until it finishes, then releases only that private slot and a later acquisition is admitted | deterministic async service + transport ledger | test-only private-capacity seam, cleanup gates, client-construction/request counters, outcome and slot-release ledger |
 
-**Counterexample guards:** retries mix ConnectError and all VS-02 retry-eligible status
-variants across attempts; admission tests use exact equality as fitting; race tests retain
-an exception so catch order alone cannot fake deadline precedence. The orchestrator matrix
-feeds VS-02 terminal body/envelope/warning/status results and asserts no sleep/additional
-request, preventing a broad "retry any failure" branch.
+**Counterexample guards:** a cancellation-resistant fake must remain blocked beyond the
+15/50-second result deadline, so a helper that awaits cleanup cannot pass VS03-AC01. A
+late success, `ConnectError`, and close exception are each released after timeout
+commitment; a late result that replaces timeout or starts a retry/request fails
+VS03-AC05/08. Capacity tests first fill slots with active acquisitions, then with
+post-timeout cleanup, use a fail-on-client-construction transport for the rejected call,
+and prove release only after cleanup termination; an unbounded detached-task design, a
+per-acquisition rather than shared capacity, or permanent capacity leakage cannot pass.
+Retries mix ConnectError and all VS-02 retry-eligible status variants across attempts;
+admission tests use exact equality as fitting. The orchestrator matrix feeds VS-02
+terminal body/envelope/warning/status results and asserts no sleep/additional request,
+preventing a broad "retry any failure" branch. Source-unavailable and invalid-target
+regressions remain VS-01-owned and must retain their typed zero-request behavior without
+transport-capacity admission.
 
-**Focused verification:** focused production provider and Metrics pipeline tests,
-including deterministic async cancellation/resource tests; targeted Ruff and format
-checks; `git diff --check`.
+**Focused verification:** `cd backend && uv run pytest
+tests/test_prometheus_metric_provider_resilience.py
+tests/test_prometheus_metric_provider.py
+tests/test_prometheus_metric_provider_configuration.py
+tests/test_metric_analysis_pipeline.py tests/test_prometheus_adapter.py -q`; deterministic
+async deadline/cleanup/capacity tests must use no live time or network; targeted Ruff and
+format checks; `git diff --check`.
 
-**Context pack:** accepted VS-02 handoff and its attempt-result decision matrix; approved
-deadline/retry/exception/current-reference scenarios; design decision on hard budgets,
-retry admission, exhaustion, and ordered exception precedence; exact-query logical-request
-identity; ADR-045, ADR-133-135, ADR-157; current typed provider outcomes and Metrics
-pipeline mappings; HTTPX 0.28 exception hierarchy as used by the installed dependency.
+**Context pack:** approved source revision `2180c7d14862187635de21d716f27f6b3b9ff93f`;
+accepted VS-01 and VS-02 handoffs and VS-02 attempt-result decision matrix; approved
+deadline/retry/exception/current-reference scenarios; design decision on observable
+deadlines, late cleanup, private capacity, retry admission, exhaustion, and ordered
+exception precedence; exact-query logical-request identity; ADR-045, ADR-133-135,
+ADR-157; current typed provider outcomes and Metrics pipeline mappings; current provider
+deadline helper and resilience tests; HTTPX 0.28 exception hierarchy as used by the
+installed dependency.
 
-**Handoff expectations:** VS03-AC01 through VS03-AC07 evidence; orchestration table linked
-to VS-02 attempt variants; attempts/waits/budget traces; identical-request snapshots;
-cancellation/cleanup and hard-deadline precedence proof; HTTPX taxonomy; final pipeline
-outcomes; deviations; focused results; shared-knowledge candidates.
+**Handoff expectations:** VS03-AC01 through VS03-AC09 evidence; exact observable
+deadline-return traces; cancellation/close and cleanup-gate ledgers; a late-success,
+late-error, and late-close-completion non-interference table; private-capacity
+admission/retention/release table; no-client/no-request evidence for capacity rejection;
+orchestration table linked to VS-02 attempt variants; attempts/waits/budget traces;
+identical-request snapshots; HTTPX taxonomy; final pipeline outcomes; confirmation that
+VS-01/VS-02 contracts and tests remain unchanged; deviations; focused results; shared-
+knowledge candidates.
 
 **Risk:** high-risk
 
-**Completion gate:** all VS03 evidence passes; 15/50-second hard deadlines cover body
-reads and waits; resources close on timeout/failure; retries occur only for ConnectError
+**Completion gate:** all VS03 evidence passes; the 15/50-second observable deadlines
+cover body reads and waits and return the committed timeout without awaiting
+cancellation-resistant cleanup; cancellation/close is signalled; late completion cannot
+change outcome, retry, request, provider result, analytical/pipeline/Lens/runtime/
+persistence state, or diagnostics; finite shared active-plus-cleanup capacity retains a
+slot through cleanup, fails saturation before transport with the existing fixed-safe
+typed failure, and releases only after termination; retries occur only for ConnectError
 or VS-02's retry-eligible statuses and only when admitted; every named exception and
-terminal-versus-retry orchestration branch is tested; VS-02 classification remains
-unchanged; logical request identity and secret-safe outcomes hold across attempts;
-current/reference semantics remain unchanged; the slice remains bounded to orchestration
-and its integration; focused checks pass; independent high-risk review returns
-`SLICE REVIEW PASS`; one atomic implementation commit and handoff exist, followed by
-Coordinator acceptance metadata.
+terminal-versus-retry orchestration branch is tested; VS-01 source behavior and VS-02
+classification remain unchanged; logical request identity and secret-safe outcomes hold
+across attempts; current/reference semantics remain unchanged; the slice remains bounded
+to infrastructure orchestration and integration; focused checks pass; independent
+high-risk review returns `SLICE REVIEW PASS`; one atomic implementation commit and
+handoff exist, followed by Coordinator acceptance metadata.
 
 ### VS-04 — Compatibility, documentation, and whole-change conformance
 
@@ -662,11 +703,16 @@ Coordinator acceptance metadata.
 as a whole that it remains an infrastructure-only injected capability: shared startup,
 capabilities, Observation creation, Metric preflight, fake-based pipeline tests, domain
 imports, public contracts, persistence, and dependency/schema surfaces remain unchanged.
+Document the approved observable-deadline rule: timeout return wins over
+cancellation-resistant cleanup, which is private, state-inert, capacity-bounded, and
+cannot alter the committed result.
 
 **OpenSpec coverage:** conformance rerun of every requirement/scenario already implemented
 and owned by VS-01 through VS-03; documentation and final audit tasks 5.1-5.4 only. Tasks
 4.5 and 4.6 must already be complete through their behavioral owning slices; VS-04 does
-not implement or add missing coverage for them.
+not implement or add missing coverage for them. Its cleanup/capacity conformance work
+consumes accepted VS-03 evidence; it does not redesign, implement, or add resilience
+tests.
 
 **Dependencies:** VS-03 accepted.
 
@@ -677,10 +723,11 @@ verification gates -> deployable, provider-neutral change with no new public exe
 surface.
 
 **Expected code impact:** `.env.example`, `docs/development-guide.md`, Coordinator-owned
-task checkboxes and mutable execution metadata only. No production code or test code may
-be added or changed in this slice. A discovered production/test gap stops VS-04 and
-routes a targeted correction through VS-01, VS-02, or VS-03 ownership and the required
-high-risk review before VS-04 restarts.
+task checkboxes, and mutable execution metadata only. No production code or test code may
+be added or changed in this slice. Public provider/interface-method docstrings must
+already have been added by their owning implementation slice and are audited here. A
+discovered production/test gap stops VS-04 and routes a targeted correction through
+VS-01, VS-02, or VS-03 ownership and the required high-risk review before VS-04 restarts.
 
 **Contracts consumed/changed:** documents and verifies existing contracts only. No
 production or test contract changes. Public production-provider class/interface-method
@@ -695,11 +742,11 @@ orchestration; archive/PR/push; fixing an unrelated pre-existing failure.
 
 | ID | Approved source | Given | When | Then | Proof level | Planned verification |
 |---|---|---|---|---|---|---|
-| VS04-AC01 | Documentation task | Placeholder source configuration and approved production policy | Read deployment/developer docs | HTTPS/loopback and exact prefix grammar, auth/exclusions, secrets, resolution/limits/warnings, attempts/deadlines/retries/classification, lookback/staleness, and production-only validation are concise and exact without real credentials | documentation review + secret scan | `.env.example`/guide audit against task 5.1 checklist |
+| VS04-AC01 | Documentation task | Placeholder source configuration and approved production policy | Read deployment/developer docs and public provider docstrings | HTTPS/loopback and exact prefix grammar, auth/exclusions, secrets, resolution/limits/warnings, attempts/retries/classification, and lookback/staleness are concise and exact; docs also state the 15s attempt/50s observable result deadlines, timeout commitment, cancellation/close signalling, state-inert late cleanup, finite private active-plus-cleanup capacity, pre-transport fixed-safe capacity failure, and no public capacity setting/field/reason without real credentials | documentation review + secret scan | `.env.example`/guide/docstring audit against the complete task 5.1 and clarified cleanup/capacity checklist |
 | VS04-AC02 | Shared behavior preservation | Production-valid and production-invalid shared sources | Run startup, capabilities, Observation create, and preflight suites | Existing outputs, 15-second/no-retry preflight, labels/warnings, and public error mapping remain compatible; production-invalid source affects only production acquire | API + service regression | focused existing and added tests with separate ledgers |
 | VS04-AC03 | Provider-neutral pipeline and persistence | Existing fake provider matrix plus completed VS-01 through VS-03 real-provider tests | Rerun Metric tests and inspect modules/artifacts without editing them | Zero/one/multiple references remain independent; fake tests use no transport; all result variants and rollback behavior round-trip unchanged; no raw transport/provider data persists | service + persistence + static audit | existing completed test suites and import scan |
 | VS04-AC04 | Scope/dependency/schema/API audit | Baseline-to-HEAD implementation diff and manifests/migrations/routes/contracts | Review change | No dependency, migration/schema, public API, Metric result/analysis, History, Agent, reference semantics, persistence, or Observation orchestration change exists | repository audit | diff/name-status, lock/manifest/migration/route/contract checks |
-| VS04-AC05 | Final verification | Completed sequential slices and clean execution state | Run focused tests, strict OpenSpec validation, and `make check` | Every command passes accurately; approved artifacts remain intact; task ownership is reconciled; worktree is clean after accepted commits/metadata | repository gate | recorded commands, baseline integrity audit, task/plan mutable-only audit |
+| VS04-AC05 | Final verification | Completed sequential slices, accepted VS03 late-cleanup/capacity evidence, and clean execution state | Run focused tests, strict OpenSpec validation, documentation audit, and `make check` | Every command passes accurately; the approved `2180c7d` clarification and replacement reviewed plan remain intact; task ownership is reconciled; the cleanup/capacity documentation matches accepted VS03 evidence; worktree is clean after accepted commits/metadata | repository gate | recorded commands, approved-source/plan integrity audit, task/plan mutable-only audit, and documentation-to-VS03-evidence trace |
 
 VS04-AC05 includes this separate final-completion assertion after the authorized
 transition audit above. It fail-closes unless the approved snapshot, current `tasks.md`,
@@ -800,7 +847,10 @@ git status --porcelain > "$final_gate_dir/status"
 test ! -s "$final_gate_dir/status"
 ```
 
-**Counterexample guards:** compatibility runs use a production-invalid source that shared
+**Counterexample guards:** documentation audit fails if it says cleanup completes before
+the timeout returns, permits a late result/retry/request/state mutation, exposes a
+capacity value as public configuration, or omits saturation's pre-transport fixed-safe
+failure. Compatibility runs use a production-invalid source that shared
 Settings still accepts; preflight tests record attempts and warnings so replacing it with
 the production policy fails; persistence tests include every Metric terminal result and
 rollback path; static scans cover both imports and serialized artifacts; secret scan uses
@@ -819,8 +869,9 @@ OpenSpec; all architecture/ADR sources listed above; `.agents/PROJECT_KNOWLEDGE.
 development guide/workflow; root Makefile and manifests; full baseline-to-HEAD diff;
 changed production/tests/docs and all focused existing regressions.
 
-**Handoff expectations:** VS04-AC01 through VS04-AC05 evidence; documentation checklist;
-public docstring audit; exact focused and full command results; regression counts;
+**Handoff expectations:** VS04-AC01 through VS04-AC05 evidence; documentation checklist
+including observable deadline/late-cleanup/private-capacity policy; public docstring
+audit; exact focused and full command results; regression counts;
 approved-SHA committed/index/worktree artifact/task/plan integrity results; explicit
 24/24 checked-task and all-owner acceptance result; dependency/schema/API/import/secret
 audits; final clean status; deviations and shared-knowledge candidates; explicit note
@@ -829,8 +880,9 @@ that the change remains unarchived pending whole-change verification/review.
 **Risk:** normal
 
 **Completion gate:** VS04 evidence and all earlier acceptance IDs regress green without
-production/test edits in VS-04;
-documentation and docstrings are complete and secret-safe; task ownership is reconciled;
+production/test behavior edits in VS-04; documentation and docstrings are complete,
+secret-safe, and match the approved observable-deadline/state-inert-cleanup/private-
+capacity policy and accepted VS03 evidence; task ownership is reconciled;
 focused tests, strict OpenSpec validation, baseline implementation diff, approved-artifact
 integrity, checkbox-only transition audit, exact 24/24 completion/ownership assertion,
 mutable-only plan audit, scope/dependency/schema/API/secret audits, clean status, and
@@ -842,7 +894,7 @@ review.
 
 ## Coverage matrix
 
-Coverage target: **8 requirements, 45 acceptance scenarios, and 24 tasks**. A requirement
+Coverage target: **8 requirements, 46 acceptance scenarios, and 24 tasks**. A requirement
 or task shared across slices completes only when every listed portion passes its owning
 gate.
 
@@ -854,9 +906,9 @@ gate.
 | Query the exact current or reference window through HTTP API v1 | VS-02, VS-03 | VS02-AC01/09; VS03-AC02 |
 | Map one float series into the provider-neutral sample contract | VS-02 | VS02-AC03/04 |
 | Fail closed on warning annotations or excessive Prometheus responses | VS-02 | VS02-AC05/06/08 |
-| Bound acquisition time and map failures through existing typed outcomes | VS-01, VS-02, VS-03 | VS01-AC01-04; VS02-AC05/07/08; VS03-AC01-07 |
-| Compose and verify the provider behind the existing Metric port | VS-01, VS-02, VS-03 | VS01-AC03/04/07; VS02-AC09; VS03-AC07 |
-| Acquire metric series only through the internal provider boundary | VS-01, VS-02, VS-03 | VS01-AC03/07; VS02-AC09; VS03-AC07 |
+| Bound acquisition time and map failures through existing typed outcomes | VS-01, VS-02, VS-03 | VS01-AC01-04; VS02-AC05/07/08; VS03-AC01-09 |
+| Compose and verify the provider behind the existing Metric port | VS-01, VS-02, VS-03 | VS01-AC03/04/07; VS02-AC09; VS03-AC07-09 |
+| Acquire metric series only through the internal provider boundary | VS-01, VS-02, VS-03 | VS01-AC03/07; VS02-AC09; VS03-AC07-09 |
 | Persist terminal Metric outcome atomically through the existing repository | VS-04 | VS04-AC03/04 |
 
 ### Scenario ownership
@@ -892,7 +944,8 @@ gate.
 | Exhaust all HTTP attempts | VS-03 | VS03-AC02/03 |
 | Map the HTTPX exception hierarchy deterministically | VS-03 | VS03-AC04/05 |
 | Do not retry a deterministic provider rejection | VS-03 | VS03-AC06 |
-| Map a proven timeout without extending the acquisition budget | VS-02, VS-03 | VS02-AC07; VS03-AC01/05 |
+| Map a proven timeout without extending the acquisition budget | VS-02, VS-03 | VS02-AC07; VS03-AC01/05/08 |
+| Bound post-timeout transport cleanup | VS-03 | VS03-AC01/05/08/09 |
 | Require a strict timeout or canceled error envelope | VS-02 | VS02-AC07 |
 | Reject an invalid error envelope as timeout proof | VS-02 | VS02-AC07 |
 | Do not infer timeout from a bare HTTP 503 | VS-02 | VS02-AC07/08 |
@@ -918,22 +971,22 @@ gate.
 | 1.3 Source-aware provider composer/resolver | VS-01 | VS01-AC01/02/07 |
 | 1.4 Lifespan/state port-only wiring | VS-01 | VS01-AC03/07 |
 | 2.1 Exact bounded range request and path grammar | VS-01, VS-02, VS-03 | VS01-AC01/02/04; VS02-AC01; VS03-AC02 |
-| 2.2 Bounded response streaming and cleanup | VS-02, VS-03 | VS02-AC05; VS03-AC01 |
+| 2.2 Bounded response streaming and cleanup | VS-02, VS-03 | VS02-AC05; VS03-AC01/08/09 |
 | 2.3 Strict success/matrix/sample mapping | VS-02 | VS02-AC03-05 |
 | 2.4 Preserve samples for deterministic preparation | VS-02 | VS02-AC03 |
 | 2.5 Warning/info and diagnostic leakage policy | VS-02 | VS02-AC06-08 |
-| 3.1 Hard attempt/acquire deadlines and cleanup | VS-03 | VS03-AC01/05 |
+| 3.1 Hard attempt/acquire deadlines and cleanup | VS-03 | VS03-AC01/05/08/09 |
 | 3.2 Exact retries and remaining-budget admission | VS-03 | VS03-AC02/03 |
 | 3.3 Ordered classification table and safe diagnostics | VS-02, VS-03 | VS02-AC05-08; VS03-AC01/04-06 |
-| 3.4 Retry/deadline/precedence tests | VS-03 | VS03-AC01-06 |
+| 3.4 Retry/deadline/precedence tests | VS-03 | VS03-AC01-09 |
 | 3.5 Exact acquisition-attempt tests | VS-01, VS-02, VS-03 | VS01-AC01-04; VS02-AC01; VS03-AC02/03 |
 | 4.1 Exact request-target tests | VS-01, VS-02 | VS01-AC02; VS02-AC01 |
 | 4.2 Deterministic-step boundary tests | VS-02 | VS02-AC01 |
 | 4.3 HTTP/auth/current-reference boundary tests | VS-02, VS-03 | VS02-AC01/02/09; VS03-AC02 |
 | 4.4 Response/error/annotation/body matrix | VS-02, VS-03 | VS02-AC03-08; VS03-AC04-06 |
-| 4.5 Injected Metrics pipeline tests | VS-01, VS-02, VS-03 | VS01-AC03/04; VS02-AC09; VS03-AC07 |
+| 4.5 Injected Metrics pipeline tests | VS-01, VS-02, VS-03 | VS01-AC03/04; VS02-AC09; VS03-AC07/08 |
 | 4.6 Startup/capabilities/create/preflight regressions | VS-01 | VS01-AC05/08 |
-| 5.1 Docstrings and developer/deployment documentation | VS-01, VS-02, VS-03, VS-04 | Per-slice gates; VS04-AC01 |
+| 5.1 Docstrings and developer/deployment documentation | VS-01, VS-02, VS-03, VS-04 | VS03 per-symbol docstrings; VS04-AC01 cleanup/capacity documentation audit |
 | 5.2 Scope/dependency/schema/semantics audit | VS-04 | VS04-AC03/04 |
 | 5.3 Focused provider/configuration/preflight/pipeline tests | VS-01, VS-02, VS-03, VS-04 | Every slice gate; VS04-AC02/03/05 |
 | 5.4 Strict OpenSpec validation and `make check` | VS-04 | VS04-AC05 |
@@ -1046,3 +1099,9 @@ acceptance obligations, proof-level changes, or redesign decisions here.
   exceeds the deadline. The approved sources impose neither a priority nor a bounded/
   cooperative transport-cleanup contract. Human source resolution is required before
   any further VS-03 correction, re-planning, re-review, or VS-04 dispatch.
+- Re-planning record (2026-09-04): the human-approved source clarification at
+  `2180c7d14862187635de21d716f27f6b3b9ff93f` gives the observable acquire deadline
+  priority over cancellation-resistant cleanup. This correction preserves the accepted
+  VS-01/VS-02 graph, commits, handoffs, and evidence, replaces only the frozen VS-03/
+  VS-04 plan content, and requires a new independently reviewed planning snapshot and
+  explicit approval before VS-03 resumes.
