@@ -63,22 +63,26 @@ Do not turn a possible future implementation defect into a plan defect when the 
 
 ## Bounded corrections and structural risk
 
-A plan may allow the Coordinator's bounded correction path without structural re-planning when approved behavior, architecture/ADRs, public and domain contracts, and slice ownership/dependencies remain unchanged; no schema, dependency, security, or lifecycle semantics change; and the correction stays narrow and reviewable. Do not flag the mere existence of this correction path as a governance defect.
+Approved/normative semantics are the behavior defined by the approved OpenSpec, accepted ADRs and architecture, and public/domain contracts. Implementation behavior is the behavior currently produced by the code.
 
-Remain strict, and require renewed approval for a structural plan change, when the plan materially affects:
+A plan may allow the Coordinator's bounded correction path without structural re-planning when approved/normative semantics and other approved structural boundaries remain unchanged and the correction stays narrow and reviewable. Do not reject that path merely because correcting a defect changes runtime behavior. Ask whether the correction redefines approved behavior or restores implementation conformance to it.
+
+If it restores conformance without crossing another approved boundary, the bounded correction is valid. Determine review depth separately from structural status; a bounded correction may still require high-risk review because of its actual implementation delta.
+
+Remain strict, and require renewed approval when a correction requires changing the approved/normative definition of:
 
 - approved OpenSpec behavior;
 - public or domain contracts;
 - architecture or ADR decisions;
 - persistence or migration semantics;
 - lifecycle or failure semantics;
-- concurrency, deadlines, or cancellation;
-- security or credentials;
+- concurrency, deadline, or cancellation semantics;
+- security or credential semantics;
 - external transport semantics;
 - dependencies; or
 - cross-slice ownership or dependency structure.
 
-These areas may legitimately require stronger mechanical verification and high-risk review, but the required evidence must still address a concrete risk rather than historical feature complexity.
+Changing defective implementation behavior to satisfy an unchanged definition does not meet these structural triggers. These areas may still require stronger mechanical verification and high-risk review, but the required evidence must address the actual correction risk rather than historical feature complexity.
 
 ## Git identity and traceability
 

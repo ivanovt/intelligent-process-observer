@@ -59,9 +59,11 @@ Avoid horizontal plans such as "all models -> all repositories -> all algorithms
 
 ## Proportional risk classification
 
-Classify every slice independently as `normal` or `high-risk` based on the semantics of that slice's actual delta. Use `high-risk` when the slice materially affects public or domain contracts, persistence or migrations, lifecycle or failure semantics, concurrency/deadline/cancellation, security or credentials, external transport semantics, dependencies, or architecture-sensitive integration.
+Classify every slice independently as `normal` or `high-risk` based on the expected semantics of that slice's implementation delta. Use `high-risk` when the slice is expected to materially affect public or domain contracts, persistence or migrations, lifecycle or failure semantics, concurrency/deadline/cancellation, security or credentials, external transport semantics, dependencies, or architecture-sensitive integration.
 
 Do not mark every slice high-risk because the overall feature contains one high-risk area. Preserve fresh independent review for the slices whose own deltas are genuinely high-risk.
+
+This planned classification is the initial expected review risk, not an irrevocable fact about the later implementation. Do not try to predict every implementation detail. Before acceptance, the Coordinator inspects the completed delta and increases review depth when the actual delta is high-risk. Fresh high-risk review is required when either the planned classification is `high-risk` or the actual completed delta is high-risk.
 
 ## Verification proportionality
 
@@ -73,9 +75,11 @@ If exact Git identity is needed, define one authoritative execution-anchor locat
 
 ## Bounded corrections after approval
 
-Bounded implementation corrections do not require a new slice graph when approved behavior, architecture/ADRs, public and domain contracts, slice ownership or dependency graph, schema, dependencies, and lifecycle/security/concurrency semantics all remain unchanged. They remain execution work inside a narrow approved boundary.
+Approved/normative semantics are the behavior defined by the approved OpenSpec, accepted ADRs and architecture, and public/domain contracts. Implementation behavior is the behavior currently produced by the code.
 
-Require structural re-planning, independent plan review, and renewed human approval when a correction materially changes any of those boundaries. Do not pre-create speculative correction slices.
+Bounded implementation corrections do not require a new slice graph when the approved/normative semantics and other approved structural boundaries remain unchanged. A bounded correction may materially change defective implementation behavior to restore conformance. For example, changing an implementation from one retry to the approved two retries is a behavioral bounded correction, not a change to the approved retry semantics.
+
+Require structural re-planning, independent plan review, and renewed human approval only when the correction requires changing the approved/normative definition itself or another approved boundary such as slice ownership/dependencies, schema/migrations, dependencies, or scope. Review the correction's implementation risk separately. Do not pre-create speculative correction slices.
 
 ## Final conformance
 

@@ -18,6 +18,8 @@ Read repository governance, the approved OpenSpec/ADRs/contracts relevant to the
 
 High-risk review applies because the current implementation delta is high-risk, not because the containing feature previously had high-risk work.
 
+The Coordinator may assign this review because the slice or correction had a planned/expected `high-risk` classification or because the Coordinator upward-reclassified a completed normal-planned slice or normal-expected correction after inspecting its actual delta. Apply the same review standards in either case. The Coordinator owns routing; do not search for or attempt to discover unreviewed normal assignments independently.
+
 Independently determine whether the assigned delta materially affects:
 
 - public or domain contracts;
@@ -30,7 +32,7 @@ Independently determine whether the assigned delta materially affects:
 - agent, framework, or tool-budget boundaries; or
 - architecture-sensitive integration.
 
-If the actual delta does not affect high-risk semantics, report the classification mismatch to the Coordinator; do not manufacture high-risk scope. Do not expand review merely because earlier slices were high-risk.
+If the actual delta does not affect high-risk semantics, report the classification mismatch to the Coordinator and complete the assigned review without manufacturing high-risk scope. Do not expand review merely because earlier slices were high-risk.
 
 ## Review scope
 
@@ -44,9 +46,11 @@ Otherwise, do not automatically re-review every accepted historical line of the 
 
 ## High-risk bounded corrections
 
-A Coordinator-authorized bounded correction may itself be high-risk. For example, an incorrectly implemented approved retry policy may be corrected without structural re-planning, then independently reviewed across the correction delta and affected retry/deadline semantics.
+Approved/normative semantics are the behavior defined by the approved OpenSpec, accepted ADRs and architecture, and public/domain contracts. Implementation behavior is the behavior currently produced by the code.
 
-Do not require structural re-planning solely because the correction delta is high-risk when approved behavior, contracts, architecture, ownership, and dependencies remain unchanged. If the correction reveals that any of those must change, report the structural or normative conflict and escalate to the Coordinator.
+A Coordinator-authorized bounded correction may itself be high-risk. It may materially change runtime retry, deadline, cancellation, security, or lifecycle behavior when that change restores conformance to unchanged approved/normative semantics and remains inside the approved structural boundary. Verify that tests prove the restored behavior across the affected high-risk boundary.
+
+Do not require structural re-planning solely because the correction changes implementation behavior or its delta is high-risk. If correct resolution requires changing the approved/normative semantic definition or another approved structural boundary, report the conflict and escalate to the Coordinator. Structural status and implementation-delta risk are independent.
 
 ## Review focus
 
