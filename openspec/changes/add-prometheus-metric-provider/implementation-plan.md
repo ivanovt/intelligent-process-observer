@@ -479,7 +479,7 @@ VS-01 -> VS-02 -> VS-03 -> VS-04
 | VS-01 | Source-safe transport-free walking skeleton through the existing Metric port | none | high-risk | COMPLETE | 1217266598aa5f20b902e9ae2edfe1da2ffed6c2 | `implementation/VS-01-handoff.md` |
 | VS-02 | Complete bounded single-attempt request, mapping, and status classification | VS-01 | high-risk | COMPLETE | `99bce08`, `d01a104`, `0d35520`, `ee4d364` | `implementation/VS-02-handoff.md` |
 | VS-03 | Observable deadline/result boundary, state-inert late cleanup, bounded capacity, deterministic retries, and terminal resilience integration | VS-02 | high-risk | COMPLETE | bf7cb3469119a8869625aa7f4125b21ed11c00d5 | `implementation/VS-03-handoff.md` |
-| VS-04 | Compatibility, operational documentation, and whole-change conformance | VS-03 | normal | PLANNED | - | - |
+| VS-04 | Compatibility, operational documentation, and whole-change conformance | VS-03 | normal | IN_PROGRESS | - | - |
 
 ## Slice definitions
 
@@ -1306,3 +1306,9 @@ acceptance obligations, proof-level changes, or redesign decisions here.
   PostgreSQL-gated skips, with targeted Ruff/format, diff, strict OpenSpec, and clean
   worktree checks passing. No shared-knowledge candidates. VS-03 is COMPLETE; VS-04 is
   READY for documentation/conformance-only execution.
+- VS-04 active assignment (2026-09-04): delegated to a fresh Slice Implementer after
+  accepted VS-03 review tip `bf7cb3469119a8869625aa7f4125b21ed11c00d5` and cumulative
+  production/test diff SHA-256
+  `0d77d5458efce23f5cc7f1c9b9544155c77a812771cd1821b4c8afea83c26f9c`.
+  The assignment is documentation/conformance-only; no production or test behavior edit
+  is authorized. A detected VS-01/VS-02 defect stops for a new approved re-plan.
