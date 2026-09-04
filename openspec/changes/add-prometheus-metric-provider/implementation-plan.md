@@ -1,6 +1,6 @@
 # Implementation Plan — add-prometheus-metric-provider
 
-**Status:** EXECUTION IN PROGRESS — C-02 BOUNDED CORRECTION
+**Status:** EXECUTION PAUSED — FINAL READY TO RERUN
 **Artifact type:** Non-normative execution plan
 **Approved OpenSpec change:** `add-prometheus-metric-provider`
 **Implementation branch:** `feature/add-prometheus-metric-provider`
@@ -90,7 +90,7 @@ FINAL. It is not a Prometheus implementation phase and adds no node to this grap
 | VS-02 | Bounded single-attempt acquisition and classification | VS-01 | accepted high-risk | COMPLETE | see anchor | accepted |
 | VS-03 | Deadlines, retries, state-inert cleanup, bounded capacity | VS-02 | accepted high-risk | COMPLETE | see anchor | accepted |
 | C-01 | Complete all remaining task 5.1 documentation conformance | VS-03 | normal | COMPLETE | `028a8d5` | handoff accepted; independent review `ACCEPT` |
-| FINAL | Standard final conformance and implementation review | C-01 | normal | BLOCKED | - | independent review `CHANGES REQUIRED`; see `implementation/FINAL-handoff.md` |
+| FINAL | Standard final conformance and implementation review | C-01 | normal | READY | - | C-02 accepted; FINAL not restarted |
 
 ## Accepted implementation summary
 
@@ -104,7 +104,7 @@ FINAL. It is not a Prometheus implementation phase and adds no node to this grap
 
 Detailed evidence remains in the handoffs and Git history.
 
-## Active bounded correction
+## Accepted bounded correction
 
 ### C-02 — Prometheus timing and capacity conformance
 
@@ -121,17 +121,17 @@ cleanup termination. Preserve the 50-second acquire deadline, timeout commitment
 late-result discard, retry admission/exhaustion, cancellation-resistant cleanup, typed
 outcomes, public/domain contracts, dependencies, and all unrelated behavior.
 
-**Expected affected paths:**
+**Actual affected paths:**
 
 - `backend/src/app/infrastructure/prometheus/composition.py`
 - `backend/tests/test_prometheus_metric_provider_resilience.py`
 - `openspec/changes/add-prometheus-metric-provider/implementation/C-02-handoff.md`
 
-**Acceptance gate:** one atomic implementation commit; focused Prometheus provider tests;
-applicable Ruff/static/format checks; strict OpenSpec validation; `git diff --check`;
-broader repository verification appropriate to the high-risk delta; Coordinator delta
-inspection; and fresh independent `ipo-high-risk-slice-reviewer` pass. This correction
-does not restart FINAL.
+**Acceptance:** implementation commit `42dbb50`; focused and broader verification passed;
+Coordinator delta inspection confirmed the correction remained within its approved
+boundary; fresh independent `ipo-high-risk-slice-reviewer` returned `SLICE REVIEW PASS`
+with no findings. The accepted handoff is `implementation/C-02-handoff.md`. FINAL was not
+restarted.
 
 ## Remaining execution
 
@@ -413,6 +413,6 @@ them.
   correction candidates: IR-001 for an implicit HTTPX timeout that undercuts the approved
   timing policy, and IR-002 for capacity ownership that does not cover retry waits. See
   `implementation/FINAL-handoff.md`; no structural/normative escalation was identified.
-- C-02: IN_PROGRESS. The Coordinator classified IR-001 and IR-002 as one bounded
-  behavioral correction with no normative or structural change and mandatory fresh
-  high-risk review before acceptance.
+- C-02: COMPLETE and accepted at `42dbb50`. Focused and repository-wide verification
+  passed; fresh independent high-risk review returned `SLICE REVIEW PASS` with no
+  findings. IR-001 and IR-002 are resolved, and FINAL is ready to rerun separately.
