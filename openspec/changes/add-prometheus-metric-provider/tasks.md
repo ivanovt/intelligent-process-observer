@@ -131,7 +131,7 @@
 
 ## 5. Documentation and final verification
 
-- [ ] 5.1 Add concise public class/interface-method docstrings and developer/deployment
+- [x] 5.1 Add concise public class/interface-method docstrings and developer/deployment
   documentation for placeholder-only source configuration, HTTPS/loopback policy,
   exact path-prefix grammar, production-only validation boundary, supported Bearer/Basic
   modes, secret-material terminology and external username suppression, excluded

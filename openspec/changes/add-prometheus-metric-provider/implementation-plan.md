@@ -1,6 +1,6 @@
 # Implementation Plan — add-prometheus-metric-provider
 
-**Status:** DRAFT — READY FOR FOCUSED INDEPENDENT REVIEW
+**Status:** EXECUTION STOPPED — FINAL BLOCKED BY REPOSITORY-STATE PREREQUISITE
 **Artifact type:** Non-normative execution plan
 **Approved OpenSpec change:** `add-prometheus-metric-provider`
 **Implementation branch:** `feature/add-prometheus-metric-provider`
@@ -89,8 +89,8 @@ FINAL. It is not a Prometheus implementation phase and adds no node to this grap
 | VS-01 | Source-safe transport-free provider composition | none | accepted high-risk | COMPLETE | see anchor | accepted |
 | VS-02 | Bounded single-attempt acquisition and classification | VS-01 | accepted high-risk | COMPLETE | see anchor | accepted |
 | VS-03 | Deadlines, retries, state-inert cleanup, bounded capacity | VS-02 | accepted high-risk | COMPLETE | see anchor | accepted |
-| C-01 | Complete all remaining task 5.1 documentation conformance | VS-03 | normal | PLANNED | - | `implementation/C-01-handoff.md` |
-| FINAL | Standard final conformance and implementation review | C-01 | normal | PLANNED | - | final review record |
+| C-01 | Complete all remaining task 5.1 documentation conformance | VS-03 | normal | COMPLETE | `028a8d5` | handoff accepted; independent review `ACCEPT` |
+| FINAL | Standard final conformance and implementation review | C-01 | normal | BLOCKED | - | clean synchronized review base prerequisite unsatisfied |
 
 ## Accepted implementation summary
 
@@ -373,5 +373,12 @@ them.
 - VS-01, VS-02, VS-03: complete, independently reviewed, accepted, and frozen.
 - Historical final conformance: stopped correctly on the task 5.1 documentation gap and
   recorded the two missing provider-port docstrings; no correction was made there.
-- C-01: planned; must not start before this simplified plan is reviewed and approved.
-- FINAL: planned; starts only after C-01 acceptance.
+- C-01: complete at `028a8d5`; focused verification passed, the compact handoff is
+  accepted, independent correction review returned `ACCEPT` with no findings, and no
+  shared-knowledge candidate was proposed.
+- FINAL: not started. Repository inspection after C-01 found that the six reusable
+  `.agents/skills/ipo-*` workflow changes listed in `Prometheus feature-delta scope`
+  exist only on `feature/add-prometheus-metric-provider` and remain in its delta against
+  `main`; the feature branch therefore does not yet have the required synchronized clean
+  Prometheus review base. Stop pending explicit repository/base synchronization outside
+  C-01; do not resolve this prerequisite implicitly inside FINAL.
