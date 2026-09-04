@@ -1,1838 +1,248 @@
 # Implementation Plan — add-prometheus-metric-provider
 
-**Status:** DRAFT — READY FOR INDEPENDENT SLICE-PLAN REVIEW
+**Status:** DRAFT — READY FOR FOCUSED INDEPENDENT REVIEW
 **Artifact type:** Non-normative execution plan
 **Approved OpenSpec change:** `add-prometheus-metric-provider`
 **Implementation branch:** `feature/add-prometheus-metric-provider`
-**Human-approved planning SHA:** `b24e82bdf80893a93e313836666fdb1e4840ef37` (superseded for remaining execution)
-**Human-approved deadline/cleanup source revision:** `2180c7d14862187635de21d716f27f6b3b9ff93f`
-**Accepted VS-02 execution baseline SHA:** `81270d9537329eea0477254094ef9fcdce6f17e6`
-**Accepted VS-03 review tip:** `bf7cb3469119a8869625aa7f4125b21ed11c00d5`
-**Accepted VS-03 production/test diff SHA-256:** `0d77d5458efce23f5cc7f1c9b9544155c77a812771cd1821b4c8afea83c26f9c`
-**Accepted VS-03 execution baseline SHA:** `7baae2b4d3e05c55ba2ae8d5a82f2cc03f630a9a`
-**Replacement planning-review SHA:** pending
 
-## Approval state
+## Authority and proportional governance
 
-VS-01, VS-02, and VS-03 are independently reviewed, accepted, and frozen execution
-history. Their code, tests, handoffs, evidence, task state, and acceptance metadata remain
-unchanged. The earlier documentation/conformance-only VS-04 correctly stopped when it
-found missing public-interface docstrings and made no correction. This replacement plan
-authorizes only a new narrow VS-04 documentation-conformance correction followed by a
-separate non-corrective VS-05 final conformance slice. The replacement planning snapshot
-must be committed, independently reviewed at that exact SHA, and explicitly human-approved
-at that same SHA before the new VS-04 may begin.
+This plan describes execution; it does not redefine behavior. The approved OpenSpec,
+accepted ADRs, normative architecture/contracts, repository governance, and accepted
+implementation remain authoritative.
 
-## Authority and constraints
+Verification rigor is proportional to change risk. A narrow non-behavioral documentation
+correction does not require the same re-planning and proof machinery as a change to runtime
+behavior, contracts, persistence, dependencies, lifecycle semantics, or architecture.
 
-This file describes how the approved change can be implemented. It does not redefine
-the approved behavior. Accepted ADRs, normative architecture/contracts, and the approved
-OpenSpec remain authoritative.
+Structural re-planning is required only when remaining work changes approved normative
+behavior, slice ownership/dependencies, public contracts, persistence/lifecycle semantics,
+architecture, dependencies, or material implementation scope.
 
-Approved change sources:
+Relevant sources are the complete approved change, `openspec/specs/metrics-analysis-pipeline/spec.md`,
+the architecture references named in the approved proposal/design, root `AGENTS.md`, the
+development guide/workflow, and `.agents/PROJECT_KNOWLEDGE.md` as advisory knowledge.
 
-- `openspec/changes/add-prometheus-metric-provider/.openspec.yaml`
-- `openspec/changes/add-prometheus-metric-provider/proposal.md`
-- `openspec/changes/add-prometheus-metric-provider/design.md`
-- `openspec/changes/add-prometheus-metric-provider/specs/prometheus-metric-provider/spec.md`
-- `openspec/changes/add-prometheus-metric-provider/specs/metrics-analysis-pipeline/spec.md`
-- `openspec/changes/add-prometheus-metric-provider/tasks.md`
-- approved deadline/cleanup clarification commit
-  `2180c7d14862187635de21d716f27f6b3b9ff93f`
+## Execution anchors
 
-Architecture and accepted-contract sources:
+These are the only retained Git anchors. They identify accepted recovery points; Git and
+the handoffs/review records contain the detailed history.
 
-- `docs/architecture/README.md`
-- `docs/architecture/01_observation_lens_concept.md`, especially the one-metric Lens
-  boundary and distinct current, configured-reference, and History perspectives
-- `docs/architecture/02_architecture_principles_and_runtime.md`, especially the
-  deterministic Metrics pipeline and common terminal/usable semantics
-- `docs/architecture/03_ADR_log.md`: ADR-003, ADR-045 through ADR-048, ADR-133 through
-  ADR-135, and ADR-157
-- `docs/architecture/04_pipeline_and_agent_concepts.md`, especially Metrics stages and
-  the agent's immutable observational scope
-- `docs/architecture/06_runtime_contracts_and_execution_semantics.md`, especially typed
-  failure, partial, and usability boundaries
-- `docs/architecture/10_open_decisions_and_backlog.md`, treating Open/Deferred entries
-  only as boundaries and recognizing that this approved change resolves only the listed
-  production Prometheus transport details
-- `openspec/specs/metrics-analysis-pipeline/spec.md`
-- `docs/development-guide.md` and `docs/development-workflow.md`
+| Accepted phase | Anchor | Handoff | Purpose |
+|---|---|---|---|
+| VS-01 | `fc6558d06133ea82903e2e1241a4cf781f86d45c` | `implementation/VS-01-handoff.md` | Accepted source-safe composition |
+| VS-02 | `81270d9537329eea0477254094ef9fcdce6f17e6` | `implementation/VS-02-handoff.md` | Accepted bounded single-attempt acquisition |
+| VS-03 | `7baae2b4d3e05c55ba2ae8d5a82f2cc03f630a9a` | `implementation/VS-03-handoff.md` | Accepted execution state and correction baseline |
 
-Advisory source:
+VS-01, VS-02, and VS-03 are independently reviewed, accepted, and frozen. This plan does
+not reopen, rewrite, or re-execute them.
 
-- `.agents/PROJECT_KNOWLEDGE.md` (currently contains no validated entries)
-
-Repository constraints:
-
-- Implement only a production Prometheus provider behind the existing
-  `MetricSeriesProvider` port for the existing `adapter_type="prometheus"` scope.
-- Keep `app.metrics` provider-neutral. Source lookup, production-only target validation,
-  authentication, HTTPX transport, response decoding, deadlines, retries, and safe
-  diagnostics remain under `app.infrastructure.prometheus` and application composition.
-- Preserve global `Settings` and shared `PROMETHEUS_SOURCES` parsing. A source rejected
-  only by production acquisition must not prevent startup or alter capabilities,
-  Observation creation, or Metric preflight.
-- Preserve the opaque PromQL and exact pipeline-supplied window. Do not shift, rewrite,
-  aggregate, infer cadence, add `offset`/`lookback_delta`, or alter current/reference
-  attribution.
-- Reuse the existing `MetricProviderScope`, `MetricAnalysisWindow`, `MetricSample`, typed
-  acquisition outcomes, Metrics pipeline preparation, analysis, result, History,
-  persistence, and lifecycle semantics unchanged.
-- Add no dependency. The approved implementation uses the existing `httpx`, Pydantic,
-  `pydantic-settings`, Python, and `asyncio` stack.
-- Add no public API, database schema/migration, persistence model, frontend, LensRun or
-  ObservationRun creation path, Observation orchestration, scheduler, Metrics Agent/tool
-  behavior, Metric result contract, History behavior, or new public reason code.
-- Never require a live Prometheus endpoint or repository credential. Verification uses
-  injected/mock transport, monotonic time, sleep, and cancellation-observable bodies.
-- Do not modify approved OpenSpec or `docs/architecture/`. Do not archive, push, open a
-  pull request, or merge during execution of this plan.
-
-At the exact replacement planning commit SHA approved after independent review, the
-approved OpenSpec content and plan structure become the frozen normative planning
-baseline. It is not the implementation-diff baseline. The corrective implementation
-baseline is the accepted VS-03 execution tip recorded above. Acceptance sources and
-GIVEN/WHEN/THEN assertions provide normative traceability; task numbers are supplementary
-traceability. A task checkbox becomes complete only after every owning slice portion has
-passed its gate.
-
-Execution uses `PLANNED -> READY -> IN_PROGRESS -> COMPLETE`; `BLOCKED` records a defined
-stop/escalation. Default execution is sequential. Only the Coordinator may change
-execution status, accepted commit SHAs, handoff paths, verification/review results,
-deviation dispositions, and execution notes after approval.
-
-## Planning-review snapshot, approval, and pre-execution readiness
-
-### Establish the immutable review and approval anchor
-
-Before the independent review and human approval of this corrected plan:
-
-1. Confirm the current branch is `feature/add-prometheus-metric-provider` and inspect the
-   complete index/worktree. Preserve unrelated roadmap files outside this feature
-   execution boundary; exclude every roadmap sidecar, `Zone.Identifier`, and other
-   unrelated artifact from both the planning commit and later feature commits.
-2. The original full planning snapshot is historical execution evidence. For this
-   correction, verify that the parent tree contains the approved source revision
-   `2180c7d14862187635de21d716f27f6b3b9ff93f`, then stage exactly the corrected plan
-   and no other path:
-
-   ```text
-   openspec/changes/add-prometheus-metric-provider/implementation-plan.md
-   ```
-
-3. Audit the staged names, commit the snapshot on the feature branch, and resolve the
-   immutable planning-review commit SHA:
-
-   ```bash
-   set -euo pipefail
-   change_dir=openspec/changes/add-prometheus-metric-provider
-   snapshot_audit_dir=$(mktemp -d)
-   current_branch=$(git branch --show-current)
-   test "$current_branch" = "feature/add-prometheus-metric-provider"
-   git merge-base --is-ancestor \
-     2180c7d14862187635de21d716f27f6b3b9ff93f HEAD
-   printf '%s\n' "$change_dir/implementation-plan.md" \
-     > "$snapshot_audit_dir/expected"
-   git diff --cached --name-only | LC_ALL=C sort > "$snapshot_audit_dir/actual"
-   if ! diff -u "$snapshot_audit_dir/expected" "$snapshot_audit_dir/actual"; then
-     exit 1
-   fi
-   git diff --quiet
-   git commit -m "docs: replan Prometheus docstring conformance"
-   planning_review_sha=$(git rev-parse HEAD)
-   test -n "$planning_review_sha"
-   git status --porcelain > "$snapshot_audit_dir/status"
-   test ! -s "$snapshot_audit_dir/status"
-   printf '%s\n' "$planning_review_sha"
-   ```
-
-4. The independent slice-plan reviewer records that exact SHA in its review report and
-   reviews the tree at that SHA, not mutable worktree content. Human approval must
-   explicitly identify the same reviewed SHA.
-5. If the approved source revision, task text/structure, or any frozen part of this plan
-   changes after review, the review and approval are invalid. Create a new planning
-   snapshot commit, repeat independent review against the new SHA, and obtain renewed
-   human approval of that exact SHA.
-
-After human approval, the Coordinator may record the approved SHA only in the mutable
-`Human-approved planning SHA` field above and in `Execution notes`. That metadata update
-does not create a new planning baseline and may not alter any frozen content.
-
-### Reproducible approved-artifact integrity audit
-
-Set the exact human-approved SHA; never infer it from `HEAD`, a branch name, or a merge
-base:
-
-```bash
-set -euo pipefail
-approved_sha="${APPROVED_PLANNING_SHA:?set APPROVED_PLANNING_SHA}"
-git cat-file -e "$approved_sha^{commit}"
-change_dir=openspec/changes/add-prometheus-metric-provider
-immutable_paths=(
-  "$change_dir/.openspec.yaml"
-  "$change_dir/proposal.md"
-  "$change_dir/design.md"
-  "$change_dir/specs"
-)
-```
-
-Run every audit below both immediately before new VS-04 delegation and during VS-05 final
-conformance. These are approved-artifact integrity checks, not implementation-diff checks.
-The fenced blocks are consecutive fragments of one Bash audit script, split only for
-readability: concatenate and execute them in order in one process. Each fragment repeats
-`set -euo pipefail` defensively. Do not continue with a later fragment after any non-zero
-exit. The recorded gate result is the exit status of the one complete script, so no later
-successful command can mask an earlier failure.
-
-The immutable OpenSpec paths must be byte-for-byte identical in committed `HEAD`, index,
-and worktree:
-
-```bash
-set -euo pipefail
-if ! git diff --exit-code "$approved_sha" HEAD -- "${immutable_paths[@]}"; then exit 1; fi
-if ! git diff --cached --exit-code "$approved_sha" -- "${immutable_paths[@]}"; then
-  exit 1
-fi
-if ! git diff --exit-code "$approved_sha" -- "${immutable_paths[@]}"; then exit 1; fi
-```
-
-Audit `tasks.md` separately against committed `HEAD`, index, and worktree. Normalization
-must prove identical wording, numbering, ordering, structure, whitespace, task count, and
-absence of additions/removals; the raw comparison permits only forward `[ ] -> [x]`
-transitions. Each observed transition is then reconciled mechanically to every owning
-slice's accepted commit and handoff recorded in execution metadata.
-
-```bash
-set -euo pipefail
-audit_dir=$(mktemp -d)
-task_path="$change_dir/tasks.md"
-git show "$approved_sha:$task_path" > "$audit_dir/tasks.baseline"
-git show "HEAD:$task_path" > "$audit_dir/tasks.head"
-git show ":$task_path" > "$audit_dir/tasks.index"
-cp "$task_path" "$audit_dir/tasks.worktree"
-
-for current in head index worktree; do
-  sed -E 's/^- \[( |x)\] /- [STATE] /' "$audit_dir/tasks.baseline" \
-    > "$audit_dir/tasks.baseline.normalized"
-  sed -E 's/^- \[( |x)\] /- [STATE] /' "$audit_dir/tasks.$current" \
-    > "$audit_dir/tasks.$current.normalized"
-  if ! diff -u "$audit_dir/tasks.baseline.normalized" \
-    "$audit_dir/tasks.$current.normalized"; then
-    exit 1
-  fi
-  if ! awk '
-    FILENAME == ARGV[1] { baseline[FNR] = $0; baseline_count = FNR; next }
-    FILENAME == ARGV[2] {
-      current_count = FNR
-      if ($0 == baseline[FNR]) next
-      expected = baseline[FNR]
-      changed = sub(/^- \[ \] /, "- [x] ", expected)
-      if (changed != 1 || $0 != expected) invalid = 1
-    }
-    END {
-      if (baseline_count != current_count) invalid = 1
-      exit invalid
-    }
-  ' "$audit_dir/tasks.baseline" "$audit_dir/tasks.$current"; then
-    exit 1
-  fi
-done
-```
-
-Mechanically reconcile every checked task in the current worktree with the frozen task
-ownership table and execution overview. Every owning slice must be `COMPLETE` and must
-have non-placeholder accepted commit and handoff fields:
-
-```bash
-set -euo pipefail
-python3 - "$task_path" "$change_dir/implementation-plan.md" <<'PY'
-import re
-import sys
-from pathlib import Path
-
-tasks_text = Path(sys.argv[1]).read_text()
-plan_text = Path(sys.argv[2]).read_text()
-
-checked = set(re.findall(r"^- \[x\] (\d+\.\d+)\b", tasks_text, re.MULTILINE))
-overview = {}
-in_overview = False
-in_tasks = False
-owners = {}
-for line in plan_text.splitlines():
-    if line == "## Execution overview":
-        in_overview = True
-        continue
-    if in_overview and line.startswith("## "):
-        in_overview = False
-    if line == "### Task ownership":
-        in_tasks = True
-        continue
-    if in_tasks and line.startswith("## "):
-        in_tasks = False
-    if in_overview and re.match(r"^\| VS-\d\d ", line):
-        cells = [cell.strip() for cell in line.strip("|").split("|")]
-        overview[cells[0]] = (cells[4], cells[5], cells[6])
-    if in_tasks and re.match(r"^\| \d+\.\d+ ", line):
-        cells = [cell.strip() for cell in line.strip("|").split("|")]
-        task_id = cells[0].split(maxsplit=1)[0]
-        owners[task_id] = set(re.findall(r"VS-\d\d", cells[1]))
-
-for task_id in sorted(checked):
-    if task_id not in owners or not owners[task_id]:
-        raise SystemExit(f"checked task {task_id} has no explicit owning slice")
-    for owner in owners[task_id]:
-        status, commit, handoff = overview.get(owner, ("", "-", "-"))
-        if status != "COMPLETE" or commit == "-" or handoff == "-":
-            raise SystemExit(f"checked task {task_id} lacks accepted metadata for {owner}")
-PY
-```
-
-Audit `implementation-plan.md` against committed `HEAD`, index, and worktree with a
-structured phase-specific projection. The exact mutable fields are:
-
-- top-level `Status` and `Human-approved planning SHA`;
-- VS-04 execution-overview `Status`, `Commit`, and `Handoff` cells;
-- during VS-05 only, the same three VS-05 cells;
-- append-only, one-line, LF-terminated execution-note records matching exactly one schema
-  below. Continuation lines and unstructured prose are forbidden.
-
-`Status` is exactly one of `DRAFT|REVIEWED|HUMAN_APPROVED|IN_PROGRESS|COMPLETE|BLOCKED`.
-`Human-approved planning SHA` must be exactly the externally supplied 40-character
-lowercase `APPROVED_PLANNING_SHA`. Mutable overview status is
-`PLANNED|READY|IN_PROGRESS|COMPLETE|BLOCKED`; commit is `-` or an ordered comma-separated
-list of full lowercase SHAs; handoff is `-` or the exact slice handoff path.
-
-Canonical event schemas, including required field order, are:
+## Remaining graph
 
 ```text
-- VS-04 corrective assignment (YYYY-MM-DD): status=IN_PROGRESS; baseline=<fixed accepted VS03 execution SHA>; assignee=<bounded path-safe slug>
-- VS-04 corrective verification (YYYY-MM-DD): result=PASS|FAIL; tip=<full SHA>; handoff=implementation/VS-04-docstring-correction-handoff.md
-- VS-04 corrective acceptance (YYYY-MM-DD): status=COMPLETE; commit=<full SHA>; handoff=implementation/VS-04-docstring-correction-handoff.md; verification=PASS
-- VS-04 corrective stop/escalation (YYYY-MM-DD): status=BLOCKED; reason_code=<bounded snake-case token>; commit=none|<full SHA>; handoff=none|implementation/VS-04-docstring-correction-handoff.md
-- VS-05 active assignment (YYYY-MM-DD): status=IN_PROGRESS; baseline=<full accepted VS04 corrective SHA>; assignee=<bounded path-safe slug>
-- VS-05 verification (YYYY-MM-DD): result=PASS|FAIL; tip=<full SHA>; make_check=PASS|FAIL; openspec=PASS|FAIL; task_audit=PASS|FAIL
-- VS-05 final implementation review (YYYY-MM-DD): result=PASS|CHANGES_REQUIRED; tip=<full SHA>; blocker=<nonnegative integer>; high=<nonnegative integer>; medium=<nonnegative integer>; report=<bounded path-safe slug>
-- VS-05 acceptance (YYYY-MM-DD): status=COMPLETE; commit=<full SHA>; handoff=implementation/VS-05-handoff.md; review=PASS
-- VS-05 stop/escalation (YYYY-MM-DD): status=BLOCKED; reason_code=<bounded snake-case token>; commit=none|<full SHA>; handoff=none|implementation/VS-05-handoff.md
+VS-01 accepted/frozen
+  -> VS-02 accepted/frozen
+  -> VS-03 accepted/frozen
+  -> C-01 bounded non-behavioral docstring correction
+  -> FINAL non-corrective conformance
 ```
 
-All execution notes already present in the approved planning snapshot are an immutable
-byte-for-byte prefix. The audit does not ignore the section. It rejects edits, deletion,
-insertion among prior notes, new headings/tables/free text, unsupported event names,
-unknown/duplicate/reordered fields, continuation text, duplicate/out-of-order events,
-multiple terminal events, and any mutation to VS-01/VS-02/VS-03 metadata. VS-04
-acceptance requires a passing verification record. VS-05 acceptance requires passing
-verification and review with `blocker=0; high=0; medium=0`. Graph, goals,
-ownership, boundaries, risks, coverage, verification, context packs, and gates remain
-byte-for-byte frozen.
-
-```bash
-set -euo pipefail
-plan_path="$change_dir/implementation-plan.md"
-plan_audit_phase="${PLAN_AUDIT_PHASE:?set PLAN_AUDIT_PHASE to vs04 or vs05}"
-accepted_corrective_sha="${ACCEPTED_VS04_CORRECTIVE_TIP:-}"
-git show "$approved_sha:$plan_path" > "$audit_dir/plan.baseline"
-git show "HEAD:$plan_path" > "$audit_dir/plan.head"
-git show ":$plan_path" > "$audit_dir/plan.index"
-cp "$plan_path" "$audit_dir/plan.worktree"
-
-for current in head index worktree; do
-  python3 - "$audit_dir/plan.baseline" "$audit_dir/plan.$current" \
-    "$plan_audit_phase" "$approved_sha" "$accepted_corrective_sha" <<'PY'
-import re
-import sys
-from datetime import date
-from pathlib import Path
-
-baseline = Path(sys.argv[1]).read_bytes()
-current = Path(sys.argv[2]).read_bytes()
-phase = sys.argv[3]
-approved_sha = sys.argv[4]
-accepted_corrective_sha = sys.argv[5]
-if phase not in {"vs04", "vs05"}:
-    raise SystemExit("PLAN_AUDIT_PHASE must be vs04 or vs05")
-if re.fullmatch(r"[0-9a-f]{40}", approved_sha) is None:
-    raise SystemExit("approved planning SHA must be an exact lowercase full SHA")
-if phase == "vs05" and re.fullmatch(r"[0-9a-f]{40}", accepted_corrective_sha) is None:
-    raise SystemExit("VS-05 audit requires the exact accepted VS-04 corrective SHA")
-
-marker = b"## Execution notes\n"
-if baseline.count(marker) != 1 or current.count(marker) != 1:
-    raise SystemExit("implementation plan lacks one exact LF Execution notes marker")
-baseline_prefix, baseline_notes = baseline.split(marker, maxsplit=1)
-current_prefix, current_notes = current.split(marker, maxsplit=1)
-
-mutable_slices = {"VS-04"} if phase == "vs04" else {"VS-04", "VS-05"}
-allowed_status = {
-    b"DRAFT",
-    b"REVIEWED",
-    b"HUMAN_APPROVED",
-    b"IN_PROGRESS",
-    b"COMPLETE",
-    b"BLOCKED",
-}
-
-
-def projected_prefix(raw: bytes, *, candidate: bool) -> bytes:
-    result: list[bytes] = []
-    for line in raw.splitlines(keepends=True):
-        if line.startswith(b"**Status:**"):
-            if candidate:
-                match = re.fullmatch(rb"\*\*Status:\*\* ([A-Z_]+)\n", line)
-                if match is None or match.group(1) not in allowed_status:
-                    raise SystemExit("invalid top-level Status value or serialization")
-            result.append(b"**Status:** [MUTABLE]\n")
-            continue
-        if line.startswith(b"**Human-approved planning SHA:**"):
-            if candidate:
-                expected = (
-                    b"**Human-approved planning SHA:** `"
-                    + approved_sha.encode("ascii")
-                    + b"`\n"
-                )
-                if line != expected:
-                    raise SystemExit("Human-approved planning SHA is not the approved SHA")
-            result.append(b"**Human-approved planning SHA:** [MUTABLE]\n")
-            continue
-        if re.match(rb"^\| VS-\d\d ", line):
-            if not line.endswith(b"\n") or b"\r" in line:
-                raise SystemExit("execution-overview row must use canonical LF")
-            cells = [cell.strip() for cell in line[:-1].strip(b"|").split(b"|")]
-            if len(cells) != 7:
-                raise SystemExit("malformed execution-overview row")
-            slice_id = cells[0].decode("ascii")
-            if slice_id in mutable_slices:
-                if candidate and cells[4] not in {
-                    b"PLANNED", b"READY", b"IN_PROGRESS", b"COMPLETE", b"BLOCKED"
-                }:
-                    raise SystemExit(f"invalid execution status for {slice_id}")
-                commit_value = cells[5].replace(b"`", b"")
-                if candidate and commit_value != b"-" and re.fullmatch(
-                    rb"[0-9a-f]{40}(?:, [0-9a-f]{40})*", commit_value
-                ) is None:
-                    raise SystemExit(f"invalid commit metadata for {slice_id}")
-                expected_handoff = {
-                    "VS-04": b"`implementation/VS-04-docstring-correction-handoff.md`",
-                    "VS-05": b"`implementation/VS-05-handoff.md`",
-                }[slice_id]
-                if candidate and cells[6] not in {b"-", expected_handoff}:
-                    raise SystemExit(f"invalid handoff metadata for {slice_id}")
-                cells[4:] = [b"[MUTABLE]", b"[MUTABLE]", b"[MUTABLE]"]
-                line = b"| " + b" | ".join(cells) + b" |\n"
-        result.append(line)
-    return b"".join(result)
-
-
-if projected_prefix(baseline_prefix, candidate=False) != projected_prefix(
-    current_prefix, candidate=True
-):
-    raise SystemExit("non-allowlisted implementation-plan content changed")
-
-if not current_notes.startswith(baseline_notes):
-    raise SystemExit("approved execution-note history changed")
-appended = current_notes[len(baseline_notes):]
-
-sha = rb"[0-9a-f]{40}"
-slug = rb"[A-Za-z0-9][A-Za-z0-9._/-]{0,127}"
-reason = rb"[a-z][a-z0-9_]{1,63}"
-schemas = {
-    "VS-04 corrective assignment": (
-        ["status", "baseline", "assignee"],
-        [rb"IN_PROGRESS", rb"7baae2b4d3e05c55ba2ae8d5a82f2cc03f630a9a", slug],
-    ),
-    "VS-04 corrective verification": (
-        ["result", "tip", "handoff"],
-        [rb"PASS|FAIL", sha,
-         rb"implementation/VS-04-docstring-correction-handoff\.md"],
-    ),
-    "VS-04 corrective acceptance": (
-        ["status", "commit", "handoff", "verification"],
-        [rb"COMPLETE", sha,
-         rb"implementation/VS-04-docstring-correction-handoff\.md", rb"PASS"],
-    ),
-    "VS-04 corrective stop/escalation": (
-        ["status", "reason_code", "commit", "handoff"],
-        [rb"BLOCKED", reason, rb"none|" + sha,
-         rb"none|implementation/VS-04-docstring-correction-handoff\.md"],
-    ),
-    "VS-05 active assignment": (
-        ["status", "baseline", "assignee"],
-        [rb"IN_PROGRESS", accepted_corrective_sha.encode("ascii"), slug],
-    ),
-    "VS-05 verification": (
-        ["result", "tip", "make_check", "openspec", "task_audit"],
-        [rb"PASS|FAIL", sha, rb"PASS|FAIL", rb"PASS|FAIL", rb"PASS|FAIL"],
-    ),
-    "VS-05 final implementation review": (
-        ["result", "tip", "blocker", "high", "medium", "report"],
-        [rb"PASS|CHANGES_REQUIRED", sha, rb"[0-9]+", rb"[0-9]+", rb"[0-9]+", slug],
-    ),
-    "VS-05 acceptance": (
-        ["status", "commit", "handoff", "review"],
-        [rb"COMPLETE", sha, rb"implementation/VS-05-handoff\.md", rb"PASS"],
-    ),
-    "VS-05 stop/escalation": (
-        ["status", "reason_code", "commit", "handoff"],
-        [rb"BLOCKED", reason, rb"none|" + sha,
-         rb"none|implementation/VS-05-handoff\.md"],
-    ),
-}
-allowed_events = list(schemas)[:4] if phase == "vs04" else list(schemas)
-event_rank = {event: index for index, event in enumerate(allowed_events)}
-seen: set[str] = set()
-terminals: set[str] = set()
-records: dict[str, bytes] = {}
-last_rank = -1
-record_pattern = re.compile(
-    rb"^- (?P<event>[^\r\n]+) \((?P<date>\d{4}-\d{2}-\d{2})\): "
-    rb"(?P<payload>[^\r\n]+)\n$"
-)
-for line in appended.splitlines(keepends=True):
-    match = record_pattern.fullmatch(line)
-    if match is None:
-        raise SystemExit("execution metadata must be canonical one-line LF records")
-    try:
-        date.fromisoformat(match.group("date").decode("ascii"))
-    except ValueError as error:
-        raise SystemExit("execution metadata contains an invalid date") from error
-    event = match.group("event").decode("ascii")
-    if event not in allowed_events or event in seen:
-        raise SystemExit(f"unsupported or duplicate execution event: {event}")
-    if event_rank[event] < last_rank:
-        raise SystemExit("execution events are out of canonical order")
-    last_rank = event_rank[event]
-    seen.add(event)
-    records[event] = match.group("payload")
-    parts = match.group("payload").split(b"; ")
-    names: list[str] = []
-    values: list[bytes] = []
-    for part in parts:
-        if part.count(b"=") != 1:
-            raise SystemExit(f"malformed field in {event}")
-        name, value = part.split(b"=", maxsplit=1)
-        names.append(name.decode("ascii"))
-        values.append(value)
-    expected_names, value_patterns = schemas[event]
-    if names != expected_names:
-        raise SystemExit(f"wrong fields/order in {event}")
-    for name, value, pattern in zip(names, values, value_patterns, strict=True):
-        if re.fullmatch(pattern, value) is None:
-            raise SystemExit(f"invalid {name} in {event}")
-    slice_id = event.split(maxsplit=1)[0]
-    if event.endswith(("acceptance", "stop/escalation")):
-        if slice_id in terminals:
-            raise SystemExit(f"duplicate terminal event for {slice_id}")
-        terminals.add(slice_id)
-
-if seen and allowed_events[0] not in seen:
-    raise SystemExit("phase metadata must begin with its assignment event")
-if "VS-04 corrective acceptance" in seen:
-    if records.get("VS-04 corrective verification", b"").split(b"; ")[0] != b"result=PASS":
-        raise SystemExit("VS-04 acceptance requires passing verification")
-if "VS-05 acceptance" in seen:
-    if records.get("VS-05 verification", b"").split(b"; ")[0] != b"result=PASS":
-        raise SystemExit("VS-05 acceptance requires passing verification")
-    review = records.get("VS-05 final implementation review", b"")
-    if b"result=PASS" not in review or any(
-        field not in review for field in (b"blocker=0", b"high=0", b"medium=0")
-    ):
-        raise SystemExit("VS-05 acceptance requires zero unresolved BLOCKER/HIGH/MEDIUM")
-PY
-done
-```
-
-Before new VS-04 execution, also require the expected branch, successful strict change
-validation, and an empty index/worktree, including no untracked files:
-
-```bash
-set -euo pipefail
-readiness_audit_dir=$(mktemp -d)
-current_branch=$(git branch --show-current)
-test "$current_branch" = "feature/add-prometheus-metric-provider"
-openspec validate add-prometheus-metric-provider --strict
-git status --porcelain > "$readiness_audit_dir/status"
-test ! -s "$readiness_audit_dir/status"
-```
-
-Before delegation, the Coordinator must also verify the accepted VS-03 review tip/digest
-and the new corrective implementation baseline through the audit in the next section.
-
-Any failure is a Coordinator stop condition. It is not delegated to new VS-04 and
-cannot be waived by an implementer.
-
-### Accepted history and corrective implementation baseline
-
-The replacement human-approved planning SHA governs normative artifact and frozen-plan
-integrity only. Accepted execution history remains anchored independently:
-
-- accepted VS-02 execution baseline:
-  `81270d9537329eea0477254094ef9fcdce6f17e6`;
-- accepted cumulative VS-03 review tip:
-  `bf7cb3469119a8869625aa7f4125b21ed11c00d5`;
-- accepted VS-03 cumulative production/test diff SHA-256:
-  `0d77d5458efce23f5cc7f1c9b9544155c77a812771cd1821b4c8afea83c26f9c`;
-- accepted VS-03 execution/Coordinator-acceptance tip:
-  `7baae2b4d3e05c55ba2ae8d5a82f2cc03f630a9a`.
-
-The new VS-04 corrective implementation baseline is exactly the last item. Intervening
-blocked-conformance and replacement-plan commits are documentation/metadata only and do
-not redefine accepted VS-03. Before new VS-04 delegation, reproduce the accepted VS-03
-history and prove no production/test change occurred after its reviewed tip through its
-execution-acceptance tip:
-
-```bash
-set -euo pipefail
-accepted_vs02_sha=81270d9537329eea0477254094ef9fcdce6f17e6
-accepted_vs03_review_tip=bf7cb3469119a8869625aa7f4125b21ed11c00d5
-accepted_vs03_execution_sha=7baae2b4d3e05c55ba2ae8d5a82f2cc03f630a9a
-expected_vs03_digest=0d77d5458efce23f5cc7f1c9b9544155c77a812771cd1821b4c8afea83c26f9c
-history_audit_dir=$(mktemp -d)
-production_test_paths=(backend/src backend/tests frontend/src)
-
-git merge-base --is-ancestor "$accepted_vs02_sha" "$accepted_vs03_review_tip"
-git merge-base --is-ancestor "$accepted_vs03_review_tip" "$accepted_vs03_execution_sha"
-git diff --binary "$accepted_vs02_sha" "$accepted_vs03_review_tip" -- \
-  "${production_test_paths[@]}" > "$history_audit_dir/vs03-production-test.diff"
-actual_vs03_digest=$(sha256sum "$history_audit_dir/vs03-production-test.diff" \
-  | awk '{print $1}')
-test "$actual_vs03_digest" = "$expected_vs03_digest"
-if ! git diff --exit-code "$accepted_vs03_review_tip" \
-  "$accepted_vs03_execution_sha" -- "${production_test_paths[@]}"; then exit 1; fi
-```
-
-For each new VS-04 handoff or correction, audit the full repository tree from the accepted
-VS-03 execution baseline through the exact candidate tip. The complete allowlist is:
-
-```text
-M backend/src/app/metrics/ports.py
-M openspec/changes/add-prometheus-metric-provider/implementation-plan.md
-A openspec/changes/add-prometheus-metric-provider/implementation/VS-04-handoff.md
-A openspec/changes/add-prometheus-metric-provider/implementation/VS-04-docstring-correction-handoff.md
-```
-
-The first path is the only permitted production content. The plan path is limited by the
-separate frozen-plan projection audit to Coordinator-owned execution metadata. The
-historical blocked handoff must remain byte-for-byte identical to the replacement planning
-snapshot; the new correction handoff is the only new handoff. No `tasks.md` transition is
-allowed in VS-04 because task 5.1 remains shared with VS-05. Every test, other source,
-frontend, normative OpenSpec, architecture, unrelated documentation, dependency/config,
-governance, and project-knowledge path fails the full-tree allowlist.
-
-The target module must pass two independent AST checks: executable AST equivalence after
-all docstrings are removed, and an exact docstring-inventory delta. Relative to accepted
-VS-03, only `MetricSeriesProvider` and `MetricSeriesProvider.acquire` may gain docstrings;
-every pre-existing module/class/function/method docstring must remain byte-for-byte equal,
-and no third docstring may be added:
-
-```bash
-set -euo pipefail
-accepted_vs03_execution_sha=7baae2b4d3e05c55ba2ae8d5a82f2cc03f630a9a
-corrective_tip="${VS04_CORRECTIVE_TIP:?set VS04_CORRECTIVE_TIP}"
-corrective_audit_dir=$(mktemp -d)
-target=backend/src/app/metrics/ports.py
-plan_path=openspec/changes/add-prometheus-metric-provider/implementation-plan.md
-historical_handoff=openspec/changes/add-prometheus-metric-provider/implementation/VS-04-handoff.md
-correction_handoff=openspec/changes/add-prometheus-metric-provider/implementation/VS-04-docstring-correction-handoff.md
-approved_sha="${APPROVED_PLANNING_SHA:?set APPROVED_PLANNING_SHA}"
-
-git cat-file -e "$corrective_tip^{commit}"
-git cat-file -e "$approved_sha^{commit}"
-git merge-base --is-ancestor "$accepted_vs03_execution_sha" "$corrective_tip"
-git merge-base --is-ancestor "$approved_sha" "$corrective_tip"
-git diff --name-status "$accepted_vs03_execution_sha" "$corrective_tip" -- \
-  | LC_ALL=C sort > "$corrective_audit_dir/paths"
-{
-  printf 'M\t%s\n' "$target"
-  printf 'M\t%s\n' "$plan_path"
-  printf 'A\t%s\n' "$historical_handoff"
-  printf 'A\t%s\n' "$correction_handoff"
-} | LC_ALL=C sort > "$corrective_audit_dir/expected-paths"
-if ! diff -u "$corrective_audit_dir/expected-paths" \
-  "$corrective_audit_dir/paths"; then exit 1; fi
-if ! git diff --exit-code "$approved_sha" "$corrective_tip" -- \
-  "$historical_handoff"; then exit 1; fi
-git show "$accepted_vs03_execution_sha:$target" > "$corrective_audit_dir/before.py"
-git show "$corrective_tip:$target" > "$corrective_audit_dir/after.py"
-python3 - "$corrective_audit_dir/before.py" "$corrective_audit_dir/after.py" <<'PY'
-import ast
-import hashlib
-import sys
-from pathlib import Path
-
-
-def without_docstrings(path: str) -> str:
-    tree = ast.parse(Path(path).read_text())
-    for node in ast.walk(tree):
-        body = getattr(node, "body", None)
-        if body and isinstance(body[0], ast.Expr):
-            value = body[0].value
-            if isinstance(value, ast.Constant) and isinstance(value.value, str):
-                del body[0]
-    return ast.dump(tree, include_attributes=False)
-
-
-def docstring_source_inventory(path: str) -> tuple[dict[str, bytes], dict[str, tuple[int, int, int, int]]]:
-    source_bytes = Path(path).read_bytes()
-    source_lines = source_bytes.splitlines(keepends=True)
-    tree = ast.parse(source_bytes.decode("utf-8"))
-    inventory: dict[str, bytes] = {}
-    spans: dict[str, tuple[int, int, int, int]] = {}
-
-    def exact_source(expr: ast.Expr) -> bytes:
-        start_line = expr.lineno - 1
-        end_line = expr.end_lineno - 1
-        if start_line == end_line:
-            return source_lines[start_line][expr.col_offset:expr.end_col_offset]
-        return b"".join(
-            [source_lines[start_line][expr.col_offset:]]
-            + source_lines[start_line + 1:end_line]
-            + [source_lines[end_line][:expr.end_col_offset]]
-        )
-
-    class Visitor(ast.NodeVisitor):
-        def __init__(self) -> None:
-            self.scope: list[str] = []
-
-        def record(self, node: ast.AST, name: str) -> None:
-            body = getattr(node, "body", None)
-            if not body or not isinstance(body[0], ast.Expr):
-                return
-            expr = body[0]
-            value = expr.value
-            if not isinstance(value, ast.Constant) or not isinstance(value.value, str):
-                return
-            location = ".".join([*self.scope, name])
-            inventory[location] = exact_source(expr)
-            spans[location] = (
-                expr.lineno,
-                expr.col_offset,
-                expr.end_lineno,
-                expr.end_col_offset,
-            )
-
-        def visit_Module(self, node: ast.Module) -> None:
-            self.record(node, "<module>")
-            self.generic_visit(node)
-
-        def visit_ClassDef(self, node: ast.ClassDef) -> None:
-            self.record(node, node.name)
-            self.scope.append(node.name)
-            self.generic_visit(node)
-            self.scope.pop()
-
-        def visit_FunctionDef(self, node: ast.FunctionDef) -> None:
-            self.record(node, node.name)
-            self.scope.append(node.name)
-            self.generic_visit(node)
-            self.scope.pop()
-
-        def visit_AsyncFunctionDef(self, node: ast.AsyncFunctionDef) -> None:
-            self.record(node, node.name)
-            self.scope.append(node.name)
-            self.generic_visit(node)
-            self.scope.pop()
-
-    Visitor().visit(tree)
-    return inventory, spans
-
-
-def absolute_bounds(source: bytes, span: tuple[int, int, int, int]) -> tuple[int, int]:
-    lines = source.splitlines(keepends=True)
-    start_line, start_column, end_line, end_column = span
-    start = sum(len(line) for line in lines[:start_line - 1]) + start_column
-    end = sum(len(line) for line in lines[:end_line - 1]) + end_column
-    return start, end
-
-
-if without_docstrings(sys.argv[1]) != without_docstrings(sys.argv[2]):
-    raise SystemExit("ports.py changed beyond docstrings")
-before_inventory, before_spans = docstring_source_inventory(sys.argv[1])
-after_inventory, after_spans = docstring_source_inventory(sys.argv[2])
-allowed_additions = {
-    "MetricSeriesProvider",
-    "MetricSeriesProvider.acquire",
-}
-if allowed_additions & before_inventory.keys():
-    raise SystemExit("target docstrings unexpectedly exist in accepted baseline")
-if set(after_inventory) != set(before_inventory) | allowed_additions:
-    raise SystemExit("docstring inventory changed outside the exact two targets")
-for location, value in before_inventory.items():
-    if after_inventory[location] != value:
-        raise SystemExit(f"existing docstring source bytes changed at {location}")
-    before_span = before_spans[location]
-    after_span = after_spans[location]
-    before_shape = (before_span[1], before_span[2] - before_span[0], before_span[3])
-    after_shape = (after_span[1], after_span[2] - after_span[0], after_span[3])
-    if after_shape != before_shape:
-        raise SystemExit(f"existing docstring source span changed at {location}")
-
-after_tree = ast.parse(Path(sys.argv[2]).read_text())
-provider = next(
-    node for node in after_tree.body
-    if isinstance(node, ast.ClassDef) and node.name == "MetricSeriesProvider"
-)
-acquire = next(
-    node for node in provider.body
-    if isinstance(node, ast.AsyncFunctionDef) and node.name == "acquire"
-)
-provider_doc = ast.get_docstring(provider, clean=True)
-acquire_doc = ast.get_docstring(acquire, clean=True)
-if provider_doc is None or acquire_doc is None:
-    raise SystemExit("approved target docstring is missing")
-if len(provider_doc.split()) < 5:
-    raise SystemExit("MetricSeriesProvider docstring is not purpose-descriptive")
-if len(acquire_doc.split()) < 5:
-    raise SystemExit("acquire docstring is not behavior-descriptive")
-
-# Final source-byte authority: remove exactly the two canonical insertion spans from
-# candidate bytes, without parsing/formatting/newline normalization, and recover baseline.
-before_bytes = Path(sys.argv[1]).read_bytes()
-after_bytes = Path(sys.argv[2]).read_bytes()
-class_raw = after_inventory["MetricSeriesProvider"]
-acquire_raw = after_inventory["MetricSeriesProvider.acquire"]
-if b"\n" in class_raw or b"\n" in acquire_raw:
-    raise SystemExit("approved new docstrings must use canonical one-line source spans")
-class_start, class_end = absolute_bounds(
-    after_bytes, after_spans["MetricSeriesProvider"]
-)
-acquire_start, acquire_end = absolute_bounds(
-    after_bytes, after_spans["MetricSeriesProvider.acquire"]
-)
-class_suffix = b"\n\n    "
-acquire_prefix = b"\n        "
-acquire_suffix = b"\n       "
-if after_bytes[class_start:class_end] != class_raw:
-    raise SystemExit("class docstring span does not match exact candidate bytes")
-if after_bytes[class_end:class_end + len(class_suffix)] != class_suffix:
-    raise SystemExit("class docstring insertion envelope is not canonical")
-if after_bytes[acquire_start - len(acquire_prefix):acquire_start] != acquire_prefix:
-    raise SystemExit("acquire docstring insertion prefix is not canonical")
-if after_bytes[acquire_start:acquire_end] != acquire_raw:
-    raise SystemExit("acquire docstring span does not match exact candidate bytes")
-if after_bytes[acquire_end:acquire_end + len(acquire_suffix)] != acquire_suffix:
-    raise SystemExit("acquire docstring insertion suffix is not canonical")
-removals = sorted(
-    [
-        (class_start, class_end + len(class_suffix)),
-        (acquire_start - len(acquire_prefix), acquire_end + len(acquire_suffix)),
-    ],
-    reverse=True,
-)
-reconstructed = after_bytes
-for start, end in removals:
-    reconstructed = reconstructed[:start] + reconstructed[end:]
-if reconstructed != before_bytes:
-    raise SystemExit("candidate differs from baseline beyond the two docstring spans")
-for label, inventory, spans in (
-    ("baseline", before_inventory, before_spans),
-    ("candidate", after_inventory, after_spans),
-):
-    for location in sorted(inventory):
-        digest = hashlib.sha256(inventory[location]).hexdigest()
-        print(label, location, spans[location], digest, inventory[location].hex())
-PY
-git diff --check "$accepted_vs03_execution_sha" "$corrective_tip"
-```
-
-Coordinator acceptance records the exact corrective tip and handoff. VS-05 uses that
-accepted corrective tip as its implementation baseline and proves committed `HEAD`, index,
-and worktree contain no later production/test changes:
-
-```bash
-set -euo pipefail
-accepted_corrective_tip="${ACCEPTED_VS04_CORRECTIVE_TIP:?set ACCEPTED_VS04_CORRECTIVE_TIP}"
-production_test_paths=(backend/src backend/tests frontend/src)
-git cat-file -e "$accepted_corrective_tip^{commit}"
-if ! git diff --exit-code "$accepted_corrective_tip" HEAD -- \
-  "${production_test_paths[@]}"; then exit 1; fi
-if ! git diff --cached --exit-code "$accepted_corrective_tip" -- \
-  "${production_test_paths[@]}"; then exit 1; fi
-if ! git diff --exit-code "$accepted_corrective_tip" -- \
-  "${production_test_paths[@]}"; then exit 1; fi
-```
-
-A merge-base-to-main diff may
-supplement but never replace these accepted-history and corrective-baseline audits.
-
-## Slice graph
-
-```text
-VS-01 -> VS-02 -> VS-03 -> VS-04 -> VS-05
-```
+Execution is sequential.
 
 ## Execution overview
 
-| Slice | Goal | Depends on | Risk | Status | Commit | Handoff |
+| Phase | Goal | Depends on | Risk | Status | Commit | Handoff/review |
 |---|---|---|---|---|---|---|
-| VS-01 | Source-safe transport-free walking skeleton through the existing Metric port | none | high-risk | COMPLETE | 1217266598aa5f20b902e9ae2edfe1da2ffed6c2 | `implementation/VS-01-handoff.md` |
-| VS-02 | Complete bounded single-attempt request, mapping, and status classification | VS-01 | high-risk | COMPLETE | `99bce08`, `d01a104`, `0d35520`, `ee4d364` | `implementation/VS-02-handoff.md` |
-| VS-03 | Observable deadline/result boundary, state-inert late cleanup, bounded capacity, deterministic retries, and terminal resilience integration | VS-02 | high-risk | COMPLETE | bf7cb3469119a8869625aa7f4125b21ed11c00d5 | `implementation/VS-03-handoff.md` |
-| VS-04 | Add missing Metric provider-port docstrings without behavior change | VS-03 | normal | PLANNED | - | - |
-| VS-05 | Compatibility, operational documentation, and whole-change conformance | VS-04 | normal | PLANNED | - | - |
-
-## Slice definitions
-
-### VS-01 — Source-safe transport-free walking skeleton
-
-**Behavioral goal:** Compose one source-aware production `MetricSeriesProvider` behind
-the existing port without exposing a callable HTTP path yet. Exact source selection and
-production-only target validation return typed zero-request outcomes, and an absent or
-unknown source flows through the real composed provider and unchanged Metrics pipeline to
-the existing minimal failed Metric result.
-
-**OpenSpec coverage:** source-resolution requirement and its exact-ID, unavailable,
-unsafe-target, and shared-consumer scenarios; composition requirement's port/domain
-boundary scenario; modified pipeline's transport-free scenario; real-provider current-
-unavailable portion of the failure-preservation scenario; tasks 1.1, 1.3, 1.4,
-pre-transport portions of 2.1 and 3.5, configuration/zero-request portions of 1.2 and
-4.1, current-unavailable portion of 4.5, complete production-valid and production-invalid
-shared-surface regression task 4.6, and per-symbol
-docstrings from 5.1.
-
-**Dependencies:** none beyond the human-approved planning-SHA readiness gate.
-
-**Vertical boundary:** compatible shared registry snapshot -> real source-aware provider
-composition -> `acquire(scope, window)` -> exact source lookup -> production-only URL/
-path/transport validation -> existing typed unavailable or failure with zero client/
-request activity -> existing Metrics pipeline -> unchanged current-acquisition failure
-and minimal failed Metric result. A valid selected source may be represented internally
-for VS-02, but VS-01 exposes no callable real HTTP acquisition path.
-
-**Expected code impact:**
-
-| Path / symbol | Action | Slice responsibility |
-|---|---|---|
-| `backend/src/app/infrastructure/prometheus/` | add production composition/configuration modules; minimally extend exports | Registry snapshot, exact selection, production-only URL/path validation, unavailable/invalid zero-request provider behavior; no HTTP request implementation |
-| `backend/src/app/main.py::lifespan` | modify | Construct/expose the source-aware provider only as an injectable application dependency; start no execution |
-| `backend/tests/test_prometheus_metric_provider_configuration.py` | add | Registry compatibility, source isolation, exhaustive URL/path allow/reject matrix, secret-safe pre-transport diagnostics, zero client/request evidence |
-| `backend/tests/test_metric_analysis_pipeline.py` | modify narrowly | Real composed absent/unknown source -> port outcome -> current minimal failed result; retain fake-provider regressions |
-| `backend/tests/test_health.py`, `test_observation_contracts.py`, `test_observation_api.py`, `test_prometheus_adapter.py` | modify only for focused regressions | Startup and existing source-consumer compatibility for a production-invalid shared source |
-
-**Contracts consumed/changed:** consumes the existing settings credential variants and
-`MetricSeriesProvider.acquire` input/outcome contracts unchanged. Production-private
-selected-source/validated-target structures may be added. The preflight
-`PrometheusQueryAdapter`, its exceptions/results, and public projections remain unchanged
-and are not reused as the production provider.
-
-**Non-goals:** any HTTP client/request, authentication application, valid response
-mapping, step/form construction, body reading, status/error-envelope classification,
-retries/backoff, deadlines/cancellation, reference acquisition, or analytical change.
-
-#### Acceptance evidence
-
-| ID | Approved source | Given | When | Then | Proof level | Planned verification |
-|---|---|---|---|---|---|---|
-| VS01-AC01 | Resolve source / exact ID and unavailable source | Absent registry, unknown ID, and two configured sentinel sources | Call `acquire` through the real composed provider | Absent/unknown return fixed safe `MetricSeriesUnavailable` with zero client/request activity and no fallback; source lookup is exact | unit + transport ledger | outcome/category and fail-on-client-construction assertions |
-| VS01-AC02 | Unsafe selected target | Valid HTTPS/exact-loopback targets plus every rejected scheme, authority, host, query, fragment, and ambiguous path form | Select and validate only the requested configured source | Accepted source becomes a private validated selection for later transport; rejected source returns fixed safe failure with zero client/request activity; shared Settings construction is unchanged | parameterized unit + startup | exhaustive raw URL/path vectors and zero-construction ledger |
-| VS01-AC03 | Current unavailable end to end | Absent registry and separately unknown source ID, real source-aware composition, existing Metrics dependencies, and a fail-on-transport seam | Inject that provider into `MetricAnalysisPipeline` and analyze current | `acquire()` returns `MetricSeriesUnavailable`; pipeline preserves existing current-unavailable/current-acquisition failure and minimal failed Metric result semantics; zero HTTP requests occur | service | explicit real composition -> port -> acquire -> pipeline/result assertions for both cases |
-| VS01-AC04 | Production-invalid current outcome | Shared loading accepts the selected source but production-only validation rejects it | Call real provider directly and through current pipeline | Provider returns fixed `MetricSeriesAcquisitionFailure`, pipeline preserves its existing minimal failed result, and zero HTTP requests occur | service + transport ledger | provider and pipeline outcome assertions with fail-on-request seam |
-| VS01-AC05 | Production-invalid shared-consumer compatibility | Production-invalid source accepted by shared settings | Start app; exercise capabilities, Observation creation, preflight, and production acquisition | Startup and existing public/preflight behavior remain compatible; only production acquisition rejects the source with zero requests from the production transport | API + service | lifespan/API/service/preflight regressions with separate transport ledgers |
-| VS01-AC06 | Secret-safe pre-transport composition | Sentinel Bearer token and Basic username/password in selected and unselected sources | Load, resolve, reject invalid target, and inspect outcomes/logs/errors/repr/public projections | No diagnostic/output exposes token, password, Authorization, or configured username; internal shared credential representation is unchanged; no credential reaches a URL | unit + repository audit | sentinel scan and exact safe diagnostic snapshots |
-| VS01-AC07 | Port-only composition | Constructed application state and source-aware provider | Inspect imports/types without starting a run | Provider satisfies `MetricSeriesProvider`; Metric modules import no settings/HTTPX/Prometheus response types; construction creates/advances no LensRun or ObservationRun | static audit + service | protocol-use test, import scan, lifecycle spy |
-| VS01-AC08 | Production-valid shared-consumer compatibility | Valid production source configuration and fail-on-production-transport seam | Start app; exercise capabilities, Observation creation, and existing Metric preflight without calling production acquire | Startup succeeds; capabilities and creation retain their exact behavior; preflight retains its independent adapter, 15-second/no-retry policy, labels/warnings, and public error mapping; these existing surfaces create zero production-provider HTTP activity | API + service + transport ledger | valid-source lifespan/capabilities/create/preflight regression with separate preflight and fail-on-production ledgers |
-
-**Counterexample guards:** URL vectors include exact IPv4/IPv6/hostname loopback versus
-look-alikes, percent-encoding case variants, raw backslashes, repeated/interior slashes,
-dot segments, whitespace/control/parser-normalized forms, and credentials in authority.
-The production-invalid compatibility source contains otherwise valid credentials so
-eager shared validation cannot pass. Current-unavailable tests instantiate the real
-source-aware provider and execute `MetricAnalysisPipeline`; directly injecting a typed
-outcome or a fake provider does not satisfy VS01-AC03. VS01-AC08 gives preflight its own
-adapter ledger and makes the production transport fail on construction/use, so merely
-sharing a client or silently invoking production acquisition cannot pass.
-
-**Focused verification:** `cd backend && uv run pytest
-tests/test_prometheus_metric_provider_configuration.py
-tests/test_metric_analysis_pipeline.py tests/test_prometheus_adapter.py
-tests/test_observation_contracts.py tests/test_observation_api.py tests/test_health.py -q`;
-targeted Ruff and Ruff format checks for changed source/tests; `git diff --check`.
-
-**Context pack:** root `AGENTS.md`; approved source-resolution, composition, current-
-unavailable/failure-preservation, and modified provider-boundary requirements/scenarios;
-design decisions on selected-source validation, infrastructure composition, and preflight
-separation; ADR-003, ADR-045, ADR-048, ADR-133, ADR-157; architecture Metrics provider/
-pipeline boundaries; current settings, preflight adapter/contracts, observation service/
-API, lifespan, Metric contracts/port/pipeline/result builder, and focused tests.
-
-**Handoff expectations:** VS01-AC01 through VS01-AC08 evidence; exact public/private
-symbols; URL/path allow/reject table; client/request zero-activity ledgers; direct and
-pipeline unavailable/failure results; app-state provider type; shared-consumer regressions;
-separate production-valid and production-invalid startup/capabilities/create/preflight
-results; confirmation task 4.6 is complete; secret/import/dependency audit; deviations;
-focused commands; explicitly deferred HTTP
-acquisition/mapping/resilience; shared-knowledge candidates.
-
-**Risk:** high-risk
-
-**Completion gate:** all VS01 evidence passes; absent/unknown source and selected invalid
-source return the approved typed outcomes with zero transport; real composed current-
-unavailable and invalid-source outcomes traverse the existing pipeline to unchanged
-minimal failed Metric results; valid-source setup exposes no callable HTTP path; startup
-and capabilities/creation/preflight remain compatible for both production-valid and
-production-invalid shared sources with zero production transport activity; all of task
-4.6 is proven in this slice; no domain/public/schema/dependency/orchestration change
-appears; docstrings and focused checks pass; independent high-risk review returns
-`SLICE REVIEW PASS`; one atomic implementation commit and handoff exist, followed by
-Coordinator acceptance metadata.
-
-### VS-02 — Safely bounded single-attempt Prometheus acquisition
-
-**Behavioral goal:** Add one complete production HTTP attempt behind the VS-01 provider:
-construct the exact authenticated range query, stream one bounded response, and classify
-its complete result through a single-attempt internal outcome model. This slice owns all
-interacting body/status/envelope/success branches, including proving that an oversized or
-otherwise unusable body is terminal before an HTTP status that would be retry-eligible.
-
-**OpenSpec coverage:** exact-query requirement except multi-attempt identity; complete
-float-series mapping and excessive-response/warning requirements; one-attempt portions of
-the deadline/failure requirement including strict error envelopes, retry-eligible status
-classification, deterministic rejection, bare 503, body/status/success precedence, and
-initial completion; composition verification through successful current/reference paths;
-modified pipeline's zero/one/multiple-reference scenarios; tasks 1.2 credential HTTP
-boundary, 2.1-2.5, one-attempt classification portion of 3.3, 4.1-4.4, successful/empty/
-current-failure/reference-failure portions of 4.5,
-and per-symbol docstrings from 5.1.
-
-**Dependencies:** VS-01 accepted.
-
-**Vertical boundary:** private validated selected source -> exact immutable logical
-request and authentication -> one injected HTTPX attempt with redirects/proxy trust
-disabled and normal TLS verification -> complete streamed body capped at 1 MiB -> ordered
-single-attempt body/error-envelope/status/success classifier -> private available,
-terminal timeout/failure, or retry-eligible classification -> existing public provider
-outcome -> unchanged current or independently requested reference pipeline behavior.
-
-**Expected code impact:** extend only production modules under
-`backend/src/app/infrastructure/prometheus/`, add focused production-provider HTTP tests,
-and add narrow adapter-backed current/reference tests in
-`backend/tests/test_metric_analysis_pipeline.py`. The existing preflight adapter changes
-only if a low-level infrastructure-private helper can be shared without altering its
-independent contract.
-
-**Contracts consumed/changed:** the public provider still returns only existing
-`MetricSeriesAvailable`, `MetricSeriesAcquisitionFailure`, and
-`MetricSeriesAcquisitionTimeout`. A private strict attempt result may distinguish
-`available`, terminal `failure|timeout`, and `retry_eligible(status)` for VS-03. Prometheus
-envelopes, labels, annotations, bodies, credentials, and transport objects remain private.
-`MetricSample` intentionally admits non-finite values for existing preparation.
-
-**Non-goals:** attempt/acquisition hard-deadline orchestration; HTTPX exception taxonomy;
-sleep/backoff; retry admission; second/third attempts; retry exhaustion; changing sample
-preparation, comparisons, result, History, agent, persistence, or preflight behavior.
-
-#### Acceptance evidence
-
-| ID | Approved source | Given | When | Then | Proof level | Planned verification |
-|---|---|---|---|---|---|---|
-| VS02-AC01 | Exact request target and resolution | All accepted root/prefix forms and approved fractional/boundary windows from 0.5s through 3600.001s | Build/send one request | Exactly one form POST targets `<origin><preserved-prefix>/api/v1/query_range`; query and RFC3339 bounds are exact; step matches every double-ceiling vector and inclusive cap; timeout=10s/limit=2 are present; no other field, offset, rewrite, redirect, or proxy trust appears | parameterized unit + HTTP boundary | target/form/client snapshots and task 4.2 table |
-| VS02-AC02 | Authentication and credential safety | Bearer and Basic profiles with sentinel secrets/username, plus redirect response | Execute one attempt | Bearer header or preemptive Basic applies only to the exact target; redirects are not followed; TLS verifies; URL/outcomes/logs/errors omit all protected credential values and configured Basic username | HTTP boundary + audit | request-header ledger, redirect host ledger, sentinel leakage scan |
-| VS02-AC03 | One valid float series | Strict matrix with string labels and ordered finite and non-finite float pairs | Decode/map | Existing available outcome contains UTC samples in provider order; `NaN/+Inf/-Inf` survive; labels/response do not cross the port; existing preparer alone filters/sorts/rejects | unit + service | exact provider tuple followed by unchanged preparation assertions |
-| VS02-AC04 | Zero/multi/histogram/malformed mapping | Empty result; two series; native/mixed histogram; malformed labels, values, pairs, timestamps, numeric strings, envelope/result type | Classify one complete body | Empty is available; one valid series maps; every unrepresentable shape is terminal safe failure without merge, repair, coercion, or truncation | parameterized unit | exhaustive strict success-shape matrix |
-| VS02-AC05 | Body/sample bounds and non-vacuous precedence | Exact/over 1 MiB declared and streamed bodies, exact 61/62 samples, and separately a complete bounded malformed body at 429/500/502/504 | Run the same single-attempt classifier | Exact caps succeed when otherwise valid; over-cap/62 are terminal failure; each bounded malformed retryable-status body yields private `retry_eligible`; the same status with an oversized/unusable body yields terminal failure, proving body precedence through interacting implemented branches | streaming HTTP boundary + internal classifier | paired per-status bounded-versus-oversized tests with body close and attempt-result assertions |
-| VS02-AC06 | Success annotations | Empty/non-empty warnings and infos plus malformed fields | Classify one successful response | Non-empty warnings are terminal failure; infos do not affect data and text is discarded; malformed annotations fail; no text leaks | parameterized unit | complete success annotation matrix |
-| VS02-AC07 | Strict error/status classification | Valid timeout/canceled error envelopes with valid annotations; missing/malformed required fields; other errors; bare/malformed 503; other non-success; malformed bounded success | Classify one attempt | Strict timeout/canceled is terminal timeout; 429/500/502/504 become private retry-eligible unless body rule won; valid other errors, bare/malformed 503, and other non-success are terminal failure; only success status reaches success validation | parameterized unit + HTTP boundary | full error-envelope/status/body decision table |
-| VS02-AC08 | Deterministic rejection and leakage | Auth/query/contract/warning failures and provider-authored/error/sample/label sentinel content | Execute one attempt and inspect outcome/logs | Rejections are terminal, not retry-eligible; diagnostics are fixed/bounded and expose no query, URL, body, headers, exception/provider text, credentials, labels, or samples | unit + audit | fixed diagnostic inventory and sentinel scans |
-| VS02-AC09 | Successful current/reference integration | Empty and one-series current; ordered equal-duration references including one terminal single-attempt failure | Run composed provider through existing pipeline | Empty current remains completed-insufficient; successful current/reference requests preserve exact bounds/equal resolution/configured order; failed reference alone is omitted with accepted partial; analytical contracts stay unchanged | service | real provider request ledger and exact result comparisons |
-
-**Counterexample guards:** target tests preserve case/characters and reject any URL join or
-decode behavior already validated by VS-01. Response tests reject label/value coercion,
-boolean/non-finite timestamps, wrong pair containers/lengths, and histogram mixing.
-VS02-AC05 pairs every retryable status with both a complete bounded malformed body and an
-over-cap body and asserts different internal attempt variants; a test that merely observes
-public failure, or runs before retry eligibility exists, cannot pass. References surround
-a failed offset with successes to expose short-circuit/default/baseline behavior.
-
-**Focused verification:** `cd backend && uv run pytest
-tests/test_prometheus_metric_provider.py tests/test_prometheus_metric_provider_configuration.py
-tests/test_metric_analysis_pipeline.py tests/test_prometheus_adapter.py -q`; targeted Ruff
-and format checks; `git diff --check`.
-
-**Context pack:** accepted VS-01 handoff; approved exact-query, mapping, warning/body,
-one-attempt failure-table, composition, and modified Metrics scenarios; design decisions
-on immutable request, authentication, resolution, series sentinel, bounded streaming,
-strict envelopes, annotations, and classification order; ADR-003, ADR-133-135, ADR-157;
-current Metric preprocessing/references/pipeline contracts/tests; VS-01 validated-source
-and composition seams; existing preflight adapter only as a compatibility boundary.
-
-**Handoff expectations:** VS02-AC01 through VS02-AC09 evidence; private attempt-result
-variants; exact target/form/auth/client snapshots; step vectors; response and complete
-single-attempt decision matrices; paired non-vacuous body/status precedence results;
-current/reference results; cleanup and leakage audits; deviations; focused commands;
-explicitly deferred deadlines/exceptions/retry orchestration; shared-knowledge candidates.
-
-**Risk:** high-risk
-
-**Completion gate:** all VS02 evidence passes; the full single-attempt body/envelope/status/
-success classifier exists before precedence is claimed; bounded malformed retryable
-statuses and oversized retryable-status bodies prove distinct interacting branches;
-successful data is complete and bounded; target/auth/request/sample fidelity and
-current/reference semantics hold; no resilience orchestration or excluded scope leaks in;
-focused checks pass; independent high-risk review returns `SLICE REVIEW PASS`; one atomic
-implementation commit and handoff exist, followed by Coordinator acceptance metadata.
-
-### VS-03 — Deterministic resilience and typed failure mapping
-
-**Behavioral goal:** Complete production acquisition with an absolute observable
-15-second attempt and 50-second `acquire()` result boundary. At either expiry, timeout
-is committed before cancellation-resistant transport cleanup completes; cancellation and
-close are signalled, detached cleanup becomes state-inert, and finite private
-active-plus-cleanup capacity prevents it accumulating. The slice also preserves the
-existing exact retry/orchestration behavior and current/reference pipeline semantics.
-
-**OpenSpec coverage:** deadline/failure scenarios for retry eligibility/admission,
-initial/retry completion, exhaustion, HTTPX taxonomy, proven hard timeout,
-post-timeout transport cleanup, and final current/reference failure semantics;
-logical-request-across-retries scenario; complete production resilience integration over
-all VS-02 attempt variants; tasks 3.1, 3.2, exception/deadline/retry-orchestration
-portions of 3.3, 3.4, transport-attempt portions of 3.5, retry/deadline portions of
-4.3/4.4, current timeout/final retry failure and reference timeout/failure portions of
-4.5, plus per-symbol docstrings from 5.1.
-
-**Dependencies:** VS-02 accepted at execution tip
-`81270d9537329eea0477254094ef9fcdce6f17e6`. All later production/test work remains
-unaccepted VS-03 scope regardless of intervening planning, clarification, handoff, or
-review-metadata commits.
-
-**Vertical boundary:** VS-02 immutable request and complete one-attempt function ->
-private capacity admission for eligible transport work -> injected monotonic 50-second
-observable acquire-result boundary -> 15-second observable deadline around each request
-and body read -> commit existing typed timeout before signalling cancellation/close ->
-detach only state-inert resource cleanup while its private capacity remains held ->
-discard late response/body/error/exception -> HTTPX exception classifier or VS-02 attempt
-result before commitment -> remaining-budget admission -> exact fixed wait and up to two
-identical retries -> existing typed available/failure/timeout -> unchanged current failed
-or reference partial result.
-
-**Expected code impact:** replace the current joined cancellation-cleanup deadline helper
-inside the production provider with infrastructure-private deadline-commit, cancellation/
-close, late-cleanup tracking, and finite-capacity seams; retain the existing clock,
-sleeper, exception-classifier, and retry orchestration seams. Add focused resilience
-tests and narrow adapter-backed pipeline tests. VS-02 response/body/status mapping is
-consumed, not reimplemented. Do not change Metric domain, pipeline, result builder,
-persistence, preflight policy, public settings, public port, public outcome/reason, or
-source-resolution behavior.
-
-**Contracts consumed/changed:** only existing `MetricSeriesAcquisitionFailure` and
-`MetricSeriesAcquisitionTimeout` classifications are produced, with fixed bounded safe
-diagnostics and optional safe status codes kept infrastructure-private where the existing
-port cannot represent them. Capacity is provider-private and test-controllable only;
-neither its value nor saturation state is a public setting, port field, result field, or
-reason code. The sole permitted post-return provider bookkeeping is release of the held
-private capacity after cleanup terminates; late cleanup has no authority over outcomes,
-retries, requests, analytical/pipeline/Lens/runtime/persistence state, or observable
-provider result state.
-
-**Non-goals:** changing VS-01 source lookup/unavailable semantics or VS-02 request,
-authentication, body, envelope, annotation, sample, or status classification; retrying
-timeout or any VS-02 terminal rejection; making capacity public/configurable; using a
-worker, queue, broker, or workflow engine; jitter/Retry-After; proxy/redirect support;
-changing current/reference pipeline mapping; Observation-level deadlines or concurrency.
-
-#### Acceptance evidence
-
-| ID | Approved source | Given | When | Then | Proof level | Planned verification |
-|---|---|---|---|---|---|---|
-| VS03-AC01 | Observable attempt/acquire result deadlines | Hanging request, slow-progress body, retry waits, and cancellation-resistant response/client cleanup | Cross 15s attempt or 50s acquire deadline | The existing typed timeout is committed and returned at the deadline; cancellation/close is signalled, but cleanup is not awaited past the result boundary | deterministic clock + async service | injected monotonic deadline, return-time, cancellation, and close ledgers |
-| VS03-AC02 | Retry eligibility/count/identity | ConnectError and each VS-02 retry-eligible 429/500/502/504 result sequence succeeding on attempt 1, retry 1, retry 2, or never | Acquire | Exact attempt counts are 1/2/3/3 with waits 0.5/1.0, never a fourth; every attempt uses byte-identical logical request and same source/auth/configuration | parameterized HTTP boundary | complete attempt/form/auth/config snapshots and sleep ledger |
-| VS03-AC03 | Retry admission | For ConnectError and each retryable status, remaining budgets just below/at/above wait+15s | Admit next retry | Insufficient budget returns timeout with no wait/request; sufficient budget waits exactly and retries; three actually executed eligible failures exhaust as failure | deterministic unit + HTTP boundary | boundary clock vectors for retry 1 and retry 2 |
-| VS03-AC04 | HTTPX hierarchy | Timeout subclasses, ConnectError, remaining TransportError subclasses, and non-Transport request/client errors named by the spec | Classify each | Only ConnectError retries; timeout subclasses time out without retry; every other named class fails without retry; no generic transport retry branch exists | parameterized unit | hierarchy table including representative subclasses and exact counts |
-| VS03-AC05 | Hard-deadline precedence | Deadline completion races an HTTPX exception, successful result, or retry-eligible `ConnectError` | Observe attempt/acquire boundary | Hard local timeout commitment wins; no late result/exception can replace it, trigger retry, or start a request | deterministic concurrency unit | controlled completion/cancellation race seam and request/sleep ledgers |
-| VS03-AC06 | Terminal versus retry-eligible integration | Every VS-02 terminal attempt result and retry-eligible result | Run full acquisition orchestrator | Terminal outcomes perform no retry/sleep; only retry-eligible statuses enter admission; retry exhaustion becomes failure; no body/status/envelope policy is reclassified by the orchestrator | parameterized service | VS-02 variant-to-attempt-count/outcome matrix |
-| VS03-AC07 | Pipeline failure preservation | Real provider timeout and terminal/retry-exhausted failure on current versus one configured reference | Run existing pipeline | Current produces existing minimal failed Metric result; reference alone is omitted and yields accepted `reference_unavailable/reference_periods` partial while usable current survives | service | real-provider injected current/reference matrix with result equality |
-| VS03-AC08 | State-inert late cleanup | Timeout-committed request/body/client whose cleanup later yields a response, exception, or close completion | Release cleanup after `acquire()` has returned | The committed timeout and all current/reference pipeline outcomes remain unchanged; no retry, sleep, request, provider result/state transition, Lens/runtime transition, persistence action, or late diagnostic occurs | deterministic async service + pipeline integration | controlled cleanup gate, late-result/error injection, complete provider/pipeline/Lens/persistence/request ledgers |
-| VS03-AC09 | Finite active-plus-cleanup capacity | Private test capacity filled by active work and then by timeout-detached cleanup | Admit another valid transport-phase acquisition before and after cleanup termination | While full, the new acquisition returns the existing fixed-safe typed acquisition failure before client construction/request; each cleanup holds one slot until it finishes, then releases only that private slot and a later acquisition is admitted | deterministic async service + transport ledger | test-only private-capacity seam, cleanup gates, client-construction/request counters, outcome and slot-release ledger |
-
-**Counterexample guards:** a cancellation-resistant fake must remain blocked beyond the
-15/50-second result deadline, so a helper that awaits cleanup cannot pass VS03-AC01. A
-late success, `ConnectError`, and close exception are each released after timeout
-commitment; a late result that replaces timeout or starts a retry/request fails
-VS03-AC05/08. Capacity tests first fill slots with active acquisitions, then with
-post-timeout cleanup, use a fail-on-client-construction transport for the rejected call,
-and prove release only after cleanup termination; an unbounded detached-task design, a
-per-acquisition rather than shared capacity, or permanent capacity leakage cannot pass.
-Retries mix ConnectError and all VS-02 retry-eligible status variants across attempts;
-admission tests use exact equality as fitting. The orchestrator matrix feeds VS-02
-terminal body/envelope/warning/status results and asserts no sleep/additional request,
-preventing a broad "retry any failure" branch. Source-unavailable and invalid-target
-regressions remain VS-01-owned and must retain their typed zero-request behavior without
-transport-capacity admission.
-
-**Focused verification:** `cd backend && uv run pytest
-tests/test_prometheus_metric_provider_resilience.py
-tests/test_prometheus_metric_provider.py
-tests/test_prometheus_metric_provider_configuration.py
-tests/test_metric_analysis_pipeline.py tests/test_prometheus_adapter.py -q`; deterministic
-async deadline/cleanup/capacity tests must use no live time or network; targeted Ruff and
-format checks; `git diff --check`; and the cumulative accepted-VS-02-to-candidate-tip
-implementation audit above. Focused verification of only a new correction commit is
-insufficient.
-
-**Context pack:** approved source revision `2180c7d14862187635de21d716f27f6b3b9ff93f`;
-accepted VS-01 and VS-02 handoffs and VS-02 attempt-result decision matrix; approved
-deadline/retry/exception/current-reference scenarios; design decision on observable
-deadlines, late cleanup, private capacity, retry admission, exhaustion, and ordered
-exception precedence; exact-query logical-request identity; ADR-045, ADR-133-135,
-ADR-157; current typed provider outcomes and Metrics pipeline mappings; current provider
-deadline helper and resilience tests; HTTPX 0.28 exception hierarchy as used by the
-installed dependency; accepted VS-02 execution baseline
-`81270d9537329eea0477254094ef9fcdce6f17e6`; existing unaccepted VS-03 production/test
-commits `4baf129`, `5c35ae8`, `3a3ef1b`, and `71566e0`; complete cumulative diff from the
-accepted VS-02 baseline to the assigned candidate tip.
-
-**Handoff expectations:** VS03-AC01 through VS03-AC09 evidence; exact observable
-deadline-return traces; cancellation/close and cleanup-gate ledgers; a late-success,
-late-error, and late-close-completion non-interference table; private-capacity
-admission/retention/release table; no-client/no-request evidence for capacity rejection;
-orchestration table linked to VS-02 attempt variants; attempts/waits/budget traces;
-identical-request snapshots; HTTPX taxonomy; final pipeline outcomes; confirmation that
-VS-01/VS-02 contracts and tests remain unchanged; accepted VS-02 implementation baseline
-SHA `81270d9537329eea0477254094ef9fcdce6f17e6`; existing unaccepted VS-03 inclusive
-history from `4baf129` through `71566e0` and its four production/test commit SHAs; every
-new VS-03 correction commit; exact candidate review-tip SHA; complete cumulative
-production/test name-status list and diff SHA-256; deviations; focused results; shared-
-knowledge candidates.
-
-**Risk:** high-risk
-
-**Completion gate:** all VS03 evidence passes; the 15/50-second observable deadlines
-cover body reads and waits and return the committed timeout without awaiting
-cancellation-resistant cleanup; cancellation/close is signalled; late completion cannot
-change outcome, retry, request, provider result, analytical/pipeline/Lens/runtime/
-persistence state, or diagnostics; finite shared active-plus-cleanup capacity retains a
-slot through cleanup, fails saturation before transport with the existing fixed-safe
-typed failure, and releases only after termination; retries occur only for ConnectError
-or VS-02's retry-eligible statuses and only when admitted; every named exception and
-terminal-versus-retry orchestration branch is tested; VS-01 source behavior and VS-02
-classification remain unchanged; logical request identity and secret-safe outcomes hold
-across attempts; current/reference semantics remain unchanged; the slice remains bounded
-to infrastructure orchestration and integration; focused checks pass; independent
-high-risk review of the complete cumulative production/test delta from accepted VS-02 tip
-`81270d9537329eea0477254094ef9fcdce6f17e6` through the exact candidate tip returns
-`SLICE REVIEW PASS`; the review explicitly includes existing commits `4baf129`,
-`5c35ae8`, `3a3ef1b`, `71566e0` and every later correction. The handoff and Coordinator
-acceptance metadata record the baseline, all unaccepted/correction commits, reviewed tip,
-complete name-status set, cumulative diff SHA-256, focused results, and accepted handoff.
-
-### VS-04 — Metric provider-port docstring conformance
-
-**Behavioral goal:** Bring the existing public Metric provider port into repository
-documentation conformance by adding concise, meaningful purpose and behavior docstrings
-to `MetricSeriesProvider` and its public `acquire` method, with no signature, type,
-runtime, provider, pipeline, or public-contract change.
-
-**OpenSpec coverage:** only the missing public-class/interface-method docstring portion
-of task 5.1. All functional requirements/scenarios and tasks 1.1 through 4.6 are already
-accepted and are regression boundaries, not implementation ownership for this slice.
-
-**Dependencies:** VS-03 accepted at execution/Coordinator tip
-`7baae2b4d3e05c55ba2ae8d5a82f2cc03f630a9a`, with reviewed production/test tip
-`bf7cb3469119a8869625aa7f4125b21ed11c00d5` and cumulative digest
-`0d77d5458efce23f5cc7f1c9b9544155c77a812771cd1821b4c8afea83c26f9c`.
-
-**Vertical boundary:** accepted `app.metrics.ports` source -> add class purpose docstring
-and `acquire` behavior docstring -> AST-equivalent module after docstring removal plus
-exact two-location docstring-inventory delta -> unchanged public protocol/signature/types/
-runtime behavior -> full-tree allowlist and focused static/lint proof.
-
-**Expected code impact:** only
-`backend/src/app/metrics/ports.py::MetricSeriesProvider` and
-`MetricSeriesProvider.acquire` canonical one-line docstring insertion spans. Add no test,
-helper, import, annotation,
-signature, statement, formatting-only rewrite, or unrelated cleanup. Coordinator-owned
-plan metadata and new handoff
-`implementation/VS-04-docstring-correction-handoff.md` are separate execution metadata;
-the blocked historical `implementation/VS-04-handoff.md` remains unchanged.
-
-**Contracts consumed/changed:** documents the purpose of the existing public
-`MetricSeriesProvider` protocol and the behavior of its existing `acquire(scope, window)`
-interface. No Python or serialized contract changes; no runtime behavior changes.
-
-**Non-goals:** changing any provider implementation, composition, transport, retry,
-deadline, cleanup, capacity, pipeline, analytical, reference, History, agent, persistence,
-API, schema, dependency, or test behavior; refactoring or formatting unrelated code;
-editing OpenSpec or architecture.
-
-#### Acceptance evidence
-
-| ID | Approved source | Given | When | Then | Proof level | Planned verification |
-|---|---|---|---|---|---|---|
-| VS04-AC01 | Root `AGENTS.md` public class documentation rule | Existing public `MetricSeriesProvider` protocol | Inspect its runtime docstring | A concise meaningful docstring explains that the protocol supplies provider-neutral Metric series acquisition | static + review | `ast.get_docstring` presence/word-count assertion plus human behavior-focused wording review |
-| VS04-AC02 | Root `AGENTS.md` public interface-method documentation rule | Existing public `MetricSeriesProvider.acquire(scope, window)` method | Inspect its runtime docstring | A concise meaningful docstring explains acquisition for the supplied immutable provider scope and exact analysis window without changing signature or semantics | static + review | `ast.get_docstring` assertion and signature/annotation comparison |
-| VS04-AC03 | Full-tree corrective scope | Accepted VS-03 execution baseline and corrective candidate tip | Compare the complete repository name-status delta | It equals the exact four-path allowlist: target port file, mutable plan metadata, unchanged historical stop handoff, and new corrective handoff; every other path fails | repository audit | sorted full-tree name-status comparison and historical-handoff integrity check above |
-| VS04-AC04 | Exact behavior/docstring/source delta | Baseline and candidate `ports.py` | Compare executable AST, complete source-level docstring inventories, and raw reconstructed bytes | ASTs are identical after removing docstrings; every existing docstring span/text is byte-identical; exactly the class and `acquire` gain meaningful docstrings; removing exactly their canonical raw insertion spans reconstructs the accepted baseline byte-for-byte | static + byte audit + review | independent AST equality, source-span/inventory equality, exact two additions, and authoritative reconstruction comparison above |
-| VS04-AC05 | Focused quality gate | The two docstrings and otherwise unchanged module | Run focused compilation/Ruff/static checks | The file parses, lint and format checks pass, and no behavioral/signature change or unrelated diff exists | static + lint | `python3 -m compileall`, targeted Ruff check/format, `git diff --check`, cumulative corrective audit |
-
-**Counterexample guards:** the executable AST comparison covers the complete module, so a
-changed annotation, decorator, import, default, ellipsis, method body, or unrelated
-statement fails. The independent inventory compares every existing docstring location and
-raw value; a third addition, removal, or modification anywhere fails. Full-tree auditing
-fails any unlisted test, source, frontend, OpenSpec, architecture, documentation,
-dependency/configuration, governance, or knowledge path. Presence-only one-word target
-docstrings fail the minimum purpose/behavior check and human wording review. The final
-reconstruction removes only the two fixed raw insertion envelopes and compares bytes, so
-comments, whitespace, blank lines, formatting, newline style, or any other source change
-cannot hide behind semantic AST/docstring equality.
-
-**Focused verification:** `cd backend && uv run ruff check
-src/app/metrics/ports.py`; `cd backend && uv run ruff format --check
-src/app/metrics/ports.py`; `cd backend && uv run python -m compileall -q
-src/app/metrics/ports.py`; the accepted-history, full-tree allowlist, executable-AST,
-source-level docstring-inventory, and authoritative byte-reconstruction audits above;
-`git diff --check`. No test is added or changed.
-
-**Context pack:** root `AGENTS.md` sections 3-4 and 7; this replacement plan's accepted
-VS-03 anchors and corrective audit; current `backend/src/app/metrics/ports.py`; accepted
-VS-01/VS-02/VS-03 handoffs and execution metadata only as frozen regression boundaries;
-blocked historical `implementation/VS-04-handoff.md` identifying the exact docstring gap.
-
-**Handoff expectations:** VS04-AC01 through VS04-AC05 evidence; accepted VS-03 execution
-baseline SHA; exact corrective commit/tip; before/after docstrings; exact production/test
-and full-tree name-status allowlist; historical-handoff integrity; docstring-stripped AST
-equality; complete before/after source-span/byte inventories and exact two-location delta;
-candidate-minus-two-spans byte-identical reconstruction;
-unchanged signature/type confirmation; focused command results; explicit no-test/no-
-behavior/no-unrelated-change audit; deviations and shared-knowledge candidates; new handoff path
-`implementation/VS-04-docstring-correction-handoff.md` without rewriting the blocked
-historical VS-04 handoff.
-
-**Risk:** normal
-
-**Completion gate:** both meaningful docstrings are present; the full-tree delta equals
-the exact four-path allowlist; docstring-stripped ASTs are identical; the complete
-docstring inventory preserves every existing entry and adds exactly the two approved
-locations; removal of exactly those two canonical insertion spans reconstructs the
-accepted VS-03 file byte-for-byte; signatures/types/runtime semantics and every accepted provider/pipeline
-behavior remain unchanged; focused compile/Ruff/format/diff checks pass; one atomic corrective commit and
-the new correction handoff exist; Coordinator records the accepted corrective tip and
-evidence. VS-01,
-VS-02, and VS-03 remain frozen and are not re-reviewed or re-executed.
-
-### VS-05 — Compatibility, documentation, and whole-change conformance
-
-**Behavioral goal:** Make the completed provider operationally understandable and prove
-as a whole that it remains an infrastructure-only injected capability: shared startup,
-capabilities, Observation creation, Metric preflight, fake-based pipeline tests, domain
-imports, public contracts, persistence, and dependency/schema surfaces remain unchanged.
-Document the approved observable-deadline rule: timeout return wins over
-cancellation-resistant cleanup, which is private, state-inert, capacity-bounded, and
-cannot alter the committed result.
-
-**OpenSpec coverage:** conformance rerun of every approved requirement/scenario already
-implemented and owned by frozen VS-01 through VS-03; accepted VS-04 docstring evidence;
-remaining developer/deployment documentation and final audit tasks 5.1-5.4. Tasks 4.5 and
-4.6 remain accepted historical behavior. VS-05 implements no production or test behavior.
-
-**Dependencies:** VS-04 accepted against VS-03 execution baseline
-`7baae2b4d3e05c55ba2ae8d5a82f2cc03f630a9a` with its exact corrective tip recorded in
-Coordinator metadata.
-
-**Vertical boundary:** placeholder-only deployment configuration and developer guidance
--> application startup/composed provider -> mocked production current/reference runs and
-existing public preflight/API/fake/persistence suites -> repository-wide static and
-verification gates -> deployable, provider-neutral change with no new public execution
-surface.
-
-**Expected code impact:** `.env.example`, `docs/development-guide.md`, Coordinator-owned
-task checkboxes, and mutable execution metadata only. No production code or test code may
-be added or changed in this slice. Public provider/interface-method docstrings must already
-be present from accepted VS-04 and are audited here. Any newly discovered implementation
-defect stops execution and requires a new approved re-plan/execution decision; VS-05 may
-not repair it or reopen VS-01 through VS-04.
-
-**Contracts consumed/changed:** documents and verifies existing contracts only. No
-production or test contract changes. Public production-provider class/interface-method
-docstrings must already have been added by their owning implementation slices; VS-04
-audits them.
-
-**Non-goals:** implementing or correcting production behavior/tests; live smoke test;
-secrets in examples; production Metrics model selection; Observation execution/
-orchestration; archive/PR/push; fixing an unrelated pre-existing failure.
-
-#### Acceptance evidence
-
-| ID | Approved source | Given | When | Then | Proof level | Planned verification |
-|---|---|---|---|---|---|---|
-| VS05-AC01 | Documentation task | Placeholder source configuration, approved production policy, and accepted public port docstrings | Read deployment/developer docs and docstrings | Provider configuration/policy and deadline/cleanup/capacity behavior are documented exactly; accepted VS-04 docstrings remain meaningful; no real credentials appear | documentation review + secret scan | `.env.example`/guide/docstring audit against task 5.1 |
-| VS05-AC02 | Shared behavior preservation | Production-valid and production-invalid shared sources | Rerun startup, capabilities, Observation create, and preflight suites without edits | Existing outputs, independent preflight behavior, and provider isolation remain compatible | API + service regression | accepted existing tests with separate ledgers |
-| VS05-AC03 | Provider-neutral pipeline and persistence | Existing fake/real provider matrices from accepted slices | Rerun Metric and persistence tests without edits | Reference, History, agent, result, rollback, and persistence behavior remain unchanged; no raw provider data persists | service + persistence + static audit | accepted existing suites and import scan |
-| VS05-AC04 | Scope/dependency/schema/API audit | Accepted VS-03 execution baseline, accepted VS-04 corrective tip, and complete final tree | Review change | VS-04 changed only target docstrings; VS-05 adds no production/test change; no dependency, schema, API, analytical, persistence, or orchestration change exists | repository audit | corrective AST/path audit, no-post-corrective committed/index/worktree diff, manifest/migration/route/contract checks |
-| VS05-AC05 | Final verification and review | Accepted slices, complete task state, and clean tree | Run full audits, strict validation, repository checks, official OpenSpec verification when installed, and `ipo-review-implementation` independently | All gates pass; all tasks reconcile; no unresolved `BLOCKER`, `HIGH`, or `MEDIUM` finding remains; any new finding at those severities stops for human triage and approved follow-up/re-plan rather than repair in VS-05; `LOW` follows existing governance | repository gate + independent review | recorded integrity/task/scope/check results, optional official verification result, complete severity inventory/disposition, and final repository review report |
-
-VS05-AC05 includes this separate final-completion assertion after the authorized
-transition audit above. It fail-closes unless the approved snapshot, current `tasks.md`,
-and frozen task ownership matrix contain the same 24 unique ordered task IDs; every
-current task is checked; and every owner is `COMPLETE` with accepted commit and handoff
-metadata:
-
-```bash
-set -euo pipefail
-approved_sha="${APPROVED_PLANNING_SHA:?set APPROVED_PLANNING_SHA}"
-git cat-file -e "$approved_sha^{commit}"
-change_dir=openspec/changes/add-prometheus-metric-provider
-final_task_audit_dir=$(mktemp -d)
-git show "$approved_sha:$change_dir/tasks.md" > "$final_task_audit_dir/tasks.baseline"
-cp "$change_dir/tasks.md" "$final_task_audit_dir/tasks.current"
-
-python3 - \
-  "$final_task_audit_dir/tasks.baseline" \
-  "$final_task_audit_dir/tasks.current" \
-  "$change_dir/implementation-plan.md" <<'PY'
-import re
-import sys
-from pathlib import Path
-
-TASK = re.compile(r"^- \[([ x])\] (\d+\.\d+)\b")
-
-
-def task_entries(path: str) -> list[tuple[str, str]]:
-    return [
-        (match.group(2), match.group(1))
-        for line in Path(path).read_text().splitlines()
-        if (match := TASK.match(line))
-    ]
-
-
-baseline = task_entries(sys.argv[1])
-current = task_entries(sys.argv[2])
-if len(baseline) != 24 or len({task_id for task_id, _ in baseline}) != 24:
-    raise SystemExit("approved snapshot must contain exactly 24 unique task IDs")
-if [task_id for task_id, _ in current] != [task_id for task_id, _ in baseline]:
-    raise SystemExit("current task IDs/count/order differ from approved snapshot")
-if any(state != "x" for _, state in current):
-    raise SystemExit("all 24 approved tasks must be checked at final conformance")
-
-plan_lines = Path(sys.argv[3]).read_text().splitlines()
-overview = {}
-owners = {}
-in_overview = False
-in_ownership = False
-for line in plan_lines:
-    if line == "## Execution overview":
-        in_overview = True
-        continue
-    if in_overview and line.startswith("## "):
-        in_overview = False
-    if line == "### Task ownership":
-        in_ownership = True
-        continue
-    if in_ownership and line.startswith("## "):
-        in_ownership = False
-    if in_overview and re.match(r"^\| VS-\d\d ", line):
-        cells = [cell.strip() for cell in line.strip("|").split("|")]
-        overview[cells[0]] = (cells[4], cells[5], cells[6])
-    if in_ownership and re.match(r"^\| \d+\.\d+ ", line):
-        cells = [cell.strip() for cell in line.strip("|").split("|")]
-        task_id = cells[0].split(maxsplit=1)[0]
-        if task_id in owners:
-            raise SystemExit(f"duplicate ownership row for task {task_id}")
-        owners[task_id] = set(re.findall(r"VS-\d\d", cells[1]))
-
-approved_ids = [task_id for task_id, _ in baseline]
-if list(owners) != approved_ids:
-    raise SystemExit("frozen ownership matrix task IDs/count/order are not exact")
-for task_id in approved_ids:
-    if not owners[task_id]:
-        raise SystemExit(f"task {task_id} has no explicit owner")
-    for owner in owners[task_id]:
-        status, commit, handoff = overview.get(owner, ("", "-", "-"))
-        if status != "COMPLETE" or commit == "-" or handoff == "-":
-            raise SystemExit(
-                f"task {task_id} owner {owner} lacks passed gate/accepted metadata"
-            )
-PY
-```
-
-After every approved-artifact and task audit succeeds, run the remaining final gate in a
-single fail-fast shell. A successful exit means every listed command and assertion passed:
-
-```bash
-set -euo pipefail
-final_gate_dir=$(mktemp -d)
-current_branch=$(git branch --show-current)
-test "$current_branch" = "feature/add-prometheus-metric-provider"
-openspec validate add-prometheus-metric-provider --strict
-make check
-git diff --check
-git status --porcelain > "$final_gate_dir/status"
-test ! -s "$final_gate_dir/status"
-```
-
-**Counterexample guards:** documentation audit fails if it says cleanup completes before
-the timeout returns, permits a late result/retry/request/state mutation, exposes a
-capacity value as public configuration, or omits saturation's pre-transport fixed-safe
-failure. Compatibility runs use a production-invalid source that shared
-Settings still accepts; preflight tests record attempts and warnings so replacing it with
-the production policy fails; persistence tests include every Metric terminal result and
-rollback path; static scans cover both imports and serialized artifacts; secret scan uses
-sentinel values absent from placeholder docs.
-
-**Focused verification:** in one fail-fast Coordinator gate, run the committed/index/
-worktree immutable, task-transition, task-ownership, and frozen-plan audits above; the
-24/24 final task assertion; focused provider/configuration/preflight/Metrics/integration
-tests; `openspec validate add-prometheus-metric-provider --strict`; `make check`;
-accepted VS-03 history digest audit; accepted VS-04 corrective AST/path audit;
-no-post-corrective committed/index/worktree production/test audit; replacement-planning-
-SHA normative integrity audit; `git diff --check`; final independent implementation
-review through `ipo-review-implementation` (preceded by `openspec-verify-change` when
-installed); and the final clean-status assertion. Every shell block starts with
-`set -euo pipefail`, and loop comparisons use explicit `if ! ...; then exit 1; fi`.
-
-**Context pack:** accepted VS-04 corrective handoff; frozen VS-03 and earlier handoffs;
-blocked historical VS-04 handoff as stop evidence; complete approved
-OpenSpec; all architecture/ADR sources listed above; `.agents/PROJECT_KNOWLEDGE.md`;
-development guide/workflow; root Makefile and manifests; replacement-planning-SHA
-integrity results; accepted VS-03 review/execution anchors and digest; accepted VS-04
-corrective tip/AST/path evidence; final changed documentation and all existing regressions.
-
-**Handoff expectations:** VS05-AC01 through VS05-AC05 evidence; documentation checklist
-including observable deadline/late-cleanup/private-capacity policy; public docstring
-audit; exact focused and full command results; regression counts;
-approved-SHA committed/index/worktree artifact/task/plan integrity results; explicit
-24/24 checked-task and all-owner acceptance result; accepted VS-03 execution baseline and
-accepted VS-04 corrective tip; docstring-only AST/path proof; no later committed/index/
-worktree production/test change; dependency/schema/API/import/secret audits; final
-independent implementation-review result; final clean status; deviations and shared-
-knowledge candidates; complete finding severities/dispositions; explicit archive-readiness
-only when no unresolved `BLOCKER`/`HIGH`/`MEDIUM` remains, otherwise an exact stop and
-human-triage statement.
-The new final handoff path is `implementation/VS-05-handoff.md`.
-
-**Risk:** normal
-
-**Completion gate:** VS05 evidence and all earlier acceptance IDs regress green without
-production/test edits in VS-05; documentation and docstrings are complete,
-secret-safe, and match the approved observable-deadline/state-inert-cleanup/private-
-capacity policy and accepted VS03 evidence; accepted VS-04 remains docstring-only; task
-ownership is reconciled; focused tests, strict OpenSpec validation, accepted-history and
-corrective-baseline audits, approved-artifact integrity, checkbox-only transition audit,
-exact 24/24 completion/ownership assertion, mutable-only plan audit, scope/dependency/
-schema/API/secret audits, clean status, and `make check` pass. The final independent
-`ipo-review-implementation` review must leave no unresolved `BLOCKER`, `HIGH`, or
-`MEDIUM` finding; run official `openspec-verify-change` first when installed. Any new
-finding at those severities stops execution for human triage and approved follow-up or
-re-plan as required; VS-05 makes no repair. `LOW` findings are handled only under existing
-repository governance. One atomic documentation/conformance commit and handoff exist,
-followed by Coordinator acceptance metadata.
+| VS-01 | Source-safe transport-free provider composition | none | accepted high-risk | COMPLETE | see anchor | accepted |
+| VS-02 | Bounded single-attempt acquisition and classification | VS-01 | accepted high-risk | COMPLETE | see anchor | accepted |
+| VS-03 | Deadlines, retries, state-inert cleanup, bounded capacity | VS-02 | accepted high-risk | COMPLETE | see anchor | accepted |
+| C-01 | Add two missing public provider-port docstrings | VS-03 | non-behavioral correction | PLANNED | - | `implementation/C-01-handoff.md` |
+| FINAL | Standard final conformance and implementation review | C-01 | normal | PLANNED | - | final review record |
+
+## Accepted implementation summary
+
+- **VS-01:** accepted source selection, production-only validation, zero-request typed
+  outcomes, application composition, and provider-to-pipeline integration.
+- **VS-02:** accepted request/authentication behavior, response bounds and mapping,
+  warning policy, and single-attempt classification.
+- **VS-03:** accepted 15-second attempt and 50-second acquisition result deadlines,
+  timeout commitment, cancellation/close signalling, state-inert late cleanup, finite
+  active-plus-cleanup capacity, retries, and current/reference integration.
+
+Detailed evidence remains in the handoffs and Git history.
+
+## Remaining execution
+
+### C-01 — Metric provider-port docstring conformance
+
+**Classification:** non-behavioral conformance correction
+
+**Behavioral goal:** Add meaningful, concise docstrings to the existing public
+`MetricSeriesProvider` protocol and its public `acquire` interface method.
+
+**OpenSpec coverage:** the remaining public class/interface-method documentation portion
+of task 5.1. No functional requirement or scenario changes.
+
+**Dependencies:** accepted VS-03; use its execution anchor as the correction baseline.
+
+**Vertical boundary:** accepted `backend/src/app/metrics/ports.py` -> two docstrings ->
+unchanged interface/runtime behavior -> focused checks and independent correction review.
+
+**Expected code impact:** only the two docstrings in
+`backend/src/app/metrics/ports.py`, plus `implementation/C-01-handoff.md` and concise
+Coordinator status updates.
+
+**Contracts consumed/changed:** documents the existing provider-neutral protocol. No
+signature, annotation, type, public API, serialized contract, or behavior changes.
+
+**Non-goals:** refactoring, unrelated formatting, tests, imports, executable statements,
+or any provider, pipeline, analysis, reference, History, agent, persistence, lifecycle,
+API, schema, dependency, OpenSpec, or architecture change.
+
+**Focused verification:**
+
+- Inspect the complete correction commit diff from the VS-03 execution anchor.
+- Confirm the only production file is `backend/src/app/metrics/ports.py` and its intended
+  production diff contains only the two docstring additions.
+- Confirm no signature, annotation, import, executable statement, or runtime behavior was
+  intentionally changed.
+- Confirm no tests, approved OpenSpec, architecture, dependencies, configuration, or
+  unrelated source changed in the corrective implementation.
+- Run Python compilation and targeted Ruff lint/format checks for `ports.py`.
+- Run `git diff --check`.
+- Obtain fresh independent review of the narrow correction diff.
+
+Normal Git diff inspection is sufficient. Do not add a custom source parser, byte-level
+verifier, or metadata-validation framework.
+
+**Context pack:** root documentation rules; this plan; accepted VS-03 anchor;
+`backend/src/app/metrics/ports.py`; accepted handoffs as regression boundaries; historical
+`implementation/VS-04-handoff.md` identifying the conformance defect.
+
+**Handoff expectations:** `implementation/C-01-handoff.md` records the correction commit,
+the two docstrings, changed-file summary, focused checks, independent review result, and
+confirmation of no intentional behavior/signature/type change.
+
+**Risk:** normal; documentation-only and non-behavioral
+
+**Completion gate:** both docstrings are meaningful; the correction diff is clean and
+limited to those additions; focused compile/lint/format and diff checks pass; independent
+review confirms the correction is non-behavioral and in scope; one correction commit and
+handoff are accepted by the Coordinator.
+
+No further vertical-slice design review is required for the docstring content after this
+simplified plan is approved.
+
+### FINAL — Non-corrective repository conformance
+
+**Behavioral goal:** Verify the complete change with repository-standard tooling and
+independent review without implementing or correcting behavior.
+
+**OpenSpec coverage:** final verification of every approved requirement/scenario and tasks
+5.1–5.4.
+
+**Dependencies:** accepted C-01 correction.
+
+**Vertical boundary:** accepted implementation/correction -> standard checks -> independent
+implementation review -> archive-readiness or explicit stop.
+
+**Expected code impact:** developer/deployment documentation authorized by task 5.1, task
+checkbox updates after owning work is accepted, and concise Coordinator status only. No
+production or test behavior changes.
+
+**Contracts consumed/changed:** none.
+
+**Non-goals:** fixing defects, changing tests to obtain a pass, or altering approved
+behavior, contracts, persistence, lifecycle, dependencies, or architecture.
+
+**Focused verification:**
+
+- Reconcile all 24 approved task checkboxes with accepted work.
+- Run `openspec validate add-prometheus-metric-provider --strict`.
+- Run `make check`.
+- Run database-enabled verification when required and available; report unavailable or
+  skipped checks accurately.
+- Run official OpenSpec verification when installed.
+- Run fresh `ipo-review-implementation` review of the complete change.
+- Inspect final Git status and diff for scope and cleanliness.
+
+**Context pack:** complete approved OpenSpec and architecture references; accepted
+handoffs; C-01 handoff/review; complete current diff; repository development workflow.
+
+**Handoff expectations:** concise final record containing task state, command results,
+database-verification status, review findings/dispositions, scope summary, and archive-
+readiness or stop reason.
+
+**Risk:** normal; verification only
+
+**Completion gate:** all tasks reconcile; strict OpenSpec validation and `make check`
+pass; required database verification is passed or accurately dispositioned; final review
+has no unresolved `BLOCKER`, `HIGH`, or `MEDIUM` finding; Git state/diff is clean and in
+scope; no substantive behavior changed during FINAL.
+
+If final review finds a substantive defect, stop for human triage. Do not repair it inside
+FINAL. `LOW` findings follow existing repository governance.
 
 ## Coverage matrix
 
-Coverage target: **8 requirements, 46 acceptance scenarios, and 24 tasks**. A requirement
-or task shared across slices completes only when every listed portion passes its owning
-gate.
-
 ### Requirement ownership
 
-| Approved requirement | Owning slice(s) | Verification |
+| Approved requirement | Accepted owner | Final verification |
 |---|---|---|
-| Resolve a server-managed Prometheus source without exposing credentials | VS-01, VS-02 | VS01-AC01/02/05/06/08; VS02-AC02 |
-| Query the exact current or reference window through HTTP API v1 | VS-02, VS-03 | VS02-AC01/09; VS03-AC02 |
-| Map one float series into the provider-neutral sample contract | VS-02 | VS02-AC03/04 |
-| Fail closed on warning annotations or excessive Prometheus responses | VS-02 | VS02-AC05/06/08 |
-| Bound acquisition time and map failures through existing typed outcomes | VS-01, VS-02, VS-03 | VS01-AC01-04; VS02-AC05/07/08; VS03-AC01-09 |
-| Compose and verify the provider behind the existing Metric port | VS-01, VS-02, VS-03 | VS01-AC03/04/07; VS02-AC09; VS03-AC07-09 |
-| Acquire metric series only through the internal provider boundary | VS-01, VS-02, VS-03 | VS01-AC03/07; VS02-AC09; VS03-AC07-09 |
-| Persist terminal Metric outcome atomically through the existing repository | VS-05 | VS05-AC03/04 |
+| Resolve a server-managed Prometheus source without exposing credentials | VS-01/VS-02 | FINAL |
+| Query the exact current or reference window through HTTP API v1 | VS-02/VS-03 | FINAL |
+| Map one float series into the provider-neutral sample contract | VS-02 | FINAL |
+| Fail closed on warning annotations or excessive Prometheus responses | VS-02 | FINAL |
+| Bound acquisition time and map failures through existing typed outcomes | VS-03 | FINAL |
+| Compose and verify the provider behind the existing Metric port | VS-01–VS-03 | FINAL |
+| Acquire metric series only through the internal provider boundary | VS-01–VS-03 | FINAL |
+| Persist terminal Metric outcome atomically through the existing repository | accepted Metrics pipeline | FINAL |
 
 ### Scenario ownership
 
-| Approved scenario | Owning slice | Acceptance evidence |
-|---|---|---|
-| Resolve a configured source by exact ID | VS-01 | VS01-AC01/02 |
-| Keep a Prometheus credential secret | VS-01, VS-02 | VS01-AC06; VS02-AC02/08 |
-| Keep the internal Basic username compatible but out of failures | VS-01, VS-02 | VS01-AC06; VS02-AC02/08 |
-| Report an unavailable source safely | VS-01 | VS01-AC01 |
-| Reject an unsafe authenticated target | VS-01 | VS01-AC02/04 |
-| Preserve shared source consumers for a production-invalid source | VS-01 | VS01-AC05 |
-| Acquire the current window exactly | VS-02 | VS02-AC01 |
-| Preserve one logical request across retries | VS-03 | VS03-AC02 |
-| Construct exact root and prefixed targets | VS-02 | VS02-AC01 |
-| Reject an ambiguous path before request construction | VS-01 | VS01-AC02 |
-| Acquire a configured reference through the same operation | VS-02 | VS02-AC09 |
-| Bound one hour to the accepted resolution | VS-02 | VS02-AC01 |
-| Map one valid float series | VS-02 | VS02-AC03 |
-| Preserve non-finite values for deterministic quality assessment | VS-02 | VS02-AC03 |
-| Treat no series as successful empty acquisition | VS-02 | VS02-AC04/09 |
-| Reject a multi-series or histogram result | VS-02 | VS02-AC04 |
-| Reject an oversized response without truncation | VS-02 | VS02-AC05 |
-| Reject a warning-annotated success response | VS-02 | VS02-AC06 |
-| Keep informational annotations operational | VS-02 | VS02-AC06 |
-| Reject malformed successful annotations | VS-02 | VS02-AC06 |
-| Retry an eligible attempt outcome within the hard budget | VS-03 | VS03-AC02/03 |
-| Reject a retry that cannot fit the remaining acquisition budget | VS-03 | VS03-AC03 |
-| Admit a retry that fits the remaining acquisition budget | VS-03 | VS03-AC03 |
-| Complete on the initial attempt | VS-02, VS-03 | VS02-AC01/03; VS03-AC02 |
-| Complete on retry one | VS-03 | VS03-AC02 |
-| Complete on retry two | VS-03 | VS03-AC02 |
-| Exhaust all HTTP attempts | VS-03 | VS03-AC02/03 |
-| Map the HTTPX exception hierarchy deterministically | VS-03 | VS03-AC04/05 |
-| Do not retry a deterministic provider rejection | VS-03 | VS03-AC06 |
-| Map a proven timeout without extending the acquisition budget | VS-02, VS-03 | VS02-AC07; VS03-AC01/05/08 |
-| Bound post-timeout transport cleanup | VS-03 | VS03-AC01/05/08/09 |
-| Require a strict timeout or canceled error envelope | VS-02 | VS02-AC07 |
-| Reject an invalid error envelope as timeout proof | VS-02 | VS02-AC07 |
-| Do not infer timeout from a bare HTTP 503 | VS-02 | VS02-AC07/08 |
-| Let body-bound failure precede retriable status | VS-02 | VS02-AC05 |
-| Classify a complete malformed body by status before success validation | VS-02 | VS02-AC05/07 |
-| Preserve current and reference failure semantics | VS-01, VS-02, VS-03 | VS01-AC03/04; VS02-AC09; VS03-AC07 |
-| Inject the real provider without domain coupling | VS-01 | VS01-AC03/04/07 |
-| Verify provider integration without live credentials | VS-01, VS-02, VS-03 | VS01-AC03; VS02-AC01-09; VS03-AC01-07 |
-| Acquire zero configured references | VS-02 | VS02-AC09 |
-| Acquire one configured reference | VS-02 | VS02-AC09 |
-| Acquire multiple references independently | VS-02 | VS02-AC09 |
-| Test without provider transport | VS-01 | VS01-AC03/07 |
-| Round-trip all Metric result variants | VS-05 | VS05-AC03 |
-| Roll back persistence failure | VS-05 | VS05-AC03 |
-| Avoid transport, model, and framework coupling | VS-01, VS-05 | VS01-AC07; VS05-AC03/04 |
+Every approved scenario remains owned by its accepted implementation phase. The exact
+scenario inventory is unchanged in the approved specs; FINAL re-runs it through standard
+tests and review.
+
+| Approved scenario group | Accepted owner |
+|---|---|
+| Source resolution, credential safety, unsafe targets, shared-consumer compatibility | VS-01/VS-02 |
+| Exact current/reference request, target/path, resolution, and logical retry identity | VS-01–VS-03 |
+| Float-series, empty/multiple-series, histogram, sample-fidelity mapping | VS-02 |
+| Body/sample bounds, warnings, infos, malformed annotations | VS-02 |
+| Retry eligibility/admission/counts/exhaustion and HTTPX taxonomy | VS-03 |
+| Deadline commitment, error/status precedence, late cleanup, bounded capacity | VS-02/VS-03 |
+| Current/reference failure and provider-neutral pipeline integration | VS-01–VS-03 |
+| Zero/one/multiple reference and transport-free pipeline behavior | VS-01/VS-02 |
+| Metric result round-trip, rollback, and coupling avoidance | accepted Metrics pipeline/VS-01–VS-03 |
 
 ### Task ownership
 
-| OpenSpec task | Owning slice(s) | Verification |
-|---|---|---|
-| 1.1 Preserve shared loading; selected-source production validation | VS-01 | VS01-AC02/05/08 |
-| 1.2 Production boundary and credential safety tests | VS-01, VS-02 | VS01-AC02/06; VS02-AC02/08 |
-| 1.3 Source-aware provider composer/resolver | VS-01 | VS01-AC01/02/07 |
-| 1.4 Lifespan/state port-only wiring | VS-01 | VS01-AC03/07 |
-| 2.1 Exact bounded range request and path grammar | VS-01, VS-02, VS-03 | VS01-AC01/02/04; VS02-AC01; VS03-AC02 |
-| 2.2 Bounded response streaming and cleanup | VS-02, VS-03 | VS02-AC05; VS03-AC01/08/09 |
-| 2.3 Strict success/matrix/sample mapping | VS-02 | VS02-AC03-05 |
-| 2.4 Preserve samples for deterministic preparation | VS-02 | VS02-AC03 |
-| 2.5 Warning/info and diagnostic leakage policy | VS-02 | VS02-AC06-08 |
-| 3.1 Hard attempt/acquire deadlines and cleanup | VS-03 | VS03-AC01/05/08/09 |
-| 3.2 Exact retries and remaining-budget admission | VS-03 | VS03-AC02/03 |
-| 3.3 Ordered classification table and safe diagnostics | VS-02, VS-03 | VS02-AC05-08; VS03-AC01/04-06 |
-| 3.4 Retry/deadline/precedence tests | VS-03 | VS03-AC01-09 |
-| 3.5 Exact acquisition-attempt tests | VS-01, VS-02, VS-03 | VS01-AC01-04; VS02-AC01; VS03-AC02/03 |
-| 4.1 Exact request-target tests | VS-01, VS-02 | VS01-AC02; VS02-AC01 |
-| 4.2 Deterministic-step boundary tests | VS-02 | VS02-AC01 |
-| 4.3 HTTP/auth/current-reference boundary tests | VS-02, VS-03 | VS02-AC01/02/09; VS03-AC02 |
-| 4.4 Response/error/annotation/body matrix | VS-02, VS-03 | VS02-AC03-08; VS03-AC04-06 |
-| 4.5 Injected Metrics pipeline tests | VS-01, VS-02, VS-03 | VS01-AC03/04; VS02-AC09; VS03-AC07/08 |
-| 4.6 Startup/capabilities/create/preflight regressions | VS-01 | VS01-AC05/08 |
-| 5.1 Docstrings and developer/deployment documentation | VS-01, VS-02, VS-03, VS-04, VS-05 | VS04-AC01/02; VS05-AC01 |
-| 5.2 Scope/dependency/schema/semantics audit | VS-05 | VS05-AC03/04 |
-| 5.3 Focused provider/configuration/preflight/pipeline tests | VS-01, VS-02, VS-03, VS-05 | Accepted slice gates; VS05-AC02/03/05 |
-| 5.4 Strict OpenSpec validation and `make check` | VS-05 | VS05-AC05 |
+| Approved task | Owner/status |
+|---|---|
+| 1.1–1.4 | accepted VS-01 |
+| 2.1–2.5 | accepted VS-02 |
+| 3.1–3.5 | accepted VS-03 |
+| 4.1–4.6 | accepted across VS-01–VS-03 |
+| 5.1 | C-01 owns the two missing interface docstrings; FINAL completes documentation and reconciliation |
+| 5.2 | FINAL |
+| 5.3 | FINAL |
+| 5.4 | FINAL |
 
 ## Frozen plan and mutable execution state
 
-Frozen at the exact independently reviewed and explicitly human-approved planning SHA:
+After focused independent review and explicit human approval, C-01 and FINAL ownership,
+dependency, scope, and gates are frozen. VS-01–VS-03 remain accepted/frozen.
 
-- the planning-review snapshot/approval protocol, human-approved SHA definition,
-  pre-execution readiness protocol, approved-artifact
-  integrity rule, and task checkbox-only rule;
-- the distinct normative-planning versus implementation-history baseline model; accepted
-  VS-02/VS-03 execution and review anchors/digest; corrective baseline, path allowlist,
-  executable AST-equivalence and source-level docstring-inventory audits, and final
-  no-later-production/test protocol;
-- implementation branch, slice count/order/graph, goals, dependencies, vertical
-  boundaries, risk classifications, and completion gates;
-- acceptance IDs, approved sources, GIVEN/WHEN/THEN assertions, proof levels,
-  counterexample guards, and planned ownership;
-- requirement/scenario/task coverage matrices, expected code impact, contract boundaries,
-  non-goals, context packs, and handoff expectations.
-
-Mutable only by the Coordinator after approval:
-
-- top-level `Status` and `Human-approved planning SHA` fields only;
-- VS-04 execution-overview `Status`, `Commit`, and exact correction `Handoff` cells;
-- during VS-05 only, VS-05 execution-overview `Status`, `Commit`, and exact `Handoff`
-  cells;
-- append-only execution-note records using only the exact phase-specific event prefixes
-  enforced by the structured plan audit; prior notes and arbitrary free text are frozen;
-- `tasks.md` checkbox state only as `[ ] -> [x]`, after every owning slice portion passes;
-  no task transition is allowed during VS-04 because task 5.1 is shared with VS-05.
-
-The structured audit script, not this prose summary, is the mechanical authority for
-allowed plan mutations. No other plan line, field, table cell, or execution-note content
-is mutable.
-
-A later slice may detect a regression but may not silently take ownership of missing
-earlier behavior. VS-01, VS-02, and VS-03 are accepted/frozen and cannot be reopened by
-this replacement plan. VS-04 may correct only the two approved docstring omissions. VS-05
-is non-corrective: any implementation defect, source conflict, new behavior, missing
-dependency approval, contract/schema/API change, or slice-structure problem stops for a
-new approved re-plan/execution decision.
+Coordinator bookkeeping is limited to phase status, accepted commit, handoff/review
+record, verification result, stop reason, and approved task-checkbox transitions. Git,
+handoffs, and review artifacts provide detailed traceability; this plan does not duplicate
+them.
 
 ## Execution notes
 
-Mutable Coordinator-owned execution metadata only. Do not place new requirements,
-acceptance obligations, proof-level changes, or redesign decisions here.
-
-- Planning record (2026-09-03): branch `feature/add-prometheus-metric-provider` initially
-  pointed to `ff813a6`; the approved change artifacts and revised draft plan required one
-  complete planning-review snapshot commit before the next independent review. No
-  production code or tests were changed during planning. The reviewer must record the
-  resulting exact SHA, and human approval must identify that same SHA. The Coordinator
-  records it in mutable metadata only after approval.
-- Accepted execution order through VS-03 is frozen. Remaining execution is sequential:
-  new normal-risk VS-04 correction, then normal-risk VS-05 final conformance. No
-  concurrent dispatch.
-- Every implementer uses a fresh context, reads the exact context pack and accepted
-  predecessor handoff, runs focused verification/self-review, creates one atomic commit
-  by default, and writes the repository-standard handoff.
-- Readiness record (2026-09-03): the Coordinator executed the complete pre-VS-01
-  approved-artifact committed/index/worktree, checkbox-transition, task-ownership, and
-  frozen-plan audits against `75b97960704af790b2d8c3e8b6ce84a9e400151a`; strict OpenSpec
-  validation, branch verification, and the required clean-status assertion passed before
-  execution metadata was recorded.
-- VS-01 active assignment (2026-09-03): delegated to a fresh Slice Implementer; no
-  predecessor handoff is required.
-- VS-01 acceptance (2026-09-03): focused gate independently reproduced as 148 passed,
-  28 existing PostgreSQL-gated skips; targeted Ruff/format and diff checks passed.
-  Independent high-risk review of `03fef65..6499d90` returned `SLICE REVIEW PASS` with
-  no findings. Accepted implementation commit `1217266598aa5f20b902e9ae2edfe1da2ffed6c2`
-  and handoff `implementation/VS-01-handoff.md`; no shared-knowledge candidates.
-- VS-02 active assignment (2026-09-03): delegated to a fresh Slice Implementer after
-  accepted VS-01 handoff and high-risk gate.
-- VS-02 high-risk review (2026-09-04): `SLICE CHANGES REQUIRED` on MEDIUM evidence
-  gaps only: incomplete approved deterministic-step vectors, incomplete per-status
-  oversized-versus-bounded malformed precedence pairs, and incomplete required
-  annotation/error matrix coverage. A fresh corrective implementer is active; VS-02
-  remains `IN_PROGRESS` and VS-03 is not ready.
-- VS-02 corrective re-review (2026-09-04): `SLICE CHANGES REQUIRED` on remaining MEDIUM
-  evidence gaps only. Timeout/canceled proof must discriminate against every retryable
-  status with independent valid warnings-only and infos-only envelopes; malformed infos
-  must be covered on an error envelope. A fresh corrective implementer is active; VS-02
-  remains `IN_PROGRESS` and VS-03 is not ready.
-- VS-02 final review (2026-09-04): `SLICE CHANGES REQUIRED` on one remaining MEDIUM
-  evidence gap only. VS02-AC09 requires empty-current completed-insufficient behavior
-  through the real composed provider, not a fake provider. A fresh corrective implementer
-  is active; VS-02 remains `IN_PROGRESS` and VS-03 is not ready.
-- VS-02 acceptance (2026-09-04): focused gate independently reproduced as 193 passed,
-  28 existing PostgreSQL-gated skips; targeted Ruff/format and diff checks passed.
-  Initial high-risk review findings were corrected through bounded VS-02 evidence-only
-  commits. The final fresh re-review returned `SLICE REVIEW PASS` with no findings;
-  accepted code commits are `99bce0803fb8781151b085d06925d1edf3dacae2`,
-  `d01a10477158d316b18eac43fc48abca5ddd01db`,
-  `0d355201d94da59db062afbad794cbce96a98e67`, and
-  `ee4d364bb95a954b84b93dd33f0203fa9d72cb1b`, with handoff
-  `implementation/VS-02-handoff.md`. No shared-knowledge candidates.
-- Accepted VS-02 execution baseline (2026-09-04): Coordinator acceptance metadata was
-  committed at `81270d9537329eea0477254094ef9fcdce6f17e6`; this is the exact last
-  accepted VS-02 execution tip and the immutable resumed-implementation baseline. It
-  contains all accepted VS-01/VS-02 code, evidence, task state, handoffs, and acceptance
-  metadata. No later production/test commit is accepted.
-- VS-03 active assignment (2026-09-04): delegated to a fresh Slice Implementer after
-  accepted VS-02 handoff and final high-risk gate.
-- VS-03 high-risk review (2026-09-04): `SLICE CHANGES REQUIRED` with HIGH findings that
-  generic HTTPX request/client errors could escape typed provider outcomes and
-  cancellation cleanup could exceed the hard deadline, plus a MEDIUM finding that retry
-  admission anchored the acquisition budget too late. A fresh corrective implementer is
-  active within the approved VS-03 resilience boundary; VS-03 remains `IN_PROGRESS` and
-  VS-04 is not ready.
-- VS-03 corrective re-review (2026-09-04): `SLICE CHANGES REQUIRED` with one remaining
-  HIGH finding: a typed timeout may return while detached response/client cleanup is
-  still running. A fresh corrective implementer is active to restore the approved
-  resource-closure/no-post-deadline-work semantics without changing scope; VS-03 remains
-  `IN_PROGRESS` and VS-04 is not ready.
-- VS-03 stop/escalation (2026-09-04): `SLICE BLOCKED BY CONTRACT CONFLICT`. The approved
-  hard 15-second attempt/50-second acquire deadline and no-post-deadline-work semantics
-  require an absolute return bound, while the same approved gate requires cancellation-
-  resistant response/client cleanup to complete before the typed timeout returns. For an
-  arbitrary cleanup operation that catches cancellation and awaits an unbounded external
-  operation, returning at the absolute deadline leaves cleanup active; awaiting closure
-  exceeds the deadline. The approved sources impose neither a priority nor a bounded/
-  cooperative transport-cleanup contract. Human source resolution is required before
-  any further VS-03 correction, re-planning, re-review, or VS-04 dispatch.
-- Re-planning record (2026-09-04): the human-approved source clarification at
-  `2180c7d14862187635de21d716f27f6b3b9ff93f` gives the observable acquire deadline
-  priority over cancellation-resistant cleanup. This correction preserves the accepted
-  VS-01/VS-02 graph, commits, handoffs, and evidence, replaces only the frozen VS-03/
-  VS-04 plan content, and requires a new independently reviewed planning snapshot and
-  explicit approval before VS-03 resumes.
-- Replacement-plan review record (2026-09-04): snapshot
-  `9fc35298419efdab2025d08c938b35b83b22df0e` received `PLAN CHANGES REQUIRED` because
-  it incorrectly risked using its own ancestry as the implementation baseline. It is
-  superseded and must not be approved. Existing unaccepted VS-03 production/test commits
-  are `4baf129efeb84ba40c507934ad9e4451cf59b5b0`,
-  `5c35ae84e141169375faff4e7f1c909ccb774cbb`,
-  `3a3ef1b6e865afb257ab6ba72052cc80415a3acb`, and
-  `71566e0b7b98251cd40f58361659ff52b76379df`; resumed review begins at accepted VS-02
-  tip `81270d9537329eea0477254094ef9fcdce6f17e6` and includes all four plus every later
-  VS-03 correction. VS-03 remains stopped pending a new reviewed and approved replacement
-  planning SHA; no implementation is active and VS-04 is not ready.
-- Resumed VS-03 readiness (2026-09-04): human approved replacement planning snapshot
-  `b24e82bdf80893a93e313836666fdb1e4840ef37`. The complete committed/index/worktree
-  approved-artifact, task-transition/ownership, and frozen-plan integrity audit passed;
-  strict OpenSpec validation, expected branch, and empty-status checks passed. The
-  required cumulative accepted-VS-02-to-resume-tip audit passed from
-  `81270d9537329eea0477254094ef9fcdce6f17e6` through `b24e82bdf80893a93e313836666fdb1e4840ef37`.
-  It recorded existing unaccepted commits `4baf129`, `5c35ae8`, `3a3ef1b`, and `71566e0`,
-  production/test paths `backend/src/app/infrastructure/prometheus/composition.py`,
-  `backend/tests/test_metric_analysis_pipeline.py`, and
-  `backend/tests/test_prometheus_metric_provider_resilience.py`, and cumulative diff
-  SHA-256 `5db57215f87d55859e95f70039e87dbdbf72b7cf166162973c49fd8071b3faef`.
-  VS-03 is IN_PROGRESS; a fresh Slice Implementer is the only active assignment.
-- VS-03 resumed high-risk review (2026-09-04): `SLICE CHANGES REQUIRED` on three
-  MEDIUM evidence gaps within the approved VS-03 boundary: missing retry-two exact-fit
-  admission proof; missing late close-exception and pipeline/Lens/persistence
-  non-interference proof after timeout; and missing saturation proof while capacity is
-  occupied by active transport work. No VS-01/VS-02 defect, source conflict, dependency,
-  API/schema, or scope drift was found. The reviewer independently reproduced the full
-  accepted-VS-02-to-`3d2bf9a106953999e465151af7b5a6af93161337` cumulative audit with
-  production/test name-status `composition.py` modified, pipeline test modified, and
-  resilience test added, plus SHA-256
-  `a05aa4c0f5e9663a4dfecebc325c7b8518c8fe5b736de35c2abece7ec4a8e403`.
-  VS-03 remains IN_PROGRESS; a fresh corrective Slice Implementer is active. The prior
-  reviewer is complete and VS-04 remains blocked.
-- VS-03 acceptance (2026-09-04): fresh cumulative high-risk re-review of accepted
-  VS-02 baseline `81270d9537329eea0477254094ef9fcdce6f17e6` through exact candidate
-  `bf7cb3469119a8869625aa7f4125b21ed11c00d5` returned `SLICE REVIEW PASS` with no
-  findings. The reviewer confirmed the four required existing unaccepted commits
-  `4baf129`, `5c35ae8`, `3a3ef1b`, and `71566e0` plus corrections `290fd96`, `9ecc0f5`,
-  `201d618`, and `9e5d80d`; complete production/test name-status remains
-  `backend/src/app/infrastructure/prometheus/composition.py` modified,
-  `backend/tests/test_metric_analysis_pipeline.py` modified, and
-  `backend/tests/test_prometheus_metric_provider_resilience.py` added. Cumulative
-  production/test diff SHA-256 is
-  `0d77d5458efce23f5cc7f1c9b9544155c77a812771cd1821b4c8afea83c26f9c`.
-  Focused verification independently reproduced 268 passed and 28 existing
-  PostgreSQL-gated skips, with targeted Ruff/format, diff, strict OpenSpec, and clean
-  worktree checks passing. No shared-knowledge candidates. VS-03 is COMPLETE; VS-04 is
-  READY for documentation/conformance-only execution.
-- Accepted VS-03 execution baseline (2026-09-04): reviewed production/test tip
-  `bf7cb3469119a8869625aa7f4125b21ed11c00d5` retains cumulative digest
-  `0d77d5458efce23f5cc7f1c9b9544155c77a812771cd1821b4c8afea83c26f9c`;
-  Coordinator acceptance/task metadata was committed at
-  `7baae2b4d3e05c55ba2ae8d5a82f2cc03f630a9a`. The latter is the exact implementation
-  baseline for any newly approved post-VS03 corrective slice.
-- VS-04 active assignment (2026-09-04): delegated to a fresh Slice Implementer after
-  accepted VS-03 review tip `bf7cb3469119a8869625aa7f4125b21ed11c00d5` and cumulative
-  production/test diff SHA-256
-  `0d77d5458efce23f5cc7f1c9b9544155c77a812771cd1821b4c8afea83c26f9c`.
-  The assignment is documentation/conformance-only; no production or test behavior edit
-  is authorized. A detected VS-01/VS-02 defect stops for a new approved re-plan.
-- VS-04 stop/escalation (2026-09-04): `PLAN CHANGE REQUESTED`. Its required public
-  docstring audit found that `backend/src/app/metrics/ports.py::MetricSeriesProvider`
-  and its public `acquire` interface method lack the repository-required docstrings.
-  `git blame` attributes both lines to pre-change commit `524542f9`, not accepted
-  VS-03 work. This is an accepted VS-01/VS-02-attributable conformance defect and is
-  outside the frozen documentation-only VS-04 boundary. Per the approved plan, VS-01
-  and VS-02 are not reopened and no production/test/docstring correction was made.
-  VS-04 handoff `implementation/VS-04-handoff.md` was committed at
-  `32371bccd11ead0138962e1d2bd3e73227a49ed0`, records the unchanged accepted-VS02-to-
-  accepted-VS03 production/test inventory/digest, and requests a new approved re-plan/
-  execution decision. Execution is BLOCKED; do not dispatch a further slice, archive,
-  push, merge, or open a pull request.
-- Remaining-execution re-plan (2026-09-04): accepted VS-01/VS-02/VS-03 remain frozen.
-  The blocked historical VS-04 is not resumed. The replacement structure adds a new
-  VS-04 limited to `MetricSeriesProvider` and `acquire` docstrings from accepted VS-03
-  execution baseline `7baae2b4d3e05c55ba2ae8d5a82f2cc03f630a9a`, followed by separate
-  non-corrective VS-05 final conformance. No implementation is active; both remaining
-  slices await review and explicit approval of the new planning snapshot.
-- Remaining-plan review record (2026-09-04): snapshot
-  `702c5c83ed1c88d3620d973df18e88779e5bf6ce` received `PLAN CHANGES REQUIRED` for an
-  over-broad docstring AST allowance, a non-full-tree corrective path audit, and an
-  incomplete final-review severity gate. It is superseded and must not be approved. The
-  next snapshot keeps the same remaining graph and intended two-docstring correction,
-  while requiring exact docstring inventory, a four-path full-tree allowlist, and no
-  unresolved `BLOCKER`/`HIGH`/`MEDIUM` at final review. No implementation is active.
-- Enforcement-review record (2026-09-04): snapshot
-  `75b3fd6a24aaafe9c808a20405cb3ac9e30583c1` received `PLAN CHANGES REQUIRED` because
-  semantic docstring-value comparison did not prove exact source representation and the
-  plan path still allowed broad execution-note mutation. It is superseded and must not be
-  approved. The next snapshot preserves the graph, full-tree path allowlist, two-docstring
-  scope, VS-05 severity gate, and all accepted history while adding byte-level docstring
-  source inventory and exact structured plan-metadata enforcement. No implementation is
-  active.
+- VS-01, VS-02, VS-03: complete, independently reviewed, accepted, and frozen.
+- Historical final conformance: stopped correctly on the two missing provider-port
+  docstrings; no correction was made there.
+- C-01: planned; must not start before this simplified plan is reviewed and approved.
+- FINAL: planned; starts only after C-01 acceptance.
