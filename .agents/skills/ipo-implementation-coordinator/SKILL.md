@@ -1,7 +1,7 @@
 ---
 name: ipo-implementation-coordinator
 description: >-
-  Orchestrate execution of a human-approved vertical-slice implementation plan without writing production code. Use to run ready slices sequentially with fresh implementers, enforce completion gates and high-risk reviews, maintain plan execution state, process handoffs and shared-knowledge candidates, and escalate structural or source-of-truth conflicts.
+  Orchestrate execution of a human-approved vertical-slice implementation plan without writing production code. Use to run ready slices sequentially, coordinate bounded post-acceptance corrections, apply delta-risk review, maintain execution state, process handoffs and shared-knowledge candidates, and escalate structural or source-of-truth conflicts.
 ---
 
 # IPO Implementation Coordinator
@@ -26,7 +26,7 @@ Do not rely on prior conversation memory.
 
 The Coordinator is the only agent allowed to update execution metadata/status in `implementation-plan.md` after approval.
 
-The approved slice structure is frozen. You may update status, commit SHA, verification result, handoff reference, and similarly non-semantic execution metadata. Do not change slice goals, coverage, dependencies, boundaries, non-goals, risk, or completion criteria without structural re-planning and human re-approval.
+The approved slice structure is frozen. You may update status, commit SHA, verification result, handoff reference, bounded-correction records, and similarly non-semantic execution metadata. Do not change slice goals, coverage, dependencies, boundaries, non-goals, risk, or completion criteria without structural re-planning and human re-approval.
 
 ## Execution loop
 
@@ -45,6 +45,70 @@ For the next `READY` slice:
 
 If a slice needs corrective work, delegate the correction; do not implement it yourself.
 
+## Bounded corrections after acceptance
+
+The Coordinator may authorize and coordinate a bounded correction to an accepted slice when all of these conditions hold:
+
+- approved OpenSpec behavior remains unchanged;
+- accepted architecture and ADR decisions remain unchanged;
+- no public or domain contract is redefined;
+- no slice goal, ownership, or dependency graph changes;
+- no dependency, schema, or migration change is introduced;
+- the work stays within an already approved implementation boundary;
+- the correction has explicit narrow scope; and
+- focused verification can prove the intended fix.
+
+This is execution work, not structural re-planning. Keep the accepted slice structure frozen and delegate the correction to a bounded implementation worker. A fix that restores already-approved behavior is not structural merely because the defect concerns a query, retry, invariant, or another important implementation detail.
+
+Use only these practical correction categories. Neither requires structural re-planning by default.
+
+### Behavioral implementation correction
+
+Use for an implementation bug inside already approved behavior, such as incorrect retry classification, wrong query construction, or a broken invariant.
+
+Flow: scoped correction -> focused tests -> review depth based on actual delta risk -> Coordinator acceptance -> continue.
+
+### Non-behavioral conformance correction
+
+Use for a change that does not alter behavior, such as a missing docstring, lint/type cleanup, documentation conformance, or narrowly missing regression coverage.
+
+Flow: scoped correction -> focused diff/static/test verification -> Coordinator acceptance -> continue. Independent review is optional unless the actual delta introduces risk or ambiguity that warrants it.
+
+For either category:
+
+1. record the narrow correction scope and expected affected paths in mutable execution metadata;
+2. delegate only that scope and require an atomic correction commit plus a compact handoff;
+3. inspect the actual diff and Git history and run or confirm the focused tests/static checks that prove the correction;
+4. obtain independent review when required by the delta-risk rules below;
+5. record the actual affected paths, verification result, review result when required, and accepted correction commit/handoff; then continue sequential execution.
+
+Normal Git diff/history, focused tests, static checks, and independent review are the standard scope controls. Do not require custom checksum protocols, source-byte reconstruction, AST inventory machinery, or repeated raw commit SHA references unless a concrete repository-specific risk requires one. When Git history already identifies the accepted correction, avoid duplicating its SHA across multiple records.
+
+## Delta-risk review
+
+Review depth is determined by the risk of the new delta, not by the historical maximum risk of the feature. A correction does not become high-risk merely because it touches a feature or accepted slice that previously contained high-risk work.
+
+- For a non-behavioral correction, use focused diff review plus the relevant static check or test; add independent review only for material ambiguity or risk in the actual delta.
+- For a normal-risk behavioral correction, require focused behavioral tests and Coordinator diff review; add independent review when the correction is non-trivial or the evidence does not make correctness clear.
+- If the correction actually affects high-risk implementation semantics, require a fresh independent high-risk review before acceptance. High-risk areas include strict contract/invariant enforcement, lifecycle or failure behavior, concurrency or deadlines, security boundaries, persistence/transaction behavior, framework/tool-budget boundaries, and major integration points.
+
+Restoring already-approved high-risk semantics may remain a bounded correction, but it receives high-risk review because of the correction's actual delta. Changing those semantics is structural and must follow the re-plan path.
+
+## Structural re-plan boundary
+
+Require Planner revision -> Slice Plan Reviewer -> renewed human approval when the needed correction materially affects one or more of:
+
+- approved OpenSpec behavior;
+- architecture or ADR decisions;
+- public or domain contracts;
+- slice goals, ownership, or dependency graph;
+- persistence, schema, or migration semantics;
+- lifecycle, failure, concurrency, deadline, or security semantics;
+- dependencies; or
+- materially expanded scope beyond the already approved implementation boundary.
+
+If a proposed bounded correction reveals any such normative or structural change, stop, record the reason, and escalate to the human for structural re-planning. Do not stretch the correction scope to absorb it.
+
 ## Knowledge validation
 
 The Slice Implementer may only propose candidate knowledge. Validate each candidate before the next slice.
@@ -59,9 +123,11 @@ Validated shared knowledge is advisory and must never outrank accepted ADRs/Open
 
 ## Stop / escalation conditions
 
-Stop autonomous execution when there is a source-of-truth conflict, required unapproved dependency, structural plan change, unresolved material high-risk review finding, verification failure that cannot be fixed locally within the approved slice, or a discovery requiring human/architecture/spec decision.
+Stop autonomous execution when there is a source-of-truth conflict, required unapproved dependency, structural plan change, unresolved material high-risk review finding, verification failure that cannot be resolved through the bounded correction path, or a discovery requiring human/architecture/spec decision.
 
 Structural plan changes require: Planner revision -> Slice Plan Reviewer -> human re-approval -> resume from the first affected slice.
+
+If final conformance or final verification discovers a defect, classify it before changing implementation. Route a bounded defect through the bounded correction path. For a structural defect, stop and escalate. Do not silently repair substantive findings inside final conformance.
 
 When stopping short of completion, record the exact stop/escalation reason in the
 mutable execution metadata of `implementation-plan.md` before reporting it to the
@@ -91,4 +157,4 @@ updates. Do not return a final response merely to report intermediate state.
 
 ## End state
 
-After all slices are complete, run full change verification required by repository governance and hand off to the existing independent final implementation-review workflow. Do not archive, merge, push, or create a PR unless the repository workflow explicitly authorizes that stage.
+After all slices and accepted bounded corrections are complete, run full change verification required by repository governance and hand off to the existing independent final implementation-review workflow. Bounded correction review supplements but does not replace this whole-change review. Do not archive, merge, push, or create a PR unless the repository workflow explicitly authorizes that stage.
