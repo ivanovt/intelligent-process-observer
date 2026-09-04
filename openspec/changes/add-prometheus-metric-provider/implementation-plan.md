@@ -1,6 +1,6 @@
 # Implementation Plan — add-prometheus-metric-provider
 
-**Status:** EXECUTION STOPPED — FINAL BLOCKED BY REPOSITORY-STATE PREREQUISITE
+**Status:** EXECUTION READY — FINAL NOT STARTED
 **Artifact type:** Non-normative execution plan
 **Approved OpenSpec change:** `add-prometheus-metric-provider`
 **Implementation branch:** `feature/add-prometheus-metric-provider`
@@ -90,7 +90,7 @@ FINAL. It is not a Prometheus implementation phase and adds no node to this grap
 | VS-02 | Bounded single-attempt acquisition and classification | VS-01 | accepted high-risk | COMPLETE | see anchor | accepted |
 | VS-03 | Deadlines, retries, state-inert cleanup, bounded capacity | VS-02 | accepted high-risk | COMPLETE | see anchor | accepted |
 | C-01 | Complete all remaining task 5.1 documentation conformance | VS-03 | normal | COMPLETE | `028a8d5` | handoff accepted; independent review `ACCEPT` |
-| FINAL | Standard final conformance and implementation review | C-01 | normal | BLOCKED | - | clean synchronized review base prerequisite unsatisfied |
+| FINAL | Standard final conformance and implementation review | C-01 | normal | READY | - | RSP-001 satisfied; not started |
 
 ## Accepted implementation summary
 
@@ -376,9 +376,7 @@ them.
 - C-01: complete at `028a8d5`; focused verification passed, the compact handoff is
   accepted, independent correction review returned `ACCEPT` with no findings, and no
   shared-knowledge candidate was proposed.
-- FINAL: not started. Repository inspection after C-01 found that the six reusable
-  `.agents/skills/ipo-*` workflow changes listed in `Prometheus feature-delta scope`
-  exist only on `feature/add-prometheus-metric-provider` and remain in its delta against
-  `main`; the feature branch therefore does not yet have the required synchronized clean
-  Prometheus review base. Stop pending explicit repository/base synchronization outside
-  C-01; do not resolve this prerequisite implicitly inside FINAL.
+- RSP-001: SATISFIED. Updated `main` is merged into the feature branch, all six reusable
+  workflow-skill files match `main` and are absent from the cumulative feature delta, and
+  the remaining delta contains only `add-prometheus-metric-provider` work.
+- FINAL: READY and not started.
