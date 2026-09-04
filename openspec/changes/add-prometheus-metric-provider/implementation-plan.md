@@ -1,6 +1,6 @@
 # Implementation Plan — add-prometheus-metric-provider
 
-**Status:** APPROVED — EXECUTION IN PROGRESS
+**Status:** APPROVED — EXECUTION BLOCKED
 **Artifact type:** Non-normative execution plan
 **Approved OpenSpec change:** `add-prometheus-metric-provider`
 **Implementation branch:** `feature/add-prometheus-metric-provider`
@@ -479,7 +479,7 @@ VS-01 -> VS-02 -> VS-03 -> VS-04
 | VS-01 | Source-safe transport-free walking skeleton through the existing Metric port | none | high-risk | COMPLETE | 1217266598aa5f20b902e9ae2edfe1da2ffed6c2 | `implementation/VS-01-handoff.md` |
 | VS-02 | Complete bounded single-attempt request, mapping, and status classification | VS-01 | high-risk | COMPLETE | `99bce08`, `d01a104`, `0d35520`, `ee4d364` | `implementation/VS-02-handoff.md` |
 | VS-03 | Observable deadline/result boundary, state-inert late cleanup, bounded capacity, deterministic retries, and terminal resilience integration | VS-02 | high-risk | COMPLETE | bf7cb3469119a8869625aa7f4125b21ed11c00d5 | `implementation/VS-03-handoff.md` |
-| VS-04 | Compatibility, operational documentation, and whole-change conformance | VS-03 | normal | IN_PROGRESS | - | - |
+| VS-04 | Compatibility, operational documentation, and whole-change conformance | VS-03 | normal | BLOCKED | 32371bccd11ead0138962e1d2bd3e73227a49ed0 | `implementation/VS-04-handoff.md` |
 
 ## Slice definitions
 
@@ -1312,3 +1312,15 @@ acceptance obligations, proof-level changes, or redesign decisions here.
   `0d77d5458efce23f5cc7f1c9b9544155c77a812771cd1821b4c8afea83c26f9c`.
   The assignment is documentation/conformance-only; no production or test behavior edit
   is authorized. A detected VS-01/VS-02 defect stops for a new approved re-plan.
+- VS-04 stop/escalation (2026-09-04): `PLAN CHANGE REQUESTED`. Its required public
+  docstring audit found that `backend/src/app/metrics/ports.py::MetricSeriesProvider`
+  and its public `acquire` interface method lack the repository-required docstrings.
+  `git blame` attributes both lines to pre-change commit `524542f9`, not accepted
+  VS-03 work. This is an accepted VS-01/VS-02-attributable conformance defect and is
+  outside the frozen documentation-only VS-04 boundary. Per the approved plan, VS-01
+  and VS-02 are not reopened and no production/test/docstring correction was made.
+  VS-04 handoff `implementation/VS-04-handoff.md` was committed at
+  `32371bccd11ead0138962e1d2bd3e73227a49ed0`, records the unchanged accepted-VS02-to-
+  accepted-VS03 production/test inventory/digest, and requests a new approved re-plan/
+  execution decision. Execution is BLOCKED; do not dispatch a further slice, archive,
+  push, merge, or open a pull request.
