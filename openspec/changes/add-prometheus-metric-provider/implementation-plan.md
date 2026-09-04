@@ -387,11 +387,29 @@ if ! git diff --exit-code "$accepted_vs03_review_tip" \
   "$accepted_vs03_execution_sha" -- "${production_test_paths[@]}"; then exit 1; fi
 ```
 
-For each new VS-04 handoff or correction, audit from the accepted VS-03 execution baseline
-through the exact candidate tip. The only permitted production path is
-`backend/src/app/metrics/ports.py`; no test or other production path may change. The
-complete file must be AST-equivalent after docstrings are removed, proving signatures,
-types, statements, and runtime behavior are unchanged:
+For each new VS-04 handoff or correction, audit the full repository tree from the accepted
+VS-03 execution baseline through the exact candidate tip. The complete allowlist is:
+
+```text
+M backend/src/app/metrics/ports.py
+M openspec/changes/add-prometheus-metric-provider/implementation-plan.md
+A openspec/changes/add-prometheus-metric-provider/implementation/VS-04-handoff.md
+A openspec/changes/add-prometheus-metric-provider/implementation/VS-04-docstring-correction-handoff.md
+```
+
+The first path is the only permitted production content. The plan path is limited by the
+separate frozen-plan projection audit to Coordinator-owned execution metadata. The
+historical blocked handoff must remain byte-for-byte identical to the replacement planning
+snapshot; the new correction handoff is the only new handoff. No `tasks.md` transition is
+allowed in VS-04 because task 5.1 remains shared with VS-05. Every test, other source,
+frontend, normative OpenSpec, architecture, unrelated documentation, dependency/config,
+governance, and project-knowledge path fails the full-tree allowlist.
+
+The target module must pass two independent AST checks: executable AST equivalence after
+all docstrings are removed, and an exact docstring-inventory delta. Relative to accepted
+VS-03, only `MetricSeriesProvider` and `MetricSeriesProvider.acquire` may gain docstrings;
+every pre-existing module/class/function/method docstring must remain byte-for-byte equal,
+and no third docstring may be added:
 
 ```bash
 set -euo pipefail
@@ -399,15 +417,25 @@ accepted_vs03_execution_sha=7baae2b4d3e05c55ba2ae8d5a82f2cc03f630a9a
 corrective_tip="${VS04_CORRECTIVE_TIP:?set VS04_CORRECTIVE_TIP}"
 corrective_audit_dir=$(mktemp -d)
 target=backend/src/app/metrics/ports.py
-production_test_paths=(backend/src backend/tests frontend/src)
+plan_path=openspec/changes/add-prometheus-metric-provider/implementation-plan.md
+historical_handoff=openspec/changes/add-prometheus-metric-provider/implementation/VS-04-handoff.md
+correction_handoff=openspec/changes/add-prometheus-metric-provider/implementation/VS-04-docstring-correction-handoff.md
+approved_sha="${APPROVED_PLANNING_SHA:?set APPROVED_PLANNING_SHA}"
 
 git cat-file -e "$corrective_tip^{commit}"
 git merge-base --is-ancestor "$accepted_vs03_execution_sha" "$corrective_tip"
 git diff --name-status "$accepted_vs03_execution_sha" "$corrective_tip" -- \
-  "${production_test_paths[@]}" > "$corrective_audit_dir/paths"
-printf 'M\t%s\n' "$target" > "$corrective_audit_dir/expected-paths"
+  | LC_ALL=C sort > "$corrective_audit_dir/paths"
+{
+  printf 'M\t%s\n' "$target"
+  printf 'M\t%s\n' "$plan_path"
+  printf 'A\t%s\n' "$historical_handoff"
+  printf 'A\t%s\n' "$correction_handoff"
+} | LC_ALL=C sort > "$corrective_audit_dir/expected-paths"
 if ! diff -u "$corrective_audit_dir/expected-paths" \
   "$corrective_audit_dir/paths"; then exit 1; fi
+if ! git diff --exit-code "$approved_sha" "$corrective_tip" -- \
+  "$historical_handoff"; then exit 1; fi
 git show "$accepted_vs03_execution_sha:$target" > "$corrective_audit_dir/before.py"
 git show "$corrective_tip:$target" > "$corrective_audit_dir/after.py"
 python3 - "$corrective_audit_dir/before.py" "$corrective_audit_dir/after.py" <<'PY'
@@ -427,28 +455,65 @@ def without_docstrings(path: str) -> str:
     return ast.dump(tree, include_attributes=False)
 
 
-before = Path(sys.argv[1]).read_text()
-after = Path(sys.argv[2]).read_text()
+def docstring_inventory(path: str) -> dict[str, str]:
+    tree = ast.parse(Path(path).read_text())
+    inventory: dict[str, str] = {}
+
+    class Visitor(ast.NodeVisitor):
+        def __init__(self) -> None:
+            self.scope: list[str] = []
+
+        def record(self, node: ast.AST, name: str) -> None:
+            value = ast.get_docstring(node, clean=False)
+            if value is not None:
+                inventory[".".join([*self.scope, name])] = value
+
+        def visit_Module(self, node: ast.Module) -> None:
+            self.record(node, "<module>")
+            self.generic_visit(node)
+
+        def visit_ClassDef(self, node: ast.ClassDef) -> None:
+            self.record(node, node.name)
+            self.scope.append(node.name)
+            self.generic_visit(node)
+            self.scope.pop()
+
+        def visit_FunctionDef(self, node: ast.FunctionDef) -> None:
+            self.record(node, node.name)
+            self.scope.append(node.name)
+            self.generic_visit(node)
+            self.scope.pop()
+
+        def visit_AsyncFunctionDef(self, node: ast.AsyncFunctionDef) -> None:
+            self.record(node, node.name)
+            self.scope.append(node.name)
+            self.generic_visit(node)
+            self.scope.pop()
+
+    Visitor().visit(tree)
+    return inventory
+
+
 if without_docstrings(sys.argv[1]) != without_docstrings(sys.argv[2]):
     raise SystemExit("ports.py changed beyond docstrings")
-tree = ast.parse(after)
-provider = next(
-    (node for node in tree.body if isinstance(node, ast.ClassDef)
-     and node.name == "MetricSeriesProvider"),
-    None,
-)
-if provider is None or not ast.get_docstring(provider, clean=True):
-    raise SystemExit("MetricSeriesProvider lacks a meaningful docstring")
-acquire = next(
-    (node for node in provider.body if isinstance(node, ast.AsyncFunctionDef)
-     and node.name == "acquire"),
-    None,
-)
-if acquire is None or not ast.get_docstring(acquire, clean=True):
-    raise SystemExit("MetricSeriesProvider.acquire lacks a meaningful docstring")
-if len(ast.get_docstring(provider, clean=True).split()) < 5:
+before_inventory = docstring_inventory(sys.argv[1])
+after_inventory = docstring_inventory(sys.argv[2])
+allowed_additions = {
+    "MetricSeriesProvider",
+    "MetricSeriesProvider.acquire",
+}
+if allowed_additions & before_inventory.keys():
+    raise SystemExit("target docstrings unexpectedly exist in accepted baseline")
+if set(after_inventory) != set(before_inventory) | allowed_additions:
+    raise SystemExit("docstring inventory changed outside the exact two targets")
+for location, value in before_inventory.items():
+    if after_inventory[location] != value:
+        raise SystemExit(f"existing docstring changed at {location}")
+provider_doc = after_inventory["MetricSeriesProvider"]
+acquire_doc = after_inventory["MetricSeriesProvider.acquire"]
+if len(provider_doc.split()) < 5:
     raise SystemExit("MetricSeriesProvider docstring is not purpose-descriptive")
-if len(ast.get_docstring(acquire, clean=True).split()) < 5:
+if len(acquire_doc.split()) < 5:
     raise SystemExit("acquire docstring is not behavior-descriptive")
 PY
 git diff --check "$accepted_vs03_execution_sha" "$corrective_tip"
@@ -850,8 +915,9 @@ accepted and are regression boundaries, not implementation ownership for this sl
 `0d77d5458efce23f5cc7f1c9b9544155c77a812771cd1821b4c8afea83c26f9c`.
 
 **Vertical boundary:** accepted `app.metrics.ports` source -> add class purpose docstring
-and `acquire` behavior docstring -> AST-equivalent module after docstring removal ->
-unchanged public protocol/signature/types/runtime behavior -> focused static/lint proof.
+and `acquire` behavior docstring -> AST-equivalent module after docstring removal plus
+exact two-location docstring-inventory delta -> unchanged public protocol/signature/types/
+runtime behavior -> full-tree allowlist and focused static/lint proof.
 
 **Expected code impact:** only
 `backend/src/app/metrics/ports.py::MetricSeriesProvider` and
@@ -876,40 +942,45 @@ editing OpenSpec or architecture.
 |---|---|---|---|---|---|---|
 | VS04-AC01 | Root `AGENTS.md` public class documentation rule | Existing public `MetricSeriesProvider` protocol | Inspect its runtime docstring | A concise meaningful docstring explains that the protocol supplies provider-neutral Metric series acquisition | static + review | `ast.get_docstring` presence/word-count assertion plus human behavior-focused wording review |
 | VS04-AC02 | Root `AGENTS.md` public interface-method documentation rule | Existing public `MetricSeriesProvider.acquire(scope, window)` method | Inspect its runtime docstring | A concise meaningful docstring explains acquisition for the supplied immutable provider scope and exact analysis window without changing signature or semantics | static + review | `ast.get_docstring` assertion and signature/annotation comparison |
-| VS04-AC03 | Behavior-preserving correction boundary | Accepted VS-03 execution baseline and corrective candidate tip | Compare the complete production/test delta and AST with docstrings removed | The only production path is `backend/src/app/metrics/ports.py`, no test changes exist, and the module is AST-identical after docstring removal | repository audit | exact name-status allowlist and docstring-stripped AST equality command above |
-| VS04-AC04 | Focused quality gate | The two docstrings and otherwise unchanged module | Run focused compilation/Ruff/static checks | The file parses, lint and format checks pass, and no behavioral/signature change or unrelated diff exists | static + lint | `python3 -m compileall`, targeted Ruff check/format, `git diff --check`, cumulative corrective audit |
+| VS04-AC03 | Full-tree corrective scope | Accepted VS-03 execution baseline and corrective candidate tip | Compare the complete repository name-status delta | It equals the exact four-path allowlist: target port file, mutable plan metadata, unchanged historical stop handoff, and new corrective handoff; every other path fails | repository audit | sorted full-tree name-status comparison and historical-handoff integrity check above |
+| VS04-AC04 | Exact behavior/docstring delta | Baseline and candidate `ports.py` | Compare executable AST and complete module/class/function/method docstring inventories | ASTs are identical after removing docstrings; all existing docstrings are byte-identical; exactly the class and its public `acquire` gain meaningful docstrings, with no third addition | static + review | docstring-stripped AST equality plus exact inventory-set/value comparison above |
+| VS04-AC05 | Focused quality gate | The two docstrings and otherwise unchanged module | Run focused compilation/Ruff/static checks | The file parses, lint and format checks pass, and no behavioral/signature change or unrelated diff exists | static + lint | `python3 -m compileall`, targeted Ruff check/format, `git diff --check`, cumulative corrective audit |
 
-**Counterexample guards:** the AST comparison covers the complete module rather than only
-the protocol signature, so a changed annotation, decorator, import, default, ellipsis,
-method body, or unrelated statement fails. Exact path auditing fails any provider,
-pipeline, test, OpenSpec, architecture, or unrelated file change. Presence-only one-word
+**Counterexample guards:** the executable AST comparison covers the complete module, so a
+changed annotation, decorator, import, default, ellipsis, method body, or unrelated
+statement fails. The independent inventory compares every existing docstring location and
+raw value; a third addition, removal, or modification anywhere fails. Full-tree auditing
+fails any unlisted test, source, frontend, OpenSpec, architecture, documentation,
+dependency/configuration, governance, or knowledge path. Presence-only one-word target
 docstrings fail the minimum purpose/behavior check and human wording review.
 
 **Focused verification:** `cd backend && uv run ruff check
 src/app/metrics/ports.py`; `cd backend && uv run ruff format --check
 src/app/metrics/ports.py`; `cd backend && uv run python -m compileall -q
-src/app/metrics/ports.py`; the accepted-history and cumulative corrective audits above;
-`git diff --check`. No production behavior test is added or changed.
+src/app/metrics/ports.py`; the accepted-history, full-tree allowlist, executable-AST, and
+docstring-inventory audits above; `git diff --check`. No test is added or changed.
 
 **Context pack:** root `AGENTS.md` sections 3-4 and 7; this replacement plan's accepted
 VS-03 anchors and corrective audit; current `backend/src/app/metrics/ports.py`; accepted
 VS-01/VS-02/VS-03 handoffs and execution metadata only as frozen regression boundaries;
 blocked historical `implementation/VS-04-handoff.md` identifying the exact docstring gap.
 
-**Handoff expectations:** VS04-AC01 through VS04-AC04 evidence; accepted VS-03 execution
+**Handoff expectations:** VS04-AC01 through VS04-AC05 evidence; accepted VS-03 execution
 baseline SHA; exact corrective commit/tip; before/after docstrings; exact production/test
-name-status allowlist; docstring-stripped AST equality result; unchanged signature/type
-confirmation; focused command results; explicit no-test/no-behavior/no-unrelated-change
-audit; deviations and shared-knowledge candidates; new handoff path
+and full-tree name-status allowlist; historical-handoff integrity; docstring-stripped AST
+equality; complete before/after docstring inventories and exact two-location delta;
+unchanged signature/type confirmation; focused command results; explicit no-test/no-
+behavior/no-unrelated-change audit; deviations and shared-knowledge candidates; new handoff path
 `implementation/VS-04-docstring-correction-handoff.md` without rewriting the blocked
 historical VS-04 handoff.
 
 **Risk:** normal
 
-**Completion gate:** both meaningful docstrings are present; only the exact target file
-changed from accepted VS-03 execution baseline; docstring-stripped ASTs are identical;
-signatures/types/runtime semantics and every accepted provider/pipeline behavior remain
-unchanged; focused compile/Ruff/format/diff checks pass; one atomic corrective commit and
+**Completion gate:** both meaningful docstrings are present; the full-tree delta equals
+the exact four-path allowlist; docstring-stripped ASTs are identical; the complete
+docstring inventory preserves every existing entry and adds exactly the two approved
+locations; signatures/types/runtime semantics and every accepted provider/pipeline
+behavior remain unchanged; focused compile/Ruff/format/diff checks pass; one atomic corrective commit and
 the new correction handoff exist; Coordinator records the accepted corrective tip and
 evidence. VS-01,
 VS-02, and VS-03 remain frozen and are not re-reviewed or re-executed.
@@ -963,7 +1034,7 @@ orchestration; archive/PR/push; fixing an unrelated pre-existing failure.
 | VS05-AC02 | Shared behavior preservation | Production-valid and production-invalid shared sources | Rerun startup, capabilities, Observation create, and preflight suites without edits | Existing outputs, independent preflight behavior, and provider isolation remain compatible | API + service regression | accepted existing tests with separate ledgers |
 | VS05-AC03 | Provider-neutral pipeline and persistence | Existing fake/real provider matrices from accepted slices | Rerun Metric and persistence tests without edits | Reference, History, agent, result, rollback, and persistence behavior remain unchanged; no raw provider data persists | service + persistence + static audit | accepted existing suites and import scan |
 | VS05-AC04 | Scope/dependency/schema/API audit | Accepted VS-03 execution baseline, accepted VS-04 corrective tip, and complete final tree | Review change | VS-04 changed only target docstrings; VS-05 adds no production/test change; no dependency, schema, API, analytical, persistence, or orchestration change exists | repository audit | corrective AST/path audit, no-post-corrective committed/index/worktree diff, manifest/migration/route/contract checks |
-| VS05-AC05 | Final verification and review | Accepted slices, complete task state, and clean tree | Run full audits, strict validation, repository checks, official OpenSpec verification when installed, and `ipo-review-implementation` independently | All gates pass; all tasks reconcile; final independent implementation review has no unresolved blocking finding; any new defect stops rather than being repaired | repository gate + independent review | recorded integrity/task/scope/check results, optional official verification result, and final repository review report |
+| VS05-AC05 | Final verification and review | Accepted slices, complete task state, and clean tree | Run full audits, strict validation, repository checks, official OpenSpec verification when installed, and `ipo-review-implementation` independently | All gates pass; all tasks reconcile; no unresolved `BLOCKER`, `HIGH`, or `MEDIUM` finding remains; any new finding at those severities stops for human triage and approved follow-up/re-plan rather than repair in VS-05; `LOW` follows existing governance | repository gate + independent review | recorded integrity/task/scope/check results, optional official verification result, complete severity inventory/disposition, and final repository review report |
 
 VS05-AC05 includes this separate final-completion assertion after the authorized
 transition audit above. It fail-closes unless the approved snapshot, current `tasks.md`,
@@ -1099,7 +1170,9 @@ approved-SHA committed/index/worktree artifact/task/plan integrity results; expl
 accepted VS-04 corrective tip; docstring-only AST/path proof; no later committed/index/
 worktree production/test change; dependency/schema/API/import/secret audits; final
 independent implementation-review result; final clean status; deviations and shared-
-knowledge candidates; explicit archive-readiness or stop statement.
+knowledge candidates; complete finding severities/dispositions; explicit archive-readiness
+only when no unresolved `BLOCKER`/`HIGH`/`MEDIUM` remains, otherwise an exact stop and
+human-triage statement.
 The new final handoff path is `implementation/VS-05-handoff.md`.
 
 **Risk:** normal
@@ -1112,11 +1185,12 @@ ownership is reconciled; focused tests, strict OpenSpec validation, accepted-his
 corrective-baseline audits, approved-artifact integrity, checkbox-only transition audit,
 exact 24/24 completion/ownership assertion, mutable-only plan audit, scope/dependency/
 schema/API/secret audits, clean status, and `make check` pass. The final independent
-`ipo-review-implementation` review must complete with no unresolved blocking finding;
-run official `openspec-verify-change` first when installed. Any newly found
-implementation defect stops execution for a new approved decision; VS-05 makes no silent
-repair. One atomic documentation/conformance commit and handoff exist, followed by
-Coordinator acceptance metadata.
+`ipo-review-implementation` review must leave no unresolved `BLOCKER`, `HIGH`, or
+`MEDIUM` finding; run official `openspec-verify-change` first when installed. Any new
+finding at those severities stops execution for human triage and approved follow-up or
+re-plan as required; VS-05 makes no repair. `LOW` findings are handled only under existing
+repository governance. One atomic documentation/conformance commit and handoff exist,
+followed by Coordinator acceptance metadata.
 
 ## Coverage matrix
 
@@ -1421,3 +1495,10 @@ acceptance obligations, proof-level changes, or redesign decisions here.
   execution baseline `7baae2b4d3e05c55ba2ae8d5a82f2cc03f630a9a`, followed by separate
   non-corrective VS-05 final conformance. No implementation is active; both remaining
   slices await review and explicit approval of the new planning snapshot.
+- Remaining-plan review record (2026-09-04): snapshot
+  `702c5c83ed1c88d3620d973df18e88779e5bf6ce` received `PLAN CHANGES REQUIRED` for an
+  over-broad docstring AST allowance, a non-full-tree corrective path audit, and an
+  incomplete final-review severity gate. It is superseded and must not be approved. The
+  next snapshot keeps the same remaining graph and intended two-docstring correction,
+  while requiring exact docstring inventory, a four-path full-tree allowlist, and no
+  unresolved `BLOCKER`/`HIGH`/`MEDIUM` at final review. No implementation is active.
