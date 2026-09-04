@@ -43,7 +43,7 @@ not reopen, rewrite, or re-execute them.
 VS-01 accepted/frozen
   -> VS-02 accepted/frozen
   -> VS-03 accepted/frozen
-  -> C-01 bounded non-behavioral docstring correction
+  -> C-01 bounded documentation-conformance correction
   -> FINAL non-corrective conformance
 ```
 
@@ -56,7 +56,7 @@ Execution is sequential.
 | VS-01 | Source-safe transport-free provider composition | none | accepted high-risk | COMPLETE | see anchor | accepted |
 | VS-02 | Bounded single-attempt acquisition and classification | VS-01 | accepted high-risk | COMPLETE | see anchor | accepted |
 | VS-03 | Deadlines, retries, state-inert cleanup, bounded capacity | VS-02 | accepted high-risk | COMPLETE | see anchor | accepted |
-| C-01 | Add two missing public provider-port docstrings | VS-03 | non-behavioral correction | PLANNED | - | `implementation/C-01-handoff.md` |
+| C-01 | Complete all remaining task 5.1 documentation conformance | VS-03 | normal | PLANNED | - | `implementation/C-01-handoff.md` |
 | FINAL | Standard final conformance and implementation review | C-01 | normal | PLANNED | - | final review record |
 
 ## Accepted implementation summary
@@ -73,65 +73,142 @@ Detailed evidence remains in the handoffs and Git history.
 
 ## Remaining execution
 
-### C-01 — Metric provider-port docstring conformance
+### C-01 — Task 5.1 documentation conformance
 
-**Classification:** non-behavioral conformance correction
+**Classification:** bounded non-behavioral conformance correction
 
-**Behavioral goal:** Add meaningful, concise docstrings to the existing public
-`MetricSeriesProvider` protocol and its public `acquire` interface method.
+**Behavioral goal:** Complete all remaining documentation-only implementation required by
+task 5.1 without changing runtime behavior, contracts, dependencies, architecture, or
+approved OpenSpec semantics.
 
-**OpenSpec coverage:** the remaining public class/interface-method documentation portion
-of task 5.1. No functional requirement or scenario changes.
+**OpenSpec coverage:** all remaining work in task 5.1. No functional requirement or
+scenario changes.
 
 **Dependencies:** accepted VS-03; use its execution anchor as the correction baseline.
 
-**Vertical boundary:** accepted `backend/src/app/metrics/ports.py` -> two docstrings ->
-unchanged interface/runtime behavior -> focused checks and independent correction review.
+**Vertical boundary:** accepted provider and configuration behavior -> public provider-port
+docstrings plus placeholder-only environment and developer/deployment guidance -> unchanged
+interfaces and runtime behavior -> focused checks and independent correction review.
 
-**Expected code impact:** only the two docstrings in
-`backend/src/app/metrics/ports.py`, plus `implementation/C-01-handoff.md` and concise
-Coordinator status updates.
+**Remaining task 5.1 inventory and exact ownership:**
+
+| Path | Remaining gap | C-01 intended change |
+|---|---|---|
+| `backend/src/app/metrics/ports.py` | The public `MetricSeriesProvider` protocol and its public `acquire` interface method have no docstrings. | Add one concise behavior-focused docstring to the protocol and one to `acquire`; change no other production-source content. |
+| `.env.example` | The existing `PROMETHEUS_SOURCES` example is only a minimal Bearer shape and does not fully establish placeholder-only local/deployment use or both supported credential shapes. | Keep the setting optional and add safe placeholder-only configuration guidance/examples for the required source fields and supported Bearer-token and Basic-auth shapes; store no real credential. |
+| `docs/development-guide.md` | It has no production Prometheus Metric provider configuration or operational guidance. | Add developer/deployment guidance covering the complete approved task 5.1 configuration, safety, request, limit, classification, deadline/retry, and Prometheus-semantics topics listed below, without prescribing implementation changes. |
+| `docs/metrics-analysis-developer-boundaries.md` | It still calls the production Prometheus provider future work. | Update that stale developer boundary to describe the implemented infrastructure provider behind the unchanged `MetricSeriesProvider` port and direct configuration/operations readers to the development guide; retain the provider-neutral domain boundary. |
+| `openspec/changes/add-prometheus-metric-provider/implementation/C-01-handoff.md` | No correction handoff exists. | Record the atomic correction, changed paths, task 5.1 content review, checks, review result, and confirmation that the production-source delta is docstring-only. |
+
+The production `PrometheusMetricSeriesProvider` class and its public `acquire` method in
+`backend/src/app/infrastructure/prometheus/composition.py` already have concise public
+docstrings. They require no C-01 edit. No task 5.1 implementation change is required in
+`README.md`, `docs/development-workflow.md`, `frontend/.env.example`, or deployment/runtime
+configuration code.
+
+The developer/deployment documentation must cover the approved behavior at this level,
+without prescribing exact prose:
+
+- `PROMETHEUS_SOURCES` is optional; each configured source provides the required stable
+  ID, display name, base URL, and exactly one supported Bearer-token or Basic-auth
+  credential shape through local/deployment environment configuration. Examples remain
+  placeholders and never contain a real token, password, or deployment profile.
+- Secret credential material means the Bearer token and Basic-auth password. The Basic
+  username remains compatible in the internal model but, together with the token,
+  password, and Authorization value, is excluded from diagnostics, logs, errors, public
+  output, and failure messages.
+- Production acquisition accepts HTTPS and exact loopback-only HTTP, requires a host and
+  forbids userinfo/query/fragment. An empty path or `/` means no prefix; otherwise the
+  prefix has non-empty slash-separated ASCII RFC 3986 unreserved segments, no `.` or `..`
+  segment, and at most one removable trailing slash. Repeated/empty segments,
+  backslashes, and every percent-encoded path byte are rejected. The provider uses normal
+  TLS verification with redirects and proxy-environment use off, and excludes
+  unauthenticated sources, custom CA/mTLS, OAuth, cloud signing, and proxy configuration.
+- Shared Settings loading is unchanged. The stricter target policy runs only after the
+  production provider selects a source: absent/unknown sources and selected invalid
+  sources perform zero HTTP attempts with their approved typed outcomes, while startup,
+  capabilities, Observation creation, and the separately owned 15-second/no-retry Metric
+  preflight behavior remain unchanged.
+- An eligible transport acquisition creates one immutable logical range request and sends
+  one through three identical form POST attempts to the exact API-v1 target. The guide
+  records exact-window/opaque-query preservation, fixed `timeout=10s`, `limit=2`, omitted
+  `lookback_delta`/`stats`/offset, step
+  `max(1, ceil(ceil(window duration in seconds) / 60))`, inclusive maximum of 61
+  evaluation timestamps and accepted samples, one-series boundary, and 1 MiB response
+  cap.
+- Non-empty success warnings fail closed under project policy; valid infos are discarded.
+  The ordered outcome guidance distinguishes hard local deadlines, HTTPX timeout,
+  `ConnectError`, other transport/client failures, body acquisition/bounds, strict
+  Prometheus error-envelope proof, retryable statuses, bare/malformed 503, and success-
+  contract validation without exposing provider-authored or credential-bearing data.
+- Each complete attempt has a hard 15-second execution/result deadline and `acquire` has
+  a hard 50-second execution/result deadline. Only `ConnectError` and HTTP
+  `429|500|502|504` are eligible for at most two retries with fixed 0.5/1.0-second waits.
+  Insufficient budget for the wait plus a full next attempt is timeout with no wait or
+  request; three actually executed eligible attempts exhausting the policy is failure.
+  A committed timeout cannot be changed by late transport work; best-effort cleanup is
+  state-inert and held within finite private capacity.
+- Prometheus evaluates each range timestamp using its deployment lookback/staleness
+  behavior. The provider neither overrides nor compensates for it, so returned points may
+  be fewer than the requested grid and the existing Metrics quality policy evaluates the
+  resulting samples; operators remain responsible for suitable queries/recording rules.
 
 **Contracts consumed/changed:** documents the existing provider-neutral protocol. No
 signature, annotation, type, public API, serialized contract, or behavior changes.
 
-**Non-goals:** refactoring, unrelated formatting, tests, imports, executable statements,
-or any provider, pipeline, analysis, reference, History, agent, persistence, lifecycle,
-API, schema, dependency, OpenSpec, or architecture change.
+**Production-source boundary:** C-01 may change only the two required docstrings in
+`backend/src/app/metrics/ports.py`. It may not change executable statements, signatures,
+annotations, imports, runtime behavior, provider selection, Prometheus request semantics,
+retry/deadline/cancellation/capacity behavior, Settings behavior, or dependencies.
+
+**Non-goals:** exact-prose mandates, refactoring, unrelated formatting, tests, or any
+provider, pipeline, analysis, reference, History, agent, persistence, lifecycle, API,
+schema, dependency, OpenSpec requirement/spec/design/task text, architecture, ADR, skill,
+or behavior change.
 
 **Focused verification:**
 
-- Inspect the complete correction commit diff from the VS-03 execution anchor.
-- Confirm the only production file is `backend/src/app/metrics/ports.py` and its intended
-  production diff contains only the two docstring additions.
+- Inspect the complete C-01 atomic diff and review every changed line.
+- Review all C-01 documentation content against every clause of task 5.1 and the approved
+  OpenSpec behavior summarized above.
+- Confirm the only production file is `backend/src/app/metrics/ports.py` and its production
+  diff contains only the two docstring additions.
 - Confirm no signature, annotation, import, executable statement, or runtime behavior was
-  intentionally changed.
-- Confirm no tests, approved OpenSpec, architecture, dependencies, configuration, or
-  unrelated source changed in the corrective implementation.
-- Run Python compilation and targeted Ruff lint/format checks for `ports.py`.
+  changed.
+- Confirm no tests, approved OpenSpec requirement/spec/design/task text, architecture,
+  ADRs, skills, dependencies, runtime configuration behavior, or unrelated source changed.
+- Run targeted Ruff lint and formatting checks for `backend/src/app/metrics/ports.py`.
+- Run strict validation for `add-prometheus-metric-provider` and focused repository
+  documentation/static checks applicable to the changed files.
 - Run `git diff --check`.
 - Obtain fresh independent review of the narrow correction diff.
 
 Normal Git diff inspection is sufficient. Do not add a custom source parser, byte-level
 verifier, or metadata-validation framework.
 
-**Context pack:** root documentation rules; this plan; accepted VS-03 anchor;
-`backend/src/app/metrics/ports.py`; accepted handoffs as regression boundaries; historical
-`implementation/VS-04-handoff.md` identifying the conformance defect.
+**Context pack:** root documentation rules; task 5.1 and the approved change; this plan;
+accepted VS-03 anchor and handoffs as regression boundaries; historical
+`implementation/VS-04-handoff.md`; all five exact C-01-owned paths above; existing
+production-provider docstrings as already-satisfied evidence.
 
 **Handoff expectations:** `implementation/C-01-handoff.md` records the correction commit,
-the two docstrings, changed-file summary, focused checks, independent review result, and
-confirmation of no intentional behavior/signature/type change.
+the two public-port docstrings, exact documentation paths/content covered, changed-file
+summary, focused checks, independent review result, and confirmation of no behavior,
+signature, annotation, import, executable-statement, Settings, or dependency change.
 
 **Risk:** normal; documentation-only and non-behavioral
 
-**Completion gate:** both docstrings are meaningful; the correction diff is clean and
-limited to those additions; focused compile/lint/format and diff checks pass; independent
-review confirms the correction is non-behavioral and in scope; one correction commit and
-handoff are accepted by the Coordinator.
+**Completion gate:** both docstrings are meaningful; `.env.example` is placeholder-only and
+documents both approved credential shapes; the developer/deployment guide covers every
+task 5.1 topic; the stale developer-boundary note is current; the complete atomic diff is
+limited to the exact owned paths and the production-source delta contains only the two
+docstrings; relevant lint/format, strict OpenSpec, documentation/static, and diff checks
+pass; independent review confirms the correction is non-behavioral and in scope; one
+correction commit and handoff are accepted by the Coordinator.
 
-No further vertical-slice design review is required for the docstring content after this
-simplified plan is approved.
+No separate docstring and developer-documentation slices are required. The owned changes
+are one cohesive documentation-only correction and can be implemented and reviewed
+together after this plan is approved.
 
 ### FINAL — Non-corrective repository conformance
 
@@ -146,14 +223,16 @@ independent review without implementing or correcting behavior.
 **Vertical boundary:** accepted implementation/correction -> standard checks -> independent
 implementation review -> archive-readiness or explicit stop.
 
-**Expected code impact:** developer/deployment documentation authorized by task 5.1, task
-checkbox updates after owning work is accepted, and concise Coordinator status only. No
-production or test behavior changes.
+**Expected code impact:** no implementation, test, or developer/deployment documentation
+creation or editing. Only task-checkbox reconciliation after owning work is accepted,
+concise Coordinator execution metadata, and the final verification/review record are
+permitted.
 
 **Contracts consumed/changed:** none.
 
-**Non-goals:** fixing defects, changing tests to obtain a pass, or altering approved
-behavior, contracts, persistence, lifecycle, dependencies, or architecture.
+**Non-goals:** creating, completing, or correcting production code, tests, configuration
+examples, developer/deployment documentation, or any approved behavior, contract,
+persistence, lifecycle, dependency, architecture, ADR, or OpenSpec semantics.
 
 **Focused verification:**
 
@@ -180,8 +259,10 @@ pass; required database verification is passed or accurately dispositioned; fina
 has no unresolved `BLOCKER`, `HIGH`, or `MEDIUM` finding; Git state/diff is clean and in
 scope; no substantive behavior changed during FINAL.
 
-If final review finds a substantive defect, stop for human triage. Do not repair it inside
-FINAL. `LOW` findings follow existing repository governance.
+If FINAL finds any missing implementation or required documentation, stop and route it
+through the appropriate bounded correction or escalation path. Do not repair it inside
+FINAL. Substantive findings require human triage; `LOW` findings follow existing repository
+governance.
 
 ## Coverage matrix
 
@@ -224,7 +305,7 @@ tests and review.
 | 2.1–2.5 | accepted VS-02 |
 | 3.1–3.5 | accepted VS-03 |
 | 4.1–4.6 | accepted across VS-01–VS-03 |
-| 5.1 | C-01 owns the two missing interface docstrings; FINAL completes documentation and reconciliation |
+| 5.1 | C-01 owns all remaining documentation implementation; FINAL verifies/reconciles completion only |
 | 5.2 | FINAL |
 | 5.3 | FINAL |
 | 5.4 | FINAL |
@@ -242,7 +323,7 @@ them.
 ## Execution notes
 
 - VS-01, VS-02, VS-03: complete, independently reviewed, accepted, and frozen.
-- Historical final conformance: stopped correctly on the two missing provider-port
-  docstrings; no correction was made there.
+- Historical final conformance: stopped correctly on the task 5.1 documentation gap and
+  recorded the two missing provider-port docstrings; no correction was made there.
 - C-01: planned; must not start before this simplified plan is reviewed and approved.
 - FINAL: planned; starts only after C-01 acceptance.
