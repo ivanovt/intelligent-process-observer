@@ -184,6 +184,113 @@ Retries that cannot fit their wait plus a complete subsequent attempt in the rem
 acquisition deadline return the existing typed timeout outcome. These bounds are
 operational safeguards, not a guarantee of completeness or historical reconciliation.
 
+### 5.3 Prometheus Metric provider configuration and operation
+
+`PROMETHEUS_SOURCES` is an optional JSON array of server-managed sources. Omit it when
+production Metric acquisition is not configured. Each source requires a stable `id`, a
+display `name`, a `base_url`, and exactly one supported credential object. Configure the
+array only through the local or deployment environment; use the placeholder-only Bearer
+token and Basic-auth shapes in [`.env.example`](../.env.example), and never commit a real
+token, password, Authorization value, or deployment profile.
+
+Secret credential material means the Bearer token and Basic-auth password. The Basic
+username remains compatible in the internal configuration model, but the provider's
+diagnostics, logs, errors, public output, and failure messages exclude it as well as the
+token, password, and complete Authorization value. Unauthenticated sources are not
+supported.
+
+#### Production target policy
+
+Production acquisition accepts HTTPS targets and accepts HTTP only for the exact loopback
+hosts `localhost`, `127.0.0.1`, and `::1`. A URL must have a host and must not contain
+userinfo, a query, or a fragment. An empty path or `/` means no prefix. Otherwise the
+path must contain non-empty slash-separated segments made only of ASCII RFC 3986
+unreserved characters: letters, digits, `-`, `.`, `_`, and `~`. A segment cannot be
+exactly `.` or `..`; at most one trailing slash is removed. Repeated or empty segments,
+backslashes, and every percent-encoded path byte are rejected.
+
+The provider uses normal TLS certificate verification, does not follow redirects, and
+does not use proxy environment variables. Custom CA bundles, mutual TLS, OAuth,
+cloud-vendor signing, and proxy configuration are outside the supported provider modes.
+
+Shared Settings loading is unchanged. The stricter target policy runs only after the
+production provider selects the requested source. An absent registry or unknown source
+returns the typed unavailable outcome with zero HTTP attempts and no fallback. A selected
+source rejected by production validation returns typed failure with zero HTTP attempts.
+Application startup, capabilities, Observation creation, and the separately owned Metric
+preflight remain compatible; preflight retains its independent 15-second timeout and
+no-retry policy.
+
+#### Range request and response bounds
+
+An eligible acquisition creates one immutable logical request and sends one initial
+request plus zero, one, or two admitted retries. Each attempt is one form-encoded `POST`
+to the exact target
+`<validated origin><normalized prefix>/api/v1/query_range`. Every retry preserves the
+selected source, authentication and configuration, opaque PromQL, and exact UTC RFC 3339
+window bounds. The form always includes `timeout=10s` and `limit=2`, and omits
+`lookback_delta`, `stats`, PromQL `offset`, and other optional parameters.
+
+The integer step is calculated as
+`max(1, ceil(ceil(window duration in seconds) / 60))`. Both endpoints are inclusive, so
+the request grid and an accepted series contain at most 61 timestamps or samples.
+`limit=2` preserves the ability to reject a multi-series result; only zero or one float
+series can be accepted. The complete response body is capped at 1 MiB and is never
+returned as truncated success.
+
+A non-empty `warnings` array on a valid success envelope fails closed because the
+provider-neutral contract cannot represent or qualify it; this project policy does not
+assume that every Prometheus warning means partial data. Valid `infos` may contribute
+only bounded operational telemetry, and their text is discarded. Provider-authored
+text, raw responses, labels, queries, URLs, credentials, and rejected samples do not
+cross the provider port or enter diagnostics or persisted results.
+
+#### Classification, deadlines, and retries
+
+The provider applies outcomes in this order; a later rule cannot override an earlier
+one:
+
+1. A hard local attempt or acquisition deadline commits typed timeout before any
+   simultaneously observed HTTPX exception. Late transport work cannot change the
+   result, start a retry, or mutate application state.
+2. HTTPX exceptions are matched by subclass. Any `TimeoutException`, including connect,
+   read, write, and pool timeouts, is timeout without retry. `ConnectError` alone enters
+   the retry policy. Other `TransportError` failures (including read, write, close,
+   protocol, proxy, and unsupported-protocol errors) and request/client failures outside
+   that hierarchy (including decoding, redirect, URL, and stream-state errors) are
+   failure without retry.
+3. Body acquisition enforces the hard deadline and 1 MiB cap before status handling. A
+   body-read deadline is timeout; an oversized or otherwise unusable body is failure.
+4. A complete bounded body proves a Prometheus error only when it is a JSON object with
+   `status="error"`, non-empty string `errorType`, non-empty string `error`, and
+   string-array `warnings` and `infos` when present. Exact `timeout` or `canceled` error
+   types are timeout. Next, HTTP `429`, `500`, `502`, and `504` enter the retry policy,
+   even for a malformed envelope or a valid different error type. A valid other error
+   type, a bare or malformed `503`, and every other non-success status are failure.
+5. A successful status must satisfy the complete success-envelope, matrix, series, and
+   sample contract. Malformed success data or annotations fail; non-empty warnings fail
+   closed, while valid infos are discarded.
+
+Each complete attempt, including its body read, has a hard monotonic 15-second
+execution/result deadline. The complete `acquire()` call, including waits and every
+attempt, has a hard 50-second execution/result deadline. Only `ConnectError` and HTTP
+`429`, `500`, `502`, or `504` are retryable, at most twice, with fixed waits of 0.5 and
+1.0 seconds and no jitter or provider-directed delay. A retry is admitted only when its
+wait plus a full new 15-second attempt fits the remaining acquisition budget. Rejection
+for insufficient budget is timeout with no wait or additional request; persistence of
+an eligible condition through three actually executed attempts is failure.
+
+Deadline commitment signals cancellation and close but does not wait indefinitely for
+cancellation-resistant transport cleanup. Any cleanup after return is best-effort,
+state-inert, and held within finite private capacity; capacity exhaustion fails a new
+acquisition before transport.
+
+Prometheus evaluates every requested timestamp using its deployment lookback and
+staleness behavior. The provider neither overrides nor compensates for those semantics,
+so a valid returned series may contain fewer points than the requested grid. The existing
+Metrics quality policy evaluates the resulting samples, and operators remain responsible
+for choosing suitable queries or recording rules.
+
 ## 6. Initial bootstrap workflow
 
 The repository bootstrap is a one-time workspace change and is not itself an OpenSpec change.
