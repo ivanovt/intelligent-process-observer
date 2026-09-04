@@ -1279,3 +1279,15 @@ acceptance obligations, proof-level changes, or redesign decisions here.
   `backend/tests/test_prometheus_metric_provider_resilience.py`, and cumulative diff
   SHA-256 `5db57215f87d55859e95f70039e87dbdbf72b7cf166162973c49fd8071b3faef`.
   VS-03 is IN_PROGRESS; a fresh Slice Implementer is the only active assignment.
+- VS-03 resumed high-risk review (2026-09-04): `SLICE CHANGES REQUIRED` on three
+  MEDIUM evidence gaps within the approved VS-03 boundary: missing retry-two exact-fit
+  admission proof; missing late close-exception and pipeline/Lens/persistence
+  non-interference proof after timeout; and missing saturation proof while capacity is
+  occupied by active transport work. No VS-01/VS-02 defect, source conflict, dependency,
+  API/schema, or scope drift was found. The reviewer independently reproduced the full
+  accepted-VS-02-to-`3d2bf9a106953999e465151af7b5a6af93161337` cumulative audit with
+  production/test name-status `composition.py` modified, pipeline test modified, and
+  resilience test added, plus SHA-256
+  `a05aa4c0f5e9663a4dfecebc325c7b8518c8fe5b736de35c2abece7ec4a8e403`.
+  VS-03 remains IN_PROGRESS; a fresh corrective Slice Implementer is active. The prior
+  reviewer is complete and VS-04 remains blocked.
