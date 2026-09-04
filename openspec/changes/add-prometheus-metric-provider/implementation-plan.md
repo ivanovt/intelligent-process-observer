@@ -1,6 +1,6 @@
 # Implementation Plan — add-prometheus-metric-provider
 
-**Status:** EXECUTION READY — FINAL NOT STARTED
+**Status:** EXECUTION IN PROGRESS — FINAL VERIFICATION
 **Artifact type:** Non-normative execution plan
 **Approved OpenSpec change:** `add-prometheus-metric-provider`
 **Implementation branch:** `feature/add-prometheus-metric-provider`
@@ -90,7 +90,7 @@ FINAL. It is not a Prometheus implementation phase and adds no node to this grap
 | VS-02 | Bounded single-attempt acquisition and classification | VS-01 | accepted high-risk | COMPLETE | see anchor | accepted |
 | VS-03 | Deadlines, retries, state-inert cleanup, bounded capacity | VS-02 | accepted high-risk | COMPLETE | see anchor | accepted |
 | C-01 | Complete all remaining task 5.1 documentation conformance | VS-03 | normal | COMPLETE | `028a8d5` | handoff accepted; independent review `ACCEPT` |
-| FINAL | Standard final conformance and implementation review | C-01 | normal | READY | - | RSP-001 satisfied; not started |
+| FINAL | Standard final conformance and implementation review | C-01 | normal | IN_PROGRESS | - | verification-only execution active |
 
 ## Accepted implementation summary
 
@@ -379,4 +379,5 @@ them.
 - RSP-001: SATISFIED. Updated `main` is merged into the feature branch, all six reusable
   workflow-skill files match `main` and are absent from the cumulative feature delta, and
   the remaining delta contains only `add-prometheus-metric-provider` work.
-- FINAL: READY and not started.
+- FINAL: IN_PROGRESS. Verification-only execution started after confirming every
+  repository-state prerequisite; no corrective work is authorized inside FINAL.
