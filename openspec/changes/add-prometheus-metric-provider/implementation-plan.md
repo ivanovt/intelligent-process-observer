@@ -23,6 +23,36 @@ Relevant sources are the complete approved change, `openspec/specs/metrics-analy
 the architecture references named in the approved proposal/design, root `AGENTS.md`, the
 development guide/workflow, and `.agents/PROJECT_KNOWLEDGE.md` as advisory knowledge.
 
+## Prometheus feature-delta scope
+
+Git inspection identifies these project-wide workflow changes in the current branch
+history:
+
+- `.agents/skills/ipo-high-risk-slice-reviewer/SKILL.md`
+- `.agents/skills/ipo-implementation-coordinator/SKILL.md`
+- `.agents/skills/ipo-implementation-planner/SKILL.md`
+- `.agents/skills/ipo-review-implementation/SKILL.md`
+- `.agents/skills/ipo-slice-implementer/SKILL.md`
+- `.agents/skills/ipo-slice-plan-reviewer/SKILL.md`
+
+These files define reusable project planning, coordination, implementation, and review
+workflows. They are not implementation of `add-prometheus-metric-provider`, do not satisfy
+any Prometheus OpenSpec task, and are not part of the Prometheus feature delta. They retain
+their own independent commits/history and must not be assigned to C-01 or FINAL.
+
+Before FINAL starts, the repository topology must provide a clean Prometheus review base:
+the reusable workflow-skill changes must already be independently integrated into or
+otherwise established on the repository branch used as the Prometheus review base, and the
+Prometheus feature branch must be synchronized with that base through the normal repository
+workflow. The exact Git operation is outside this implementation plan; this plan does not
+choose rebase, merge, or another synchronization mechanism.
+
+Once that repository-state precondition is satisfied, FINAL reviews the complete
+Prometheus-attributable feature delta against the synchronized base. If any workflow-skill
+change or other unrelated workflow/governance edit remains in that feature delta, FINAL
+must stop for repository/scope disposition. It must not ignore or subtract unrelated files
+silently, and it must not integrate those changes itself.
+
 ## Execution anchors
 
 These are the only retained Git anchors. They identify accepted recovery points; Git and
@@ -48,6 +78,9 @@ VS-01 accepted/frozen
 ```
 
 Execution is sequential.
+
+The clean-review-base condition above is an external repository-state prerequisite to
+FINAL. It is not a Prometheus implementation phase and adds no node to this graph.
 
 ## Execution overview
 
@@ -84,7 +117,9 @@ approved OpenSpec semantics.
 **OpenSpec coverage:** all remaining work in task 5.1. No functional requirement or
 scenario changes.
 
-**Dependencies:** accepted VS-03; use its execution anchor as the correction baseline.
+**Dependencies:** accepted VS-03. Its historical execution anchor identifies the accepted
+feature state only; C-01 scope is defined by its own atomic correction and exact owned paths,
+not by a cumulative diff to that older anchor.
 
 **Vertical boundary:** accepted provider and configuration behavior -> public provider-port
 docstrings plus placeholder-only environment and developer/deployment guidance -> unchanged
@@ -169,6 +204,8 @@ or behavior change.
 **Focused verification:**
 
 - Inspect the complete C-01 atomic diff and review every changed line.
+- Confirm that atomic diff contains only the explicitly owned C-01 paths and contains no
+  `.agents/skills/ipo-*` or other unrelated workflow/governance file.
 - Review all C-01 documentation content against every clause of task 5.1 and the approved
   OpenSpec behavior summarized above.
 - Confirm the only production file is `backend/src/app/metrics/ports.py` and its production
@@ -220,6 +257,12 @@ independent review without implementing or correcting behavior.
 
 **Dependencies:** accepted C-01 correction.
 
+**Repository-state precondition:** the reusable workflow-skill changes listed in
+`Prometheus feature-delta scope` are established on the repository branch used as the
+review base, and the Prometheus feature branch is synchronized with that base according to
+the normal repository workflow. FINAL does not perform that integration. If this condition
+is not true, FINAL remains blocked pending repository/scope disposition.
+
 **Vertical boundary:** accepted implementation/correction -> standard checks -> independent
 implementation review -> archive-readiness or explicit stop.
 
@@ -242,8 +285,12 @@ persistence, lifecycle, dependency, architecture, ADR, or OpenSpec semantics.
 - Run database-enabled verification when required and available; report unavailable or
   skipped checks accurately.
 - Run official OpenSpec verification when installed.
-- Run fresh `ipo-review-implementation` review of the complete change.
-- Inspect final Git status and diff for scope and cleanliness.
+- Resolve the appropriate synchronized repository review base through normal Git topology,
+  then inspect the complete feature diff and confirm it contains only changes attributable
+  to `add-prometheus-metric-provider`.
+- Run fresh `ipo-review-implementation` review of that complete Prometheus feature delta.
+- Inspect final Git status and diff for scope and cleanliness; stop for repository/scope
+  disposition if any unrelated workflow/governance change remains in the feature delta.
 
 **Context pack:** complete approved OpenSpec and architecture references; accepted
 handoffs; C-01 handoff/review; complete current diff; repository development workflow.
@@ -257,7 +304,8 @@ readiness or stop reason.
 **Completion gate:** all tasks reconcile; strict OpenSpec validation and `make check`
 pass; required database verification is passed or accurately dispositioned; final review
 has no unresolved `BLOCKER`, `HIGH`, or `MEDIUM` finding; Git state/diff is clean and in
-scope; no substantive behavior changed during FINAL.
+scope against the synchronized repository base; no unrelated workflow/governance edit is
+present in the Prometheus feature delta; no substantive behavior changed during FINAL.
 
 If FINAL finds any missing implementation or required documentation, stop and route it
 through the appropriate bounded correction or escalation path. Do not repair it inside
