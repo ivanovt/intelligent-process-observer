@@ -1,6 +1,6 @@
 # Implementation Plan — add-prometheus-metric-provider
 
-**Status:** EXECUTION STOPPED — FINAL CHANGES REQUIRED
+**Status:** EXECUTION IN PROGRESS — C-02 BOUNDED CORRECTION
 **Artifact type:** Non-normative execution plan
 **Approved OpenSpec change:** `add-prometheus-metric-provider`
 **Implementation branch:** `feature/add-prometheus-metric-provider`
@@ -103,6 +103,35 @@ FINAL. It is not a Prometheus implementation phase and adds no node to this grap
   active-plus-cleanup capacity, retries, and current/reference integration.
 
 Detailed evidence remains in the handoffs and Git history.
+
+## Active bounded correction
+
+### C-02 — Prometheus timing and capacity conformance
+
+**Classification:** bounded behavioral correction; expected and actual semantic boundary
+is high-risk because the correction affects transport deadlines, retry lifecycle, and
+private concurrency capacity. Normative semantics change: no. Structural re-plan: no.
+
+**Correction brief:** Resolve final-review findings IR-001 and IR-002 together inside the
+accepted Prometheus provider boundary. Prevent HTTPX's implicit/default timeout from
+preempting the provider-owned 15-second attempt deadline, and hold one admitted
+acquisition's finite private capacity lease across its complete active lifecycle,
+including retry waits and every admitted attempt, until terminal completion or detached
+cleanup termination. Preserve the 50-second acquire deadline, timeout commitment and
+late-result discard, retry admission/exhaustion, cancellation-resistant cleanup, typed
+outcomes, public/domain contracts, dependencies, and all unrelated behavior.
+
+**Expected affected paths:**
+
+- `backend/src/app/infrastructure/prometheus/composition.py`
+- `backend/tests/test_prometheus_metric_provider_resilience.py`
+- `openspec/changes/add-prometheus-metric-provider/implementation/C-02-handoff.md`
+
+**Acceptance gate:** one atomic implementation commit; focused Prometheus provider tests;
+applicable Ruff/static/format checks; strict OpenSpec validation; `git diff --check`;
+broader repository verification appropriate to the high-risk delta; Coordinator delta
+inspection; and fresh independent `ipo-high-risk-slice-reviewer` pass. This correction
+does not restart FINAL.
 
 ## Remaining execution
 
@@ -384,3 +413,6 @@ them.
   correction candidates: IR-001 for an implicit HTTPX timeout that undercuts the approved
   timing policy, and IR-002 for capacity ownership that does not cover retry waits. See
   `implementation/FINAL-handoff.md`; no structural/normative escalation was identified.
+- C-02: IN_PROGRESS. The Coordinator classified IR-001 and IR-002 as one bounded
+  behavioral correction with no normative or structural change and mandatory fresh
+  high-risk review before acceptance.
