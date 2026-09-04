@@ -288,43 +288,142 @@ for task_id in sorted(checked):
 PY
 ```
 
-Audit `implementation-plan.md` against committed `HEAD`, index, and worktree by producing
-a frozen projection. Only the top-level `Status` and `Human-approved planning SHA`, the
-execution overview's `Status`/`Commit`/`Handoff` cells, and all content below
-`## Execution notes` are normalized as mutable. Every other byte—including graph, goals,
-ownership, boundaries, risk, coverage, verification, context packs, and gates—must match.
+Audit `implementation-plan.md` against committed `HEAD`, index, and worktree with a
+structured phase-specific projection. The exact mutable fields are:
+
+- top-level `Status` and `Human-approved planning SHA`;
+- VS-04 execution-overview `Status`, `Commit`, and `Handoff` cells;
+- during VS-05 only, the same three VS-05 cells;
+- append-only execution-note records whose first line is exactly one supported event
+  prefix listed in the script below and whose continuation lines use the existing
+  two-space-indented metadata format.
+
+All execution notes already present in the approved planning snapshot are an immutable
+byte-for-byte prefix. The audit does not ignore the section. It rejects edits, deletion,
+insertion among prior notes, new headings/tables/free text, unsupported event names,
+duplicate terminal events, and any mutation to VS-01/VS-02/VS-03 metadata. Graph, goals,
+ownership, boundaries, risks, coverage, verification, context packs, and gates remain
+byte-for-byte frozen.
 
 ```bash
 set -euo pipefail
 plan_path="$change_dir/implementation-plan.md"
+plan_audit_phase="${PLAN_AUDIT_PHASE:?set PLAN_AUDIT_PHASE to vs04 or vs05}"
 git show "$approved_sha:$plan_path" > "$audit_dir/plan.baseline"
 git show "HEAD:$plan_path" > "$audit_dir/plan.head"
 git show ":$plan_path" > "$audit_dir/plan.index"
 cp "$plan_path" "$audit_dir/plan.worktree"
 
-frozen_plan() {
-  awk '
-    /^## Execution notes$/ { exit }
-    /^\*\*Status:\*\*/ { print "**Status:** [MUTABLE]"; next }
-    /^\*\*Human-approved planning SHA:\*\*/ {
-      print "**Human-approved planning SHA:** [MUTABLE]"; next
-    }
-    /^\| VS-[0-9][0-9] / {
-      split($0, cell, "|")
-      print "|" cell[2] "|" cell[3] "|" cell[4] "|" cell[5] \
-        "| [MUTABLE] | [MUTABLE] | [MUTABLE] |"
-      next
-    }
-    { print }
-  ' "$1"
-}
-
-frozen_plan "$audit_dir/plan.baseline" > "$audit_dir/plan.baseline.frozen"
 for current in head index worktree; do
-  frozen_plan "$audit_dir/plan.$current" > "$audit_dir/plan.$current.frozen"
-  if ! diff -u "$audit_dir/plan.baseline.frozen" "$audit_dir/plan.$current.frozen"; then
-    exit 1
-  fi
+  python3 - "$audit_dir/plan.baseline" "$audit_dir/plan.$current" \
+    "$plan_audit_phase" <<'PY'
+import re
+import sys
+from pathlib import Path
+
+baseline = Path(sys.argv[1]).read_text().splitlines()
+current = Path(sys.argv[2]).read_text().splitlines()
+phase = sys.argv[3]
+if phase not in {"vs04", "vs05"}:
+    raise SystemExit("PLAN_AUDIT_PHASE must be vs04 or vs05")
+
+marker = "## Execution notes"
+try:
+    baseline_marker = baseline.index(marker)
+    current_marker = current.index(marker)
+except ValueError as error:
+    raise SystemExit("implementation plan lacks Execution notes marker") from error
+
+mutable_slices = {"VS-04"} if phase == "vs04" else {"VS-04", "VS-05"}
+
+
+def frozen_prefix(lines: list[str], marker_index: int) -> list[str]:
+    result: list[str] = []
+    for line in lines[:marker_index]:
+        if line.startswith("**Status:**"):
+            result.append("**Status:** [MUTABLE]")
+            continue
+        if line.startswith("**Human-approved planning SHA:**"):
+            result.append("**Human-approved planning SHA:** [MUTABLE]")
+            continue
+        if re.match(r"^\| VS-\d\d ", line):
+            cells = [cell.strip() for cell in line.strip("|").split("|")]
+            if len(cells) != 7:
+                raise SystemExit("malformed execution-overview row")
+            if cells[0] in mutable_slices:
+                if cells[4] not in {"PLANNED", "READY", "IN_PROGRESS", "COMPLETE", "BLOCKED"}:
+                    raise SystemExit(f"invalid execution status for {cells[0]}")
+                commit_value = cells[5].replace("`", "")
+                if commit_value != "-" and re.fullmatch(
+                    r"[0-9a-f]{7,40}(?:, [0-9a-f]{7,40})*", commit_value
+                ) is None:
+                    raise SystemExit(f"invalid commit metadata for {cells[0]}")
+                expected_handoff = {
+                    "VS-04": "`implementation/VS-04-docstring-correction-handoff.md`",
+                    "VS-05": "`implementation/VS-05-handoff.md`",
+                }[cells[0]]
+                if cells[6] not in {"-", expected_handoff}:
+                    raise SystemExit(f"invalid handoff metadata for {cells[0]}")
+                cells[4:] = ["[MUTABLE]", "[MUTABLE]", "[MUTABLE]"]
+                line = "| " + " | ".join(cells) + " |"
+        result.append(line)
+    return result
+
+
+if frozen_prefix(baseline, baseline_marker) != frozen_prefix(current, current_marker):
+    raise SystemExit("non-allowlisted implementation-plan content changed")
+
+baseline_notes = baseline[baseline_marker + 1:]
+current_notes = current[current_marker + 1:]
+if current_notes[:len(baseline_notes)] != baseline_notes:
+    raise SystemExit("approved execution-note history changed")
+appended = current_notes[len(baseline_notes):]
+
+allowed = {
+    "vs04": {
+        "VS-04 corrective assignment",
+        "VS-04 corrective verification",
+        "VS-04 corrective acceptance",
+        "VS-04 corrective stop/escalation",
+    },
+    "vs05": {
+        "VS-04 corrective assignment",
+        "VS-04 corrective verification",
+        "VS-04 corrective acceptance",
+        "VS-04 corrective stop/escalation",
+        "VS-05 active assignment",
+        "VS-05 verification",
+        "VS-05 final implementation review",
+        "VS-05 acceptance",
+        "VS-05 stop/escalation",
+    },
+}[phase]
+seen: set[str] = set()
+active_record = False
+terminal_by_slice: dict[str, str] = {}
+record_pattern = re.compile(
+    r"^- (?P<event>.+) \(\d{4}-\d{2}-\d{2}\):(?: .+)?$"
+)
+for line in appended:
+    if line.startswith("- "):
+        match = record_pattern.fullmatch(line)
+        if match is None or match.group("event") not in allowed:
+            raise SystemExit(f"unsupported execution-note record: {line}")
+        event = match.group("event")
+        if event in seen:
+            raise SystemExit(f"duplicate execution-note event: {event}")
+        seen.add(event)
+        active_record = True
+        if event.endswith(("acceptance", "stop/escalation")):
+            slice_id = event.split(maxsplit=1)[0]
+            if slice_id in terminal_by_slice:
+                raise SystemExit(f"multiple terminal records for {slice_id}")
+            terminal_by_slice[slice_id] = event
+    elif line.startswith("  ") and line.strip() and active_record:
+        continue
+    else:
+        raise SystemExit(f"unstructured appended execution-note content: {line}")
+PY
 done
 ```
 
@@ -423,7 +522,9 @@ correction_handoff=openspec/changes/add-prometheus-metric-provider/implementatio
 approved_sha="${APPROVED_PLANNING_SHA:?set APPROVED_PLANNING_SHA}"
 
 git cat-file -e "$corrective_tip^{commit}"
+git cat-file -e "$approved_sha^{commit}"
 git merge-base --is-ancestor "$accepted_vs03_execution_sha" "$corrective_tip"
+git merge-base --is-ancestor "$approved_sha" "$corrective_tip"
 git diff --name-status "$accepted_vs03_execution_sha" "$corrective_tip" -- \
   | LC_ALL=C sort > "$corrective_audit_dir/paths"
 {
@@ -440,6 +541,7 @@ git show "$accepted_vs03_execution_sha:$target" > "$corrective_audit_dir/before.
 git show "$corrective_tip:$target" > "$corrective_audit_dir/after.py"
 python3 - "$corrective_audit_dir/before.py" "$corrective_audit_dir/after.py" <<'PY'
 import ast
+import hashlib
 import sys
 from pathlib import Path
 
@@ -455,18 +557,44 @@ def without_docstrings(path: str) -> str:
     return ast.dump(tree, include_attributes=False)
 
 
-def docstring_inventory(path: str) -> dict[str, str]:
-    tree = ast.parse(Path(path).read_text())
-    inventory: dict[str, str] = {}
+def docstring_source_inventory(path: str) -> tuple[dict[str, bytes], dict[str, tuple[int, int, int, int]]]:
+    source_bytes = Path(path).read_bytes()
+    source_lines = source_bytes.splitlines(keepends=True)
+    tree = ast.parse(source_bytes.decode("utf-8"))
+    inventory: dict[str, bytes] = {}
+    spans: dict[str, tuple[int, int, int, int]] = {}
+
+    def exact_source(expr: ast.Expr) -> bytes:
+        start_line = expr.lineno - 1
+        end_line = expr.end_lineno - 1
+        if start_line == end_line:
+            return source_lines[start_line][expr.col_offset:expr.end_col_offset]
+        return b"".join(
+            [source_lines[start_line][expr.col_offset:]]
+            + source_lines[start_line + 1:end_line]
+            + [source_lines[end_line][:expr.end_col_offset]]
+        )
 
     class Visitor(ast.NodeVisitor):
         def __init__(self) -> None:
             self.scope: list[str] = []
 
         def record(self, node: ast.AST, name: str) -> None:
-            value = ast.get_docstring(node, clean=False)
-            if value is not None:
-                inventory[".".join([*self.scope, name])] = value
+            body = getattr(node, "body", None)
+            if not body or not isinstance(body[0], ast.Expr):
+                return
+            expr = body[0]
+            value = expr.value
+            if not isinstance(value, ast.Constant) or not isinstance(value.value, str):
+                return
+            location = ".".join([*self.scope, name])
+            inventory[location] = exact_source(expr)
+            spans[location] = (
+                expr.lineno,
+                expr.col_offset,
+                expr.end_lineno,
+                expr.end_col_offset,
+            )
 
         def visit_Module(self, node: ast.Module) -> None:
             self.record(node, "<module>")
@@ -491,13 +619,13 @@ def docstring_inventory(path: str) -> dict[str, str]:
             self.scope.pop()
 
     Visitor().visit(tree)
-    return inventory
+    return inventory, spans
 
 
 if without_docstrings(sys.argv[1]) != without_docstrings(sys.argv[2]):
     raise SystemExit("ports.py changed beyond docstrings")
-before_inventory = docstring_inventory(sys.argv[1])
-after_inventory = docstring_inventory(sys.argv[2])
+before_inventory, before_spans = docstring_source_inventory(sys.argv[1])
+after_inventory, after_spans = docstring_source_inventory(sys.argv[2])
 allowed_additions = {
     "MetricSeriesProvider",
     "MetricSeriesProvider.acquire",
@@ -508,13 +636,38 @@ if set(after_inventory) != set(before_inventory) | allowed_additions:
     raise SystemExit("docstring inventory changed outside the exact two targets")
 for location, value in before_inventory.items():
     if after_inventory[location] != value:
-        raise SystemExit(f"existing docstring changed at {location}")
-provider_doc = after_inventory["MetricSeriesProvider"]
-acquire_doc = after_inventory["MetricSeriesProvider.acquire"]
+        raise SystemExit(f"existing docstring source bytes changed at {location}")
+    before_span = before_spans[location]
+    after_span = after_spans[location]
+    before_shape = (before_span[1], before_span[2] - before_span[0], before_span[3])
+    after_shape = (after_span[1], after_span[2] - after_span[0], after_span[3])
+    if after_shape != before_shape:
+        raise SystemExit(f"existing docstring source span changed at {location}")
+
+after_tree = ast.parse(Path(sys.argv[2]).read_text())
+provider = next(
+    node for node in after_tree.body
+    if isinstance(node, ast.ClassDef) and node.name == "MetricSeriesProvider"
+)
+acquire = next(
+    node for node in provider.body
+    if isinstance(node, ast.AsyncFunctionDef) and node.name == "acquire"
+)
+provider_doc = ast.get_docstring(provider, clean=True)
+acquire_doc = ast.get_docstring(acquire, clean=True)
+if provider_doc is None or acquire_doc is None:
+    raise SystemExit("approved target docstring is missing")
 if len(provider_doc.split()) < 5:
     raise SystemExit("MetricSeriesProvider docstring is not purpose-descriptive")
 if len(acquire_doc.split()) < 5:
     raise SystemExit("acquire docstring is not behavior-descriptive")
+for label, inventory, spans in (
+    ("baseline", before_inventory, before_spans),
+    ("candidate", after_inventory, after_spans),
+):
+    for location in sorted(inventory):
+        digest = hashlib.sha256(inventory[location]).hexdigest()
+        print(label, location, spans[location], digest, inventory[location].hex())
 PY
 git diff --check "$accepted_vs03_execution_sha" "$corrective_tip"
 ```
@@ -923,7 +1076,7 @@ runtime behavior -> full-tree allowlist and focused static/lint proof.
 `backend/src/app/metrics/ports.py::MetricSeriesProvider` and
 `MetricSeriesProvider.acquire` docstring bodies. Add no test, helper, import, annotation,
 signature, statement, formatting-only rewrite, or unrelated cleanup. Coordinator-owned
-plan/task metadata and new handoff
+plan metadata and new handoff
 `implementation/VS-04-docstring-correction-handoff.md` are separate execution metadata;
 the blocked historical `implementation/VS-04-handoff.md` remains unchanged.
 
@@ -1300,7 +1453,8 @@ Frozen at the exact independently reviewed and explicitly human-approved plannin
   integrity rule, and task checkbox-only rule;
 - the distinct normative-planning versus implementation-history baseline model; accepted
   VS-02/VS-03 execution and review anchors/digest; corrective baseline, path allowlist,
-  AST-equivalence audit, and final no-later-production/test protocol;
+  executable AST-equivalence and source-level docstring-inventory audits, and final
+  no-later-production/test protocol;
 - implementation branch, slice count/order/graph, goals, dependencies, vertical
   boundaries, risk classifications, and completion gates;
 - acceptance IDs, approved sources, GIVEN/WHEN/THEN assertions, proof levels,
@@ -1310,16 +1464,18 @@ Frozen at the exact independently reviewed and explicitly human-approved plannin
 
 Mutable only by the Coordinator after approval:
 
-- human-approved planning SHA and readiness/audit command results;
+- top-level `Status` and `Human-approved planning SHA` fields only;
+- VS-04 execution-overview `Status`, `Commit`, and exact correction `Handoff` cells;
+- during VS-05 only, VS-05 execution-overview `Status`, `Commit`, and exact `Handoff`
+  cells;
+- append-only execution-note records using only the exact phase-specific event prefixes
+  enforced by the structured plan audit; prior notes and arbitrary free text are frozen;
 - `tasks.md` checkbox state only as `[ ] -> [x]`, after every owning slice portion passes;
-- plan and slice execution statuses;
-- active assignments, accepted implementation/correction commit SHAs, and handoff paths;
-- VS-04 corrective assignment/tip/handoff, docstring/AST/path verification evidence, and
-  VS-05 final conformance/review results;
-- command results, evidence locations, reviewer/verifier outcomes, deviation dispositions,
-  shared-knowledge disposition, and exact stop/escalation records;
-- execution notes that do not add or alter requirements, proof levels, dependencies,
-  boundaries, or design.
+  no task transition is allowed during VS-04 because task 5.1 is shared with VS-05.
+
+The structured audit script, not this prose summary, is the mechanical authority for
+allowed plan mutations. No other plan line, field, table cell, or execution-note content
+is mutable.
 
 A later slice may detect a regression but may not silently take ownership of missing
 earlier behavior. VS-01, VS-02, and VS-03 are accepted/frozen and cannot be reopened by
@@ -1502,3 +1658,11 @@ acceptance obligations, proof-level changes, or redesign decisions here.
   next snapshot keeps the same remaining graph and intended two-docstring correction,
   while requiring exact docstring inventory, a four-path full-tree allowlist, and no
   unresolved `BLOCKER`/`HIGH`/`MEDIUM` at final review. No implementation is active.
+- Enforcement-review record (2026-09-04): snapshot
+  `75b3fd6a24aaafe9c808a20405cb3ac9e30583c1` received `PLAN CHANGES REQUIRED` because
+  semantic docstring-value comparison did not prove exact source representation and the
+  plan path still allowed broad execution-note mutation. It is superseded and must not be
+  approved. The next snapshot preserves the graph, full-tree path allowlist, two-docstring
+  scope, VS-05 severity gate, and all accepted history while adding byte-level docstring
+  source inventory and exact structured plan-metadata enforcement. No implementation is
+  active.
