@@ -28,12 +28,30 @@ The Coordinator is the only agent allowed to update execution metadata/status in
 
 The approved slice structure is frozen. You may update status, commit SHA, verification result, handoff reference, bounded-correction records, and similarly non-semantic execution metadata. Do not change slice goals, coverage, dependencies, boundaries, non-goals, risk, or completion criteria without structural re-planning and human re-approval.
 
+## Git-backed transition state
+
+When the Coordinator modifies tracked execution metadata at a stable workflow transition, make that state durable in a compact Coordinator-owned metadata commit. Restore both the index and worktree to a clean state before delegating implementation or continuing execution; for a blocked transition, ensure the metadata commit is isolated from any incomplete implementation work. Do not amend or squash Coordinator metadata into an Implementer-owned commit by default.
+
+Use metadata commits only for meaningful tracked transitions:
+
+- **Dispatch:** record `IN_PROGRESS`, a bounded correction brief, or other tracked assignment state when required; commit it before delegation so the Implementer starts clean.
+- **Acceptance:** after the implementation commit and required review pass, record accepted/completed status and reconcile task or handoff metadata when applicable; commit it before continuing.
+- **Blocked or escalated:** when execution cannot continue and tracked repository state must preserve the reason, record a concise blocker/escalation transition and commit it before stopping.
+
+Do not create a metadata commit when no tracked repository state changed, or solely for transient reasoning, temporary notes, or movement between internal actions. A commit is justified only when the tracked state is needed for restartability, delegation, acceptance, or blocking and leaving it uncommitted would violate the clean-start or durable-state guarantee.
+
+Keep the durable sequence distinct when each transition changes tracked state:
+
+`Coordinator dispatch metadata commit -> Implementer assignment commit -> required review -> Coordinator acceptance metadata commit`
+
+Recover execution from normal Git history, current plan/task metadata, compact handoffs, and validated project knowledge. Do not add commit ledgers, repeated SHA tables, checksums, or per-action Git event logs.
+
 ## Execution loop
 
 Default to sequential execution on the current candidate branch.
 
 For the next `READY` slice:
-1. mark it `IN_PROGRESS`;
+1. record `IN_PROGRESS` when tracked execution metadata requires it; if tracked state changed, commit the dispatch transition and verify a clean index and worktree;
 2. spawn/delegate to a fresh Slice Implementer thread with only the bounded slice assignment plus required source/context references; prefer fresh/minimal context rather than inheriting the Coordinator's full conversation history;
 3. require focused verification, self-review, a clean working tree, one atomic slice commit by default, a structured handoff, and candidate-knowledge reporting;
 4. independently verify the completion evidence rather than trusting the worker's declaration;
@@ -42,7 +60,8 @@ For the next `READY` slice:
 7. process candidate shared knowledge;
 8. reconcile `tasks.md` against the accepted slice coverage: mark an approved task `- [x]` only after every slice portion assigned to it has passed its completion gate; leave multi-slice tasks unchecked until their final assigned portion passes. Checkbox updates are completion metadata only and MUST NOT rewrite approved task scope;
 9. mark the slice `COMPLETE` only after the gate passes;
-10. automatically continue to the next ready slice.
+10. if acceptance changed tracked execution metadata, commit that Coordinator-owned transition and verify a clean index and worktree;
+11. automatically continue to the next ready slice.
 
 If a slice needs corrective work, delegate the correction; do not implement it yourself.
 
@@ -86,11 +105,12 @@ Flow: scoped correction -> focused diff/static/test verification -> Coordinator 
 
 For either category:
 
-1. record the narrow correction scope, expected affected paths, and expected `normal|high-risk` review classification in mutable execution metadata;
-2. delegate only that scope and require an atomic correction commit plus a compact handoff;
-3. inspect the actual diff and Git history and run or confirm the focused tests/static checks that prove the correction;
-4. obtain independent review when required by the delta-risk rules below;
-5. record the actual affected paths, verification result, review result when required, and accepted correction commit/handoff; then continue sequential execution.
+1. record the narrow correction scope, expected affected paths, and expected `normal|high-risk` review classification when tracked execution metadata requires it;
+2. if tracked state changed, commit the correction dispatch transition and verify a clean index and worktree;
+3. delegate only that scope and require an atomic correction commit plus a compact handoff;
+4. inspect the actual diff and Git history and run or confirm the focused tests/static checks that prove the correction;
+5. obtain independent review when required by the delta-risk rules below;
+6. record the actual affected paths, verification result, review result when required, and accepted correction commit/handoff; if tracked state changed, commit that Coordinator-owned acceptance transition and verify a clean index and worktree before continuing.
 
 Normal Git diff/history, focused tests, static checks, and independent review are the standard scope controls. Do not require custom checksum protocols, source-byte reconstruction, AST inventory machinery, or repeated raw commit SHA references unless a concrete repository-specific risk requires one. When Git history already identifies the accepted correction, avoid duplicating its SHA across multiple records.
 
@@ -162,6 +182,12 @@ When stopping short of completion, record the exact stop/escalation reason in th
 mutable execution metadata of `implementation-plan.md` before reporting it to the
 user. A plan with an `IN_PROGRESS` slice and no recorded active worker or stop reason
 is invalid execution state and must be reconciled before the run ends.
+
+If recording the stop changes tracked metadata, commit that blocked/escalated transition only after ensuring the commit excludes incomplete implementation work. Do not create a new commit when tracked state did not change.
+
+## Interrupted implementation
+
+If an Implementer stops before producing its assignment commit, preserve the existing durable dispatch transition and inspect Git, the index, and the worktree. Clean or explicitly discard incomplete implementation work only through normal repository governance before making another Coordinator metadata commit. Record a durable retry or blocked transition only when tracked execution state materially changes, and never include incomplete implementation changes in that metadata commit.
 
 ## Final-response gate
 

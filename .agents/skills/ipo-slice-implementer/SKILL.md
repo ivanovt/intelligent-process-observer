@@ -12,7 +12,11 @@ Implement exactly one approved assignment in a fresh context: either a vertical 
 
 ## Startup
 
-Verify the expected candidate branch and clean starting state. Read repository governance, `.agents/PROJECT_KNOWLEDGE.md`, the assigned slice or correction brief, its explicit context pack, the approved source sections it references, relevant existing code, and prerequisite handoffs only when needed.
+Before implementation begins, verify the expected candidate branch and confirm that both the index and worktree are clean. Any Coordinator-owned tracked execution metadata required for dispatch must already be committed.
+
+If the worktree or index contains unexplained pre-existing changes, stop and report them to the Coordinator. If expected Coordinator transition metadata remains uncommitted, stop and return control to the Coordinator. Do not stage or commit Coordinator-owned metadata merely to make the tree clean.
+
+Then read repository governance, `.agents/PROJECT_KNOWLEDGE.md`, the assigned slice or correction brief, its explicit context pack, the approved source sections it references, relevant existing code, and prerequisite handoffs only when needed.
 
 Do not read rejected experimental implementations as reference unless the assignment explicitly authorizes it.
 
@@ -75,9 +79,11 @@ Before claiming completion:
 - self-review against the assignment, its completion criteria, and referenced approved requirements;
 - ensure affected documentation remains accurate;
 - ensure the working tree contains only intended assignment changes; and
-- create one atomic Git commit for the completed assignment by default.
+- create one atomic Git commit containing only the completed assignment and its handoff by default, excluding Coordinator-owned plan/status metadata.
 
 Do not mark a slice `COMPLETE` or a correction accepted in `implementation-plan.md`; execution-state acceptance belongs to the Coordinator.
+
+Do not amend or squash later Coordinator acceptance metadata into the implementation commit by default. The Coordinator records that transition separately when tracked execution state changes.
 
 ## Handoff
 
