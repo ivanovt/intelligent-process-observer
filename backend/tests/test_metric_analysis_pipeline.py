@@ -4,9 +4,13 @@ import asyncio
 import inspect
 import math
 import os
+from collections.abc import Awaitable
+from contextlib import asynccontextmanager
+from copy import deepcopy
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from types import SimpleNamespace
+from typing import Any
 from unittest.mock import ANY
 from urllib.parse import parse_qs
 from uuid import UUID, uuid4
@@ -34,7 +38,10 @@ from app.infrastructure.persistence.runtime_contracts import (
     ObservationRunStatus,
     StructuredReason,
 )
-from app.infrastructure.prometheus.composition import PrometheusMetricSeriesProvider
+from app.infrastructure.prometheus.composition import (
+    PrometheusMetricSeriesProvider,
+    _cancel_without_waiting,
+)
 from app.metrics.contracts import (
     FIXED_ALLOWED_TOOLS,
     CompletedInsufficientMetricResult,
@@ -2503,6 +2510,176 @@ def test_real_provider_timeout_keeps_the_existing_minimal_current_failure_result
             "message": "Current metric data acquisition failed.",
         },
     }
+
+
+def test_late_close_exception_cannot_mutate_persisted_reference_partial() -> None:
+    class LateCloseStream(httpx.AsyncByteStream):
+        def __init__(self) -> None:
+            self.started = asyncio.Event()
+            self.release = asyncio.Event()
+            self.cancelled = False
+            self.closed = False
+
+        async def __aiter__(self):
+            self.started.set()
+            try:
+                await self.release.wait()
+            except asyncio.CancelledError:
+                self.cancelled = True
+                raise
+            yield b"unreachable"
+
+        async def aclose(self) -> None:
+            self.closed = True
+
+    class LateCloseClient:
+        def __init__(self, stream: LateCloseStream) -> None:
+            self.stream_value = stream
+            self.close_started = asyncio.Event()
+            self.close_finished = asyncio.Event()
+
+        async def __aenter__(self) -> LateCloseClient:
+            return self
+
+        async def __aexit__(self, *_: object) -> None:
+            self.close_started.set()
+            await self.stream_value.release.wait()
+            self.close_finished.set()
+            raise httpx.CloseError("late close must remain private")
+
+        @asynccontextmanager
+        async def stream(self, *_: object, **__: object):
+            response = httpx.Response(200, stream=self.stream_value)
+            try:
+                yield response
+            finally:
+                await response.aclose()
+
+    async def scenario() -> None:
+        stream = LateCloseStream()
+        late_client = LateCloseClient(stream)
+        requests = 0
+        sleeps: list[float] = []
+        clients = 0
+
+        def current_response(_: httpx.Request) -> httpx.Response:
+            nonlocal requests
+            requests += 1
+            return httpx.Response(
+                200,
+                json={
+                    "status": "success",
+                    "data": {
+                        "resultType": "matrix",
+                        "result": [
+                            {
+                                "metric": {},
+                                "values": [
+                                    [WINDOW_START.timestamp(), "10"],
+                                    [(WINDOW_START + timedelta(seconds=60)).timestamp(), "20"],
+                                    [(WINDOW_START + timedelta(seconds=180)).timestamp(), "40"],
+                                ],
+                            }
+                        ],
+                    },
+                },
+            )
+
+        def client_factory() -> httpx.AsyncClient | LateCloseClient:
+            nonlocal clients, requests
+            clients += 1
+            if clients == 1:
+                return httpx.AsyncClient(transport=httpx.MockTransport(current_response))
+            requests += 1
+            return late_client
+
+        async def sleep(seconds: float) -> None:
+            sleeps.append(seconds)
+
+        async def deadline_runner(awaitable: Awaitable[Any], seconds: float) -> Any:
+            if seconds != 15.0:
+                return await awaitable
+            attempt = asyncio.ensure_future(awaitable)
+            timeout_signal = asyncio.create_task(stream.started.wait())
+            done, _ = await asyncio.wait(
+                {attempt, timeout_signal}, return_when=asyncio.FIRST_COMPLETED
+            )
+            if attempt in done:
+                timeout_signal.cancel()
+                return attempt.result()
+            _cancel_without_waiting(attempt)
+            raise TimeoutError
+
+        source = PrometheusSourceSettings(
+            id="plant-prometheus",
+            name="Plant Prometheus",
+            base_url="https://prometheus.example.test",
+            credentials=BearerTokenCredentials(type="bearer_token", token="provider-secret"),
+        )
+        provider = PrometheusMetricSeriesProvider(
+            [source],
+            client_factory=client_factory,
+            sleep=sleep,
+            deadline_runner=deadline_runner,
+        )
+        repository = RecordingRepository([])
+        pipeline = MetricAnalysisPipeline(
+            provider=provider,
+            agent=FakeAgent(),
+            history_reader=FakeHistoryReader(),
+            repository=repository,
+            result_builder=MetricResultBuilder(lambda: WINDOW_START + timedelta(minutes=5)),
+        )
+
+        analysis = await pipeline.analyze(context(reference_periods=("1h",)))
+        await asyncio.wait_for(late_client.close_started.wait(), timeout=0.1)
+        lens_run = SimpleNamespace(status="running", reason=None)
+        artifact = await pipeline.persist_terminal(object(), lens_run, analysis)
+        committed = (
+            deepcopy(analysis.terminal_result.payload),
+            analysis.terminal_result.status,
+            deepcopy(analysis.reference_diagnostics),
+            lens_run.status,
+            deepcopy(lens_run.reason),
+            deepcopy(repository.persisted),
+            artifact.status,
+            requests,
+            sleeps.copy(),
+        )
+
+        assert stream.cancelled is True
+        assert stream.closed is True
+        assert analysis.terminal_result.status is LensRunStatus.PARTIAL
+        assert analysis.terminal_result.payload["reason"] == {
+            "code": "reference_unavailable",
+            "component": "reference_periods",
+        }
+        assert lens_run.status == "partial"
+        assert len(repository.persisted) == 1
+        assert requests == 2
+        assert sleeps == []
+
+        stream.release.set()
+        await asyncio.wait_for(late_client.close_finished.wait(), timeout=0.1)
+        for _ in range(10):
+            await asyncio.sleep(0)
+            if provider._transport_capacity._held == 0:
+                break
+
+        assert provider._transport_capacity._held == 0
+        assert (
+            analysis.terminal_result.payload,
+            analysis.terminal_result.status,
+            analysis.reference_diagnostics,
+            lens_run.status,
+            lens_run.reason,
+            repository.persisted,
+            artifact.status,
+            requests,
+            sleeps,
+        ) == committed
+
+    run(scenario())
 
 
 def test_real_provider_retry_exhaustion_makes_only_its_reference_partial() -> None:

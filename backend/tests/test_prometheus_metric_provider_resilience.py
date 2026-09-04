@@ -226,7 +226,20 @@ def test_acquisition_budget_anchor_includes_pre_transport_work(
 
 
 @pytest.mark.parametrize("retry_kind", ["connect", 429, 500, 502, 504])
-def test_second_retry_admission_uses_its_exact_one_second_wait(retry_kind: str | int) -> None:
+@pytest.mark.parametrize(
+    ("retry_two_anchor", "expected_type", "expected_requests", "expected_waits"),
+    [
+        (34.000_001, MetricSeriesAcquisitionTimeout, 2, [0.5]),
+        (34.0, MetricSeriesAvailable, 3, [0.5, 1.0]),
+    ],
+)
+def test_second_retry_admission_uses_an_inclusive_one_second_plus_attempt_boundary(
+    retry_kind: str | int,
+    retry_two_anchor: float,
+    expected_type: type[object],
+    expected_requests: int,
+    expected_waits: list[float],
+) -> None:
     clock = _Clock()
     waits: list[float] = []
     requests = 0
@@ -235,7 +248,9 @@ def test_second_retry_admission_uses_its_exact_one_second_wait(retry_kind: str |
         nonlocal requests
         requests += 1
         if requests == 2:
-            clock.value = 34.000_001
+            clock.value = retry_two_anchor
+        if requests == 3 and retry_two_anchor == 34.0:
+            return httpx.Response(200, json=_success())
         if retry_kind == "connect":
             raise httpx.ConnectError("unavailable", request=request)
         return httpx.Response(retry_kind, content=b"not-json")
@@ -253,9 +268,9 @@ def test_second_retry_admission_uses_its_exact_one_second_wait(retry_kind: str |
 
     outcome = asyncio.run(provider.acquire(_scope(), _window()))
 
-    assert outcome == MetricSeriesAcquisitionTimeout(diagnostic="prometheus_acquisition_timeout")
-    assert requests == 2
-    assert waits == [0.5]
+    assert isinstance(outcome, expected_type)
+    assert requests == expected_requests
+    assert waits == expected_waits
 
 
 @pytest.mark.parametrize(
@@ -529,6 +544,87 @@ def test_deadline_returns_before_resistant_cleanup_and_releases_capacity_afterwa
             source="prometheus", samples=()
         )
         assert successful_requests == 1
+
+    asyncio.run(scenario())
+
+
+def test_active_transport_capacity_saturation_rejects_before_client_or_request() -> None:
+    class ActiveStream(httpx.AsyncByteStream):
+        def __init__(self) -> None:
+            self.started = asyncio.Event()
+            self.release = asyncio.Event()
+            self.closed = False
+
+        async def __aiter__(self):
+            self.started.set()
+            await self.release.wait()
+            yield b'{"status":"success","data":{"resultType":"matrix","result":[]}}'
+
+        async def aclose(self) -> None:
+            self.closed = True
+
+    async def scenario() -> None:
+        stream = ActiveStream()
+        capacity = _TransportCapacity(limit=1)
+        active_client_constructions = 0
+        active_requests = 0
+        rejected_client_constructions = 0
+
+        def active_client_factory() -> httpx.AsyncClient:
+            nonlocal active_client_constructions
+            active_client_constructions += 1
+
+            def active_handler(_: httpx.Request) -> httpx.Response:
+                nonlocal active_requests
+                active_requests += 1
+                return httpx.Response(200, stream=stream)
+
+            return httpx.AsyncClient(transport=httpx.MockTransport(active_handler))
+
+        def fail_on_client_construction() -> httpx.AsyncClient:
+            nonlocal rejected_client_constructions
+            rejected_client_constructions += 1
+            raise AssertionError("saturated acquisition constructed a client")
+
+        provider = PrometheusMetricSeriesProvider(
+            [_source()],
+            client_factory=active_client_factory,
+            deadline_runner=_immediate_deadline,
+            _transport_capacity=capacity,
+        )
+        active = asyncio.create_task(provider.acquire(_scope(), _window()))
+        await asyncio.wait_for(stream.started.wait(), timeout=0.1)
+
+        provider._client_factory = fail_on_client_construction
+        saturated = await provider.acquire(_scope(), _window())
+        assert saturated == MetricSeriesAcquisitionFailure(
+            diagnostic="prometheus_acquisition_failed"
+        )
+        assert active_client_constructions == 1
+        assert active_requests == 1
+        assert rejected_client_constructions == 0
+
+        stream.release.set()
+        assert await asyncio.wait_for(active, timeout=0.1) == MetricSeriesAvailable(
+            source="prometheus", samples=()
+        )
+        assert stream.closed is True
+
+        released_requests = 0
+
+        def released_client_factory() -> httpx.AsyncClient:
+            def released_handler(_: httpx.Request) -> httpx.Response:
+                nonlocal released_requests
+                released_requests += 1
+                return httpx.Response(200, json=_success())
+
+            return httpx.AsyncClient(transport=httpx.MockTransport(released_handler))
+
+        provider._client_factory = released_client_factory
+        assert await provider.acquire(_scope(), _window()) == MetricSeriesAvailable(
+            source="prometheus", samples=()
+        )
+        assert released_requests == 1
 
     asyncio.run(scenario())
 
