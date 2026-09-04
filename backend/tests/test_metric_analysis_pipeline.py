@@ -4,12 +4,18 @@ import asyncio
 import inspect
 import math
 import os
+from collections.abc import Awaitable
+from contextlib import asynccontextmanager
+from copy import deepcopy
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from types import SimpleNamespace
+from typing import Any
 from unittest.mock import ANY
+from urllib.parse import parse_qs
 from uuid import UUID, uuid4
 
+import httpx
 import pytest
 from alembic import command
 from alembic.config import Config
@@ -18,7 +24,7 @@ from pydantic_ai.messages import ModelResponse, TextPart, ToolCallPart
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
-from app.core.settings import get_settings
+from app.core.settings import BearerTokenCredentials, PrometheusSourceSettings, get_settings
 from app.infrastructure.agents.pydantic_ai_metrics import PydanticAIMetricsAnalysisAgent
 from app.infrastructure.persistence.models import ObservationModel
 from app.infrastructure.persistence.repository import RuntimePersistenceRepository
@@ -31,6 +37,10 @@ from app.infrastructure.persistence.runtime_contracts import (
     ObservationRunInput,
     ObservationRunStatus,
     StructuredReason,
+)
+from app.infrastructure.prometheus.composition import (
+    PrometheusMetricSeriesProvider,
+    _cancel_without_waiting,
 )
 from app.metrics.contracts import (
     FIXED_ALLOWED_TOOLS,
@@ -1471,6 +1481,190 @@ def test_current_technical_failures_are_decided_before_terminal_persistence(
 
 
 @pytest.mark.parametrize(
+    ("sources", "source_id", "diagnostic"),
+    [
+        ([], "plant-prometheus", "prometheus_source_unavailable"),
+        (
+            [
+                PrometheusSourceSettings(
+                    id="plant-prometheus",
+                    name="Plant Prometheus",
+                    base_url="https://user:password@prometheus.example.test",
+                    credentials=BearerTokenCredentials(type="bearer_token", token="sentinel"),
+                )
+            ],
+            "plant-prometheus",
+            "prometheus_source_invalid",
+        ),
+        (
+            [
+                PrometheusSourceSettings(
+                    id="other-prometheus",
+                    name="Other Prometheus",
+                    base_url="https://prometheus.example.test",
+                    credentials=BearerTokenCredentials(type="bearer_token", token="sentinel"),
+                )
+            ],
+            "plant-prometheus",
+            "prometheus_source_unavailable",
+        ),
+    ],
+)
+def test_real_composed_provider_preserves_current_failure_result(
+    sources, source_id, diagnostic
+) -> None:
+    execution_context = context().model_copy(
+        update={"provider_scope": _provider_scope(source_id=source_id)}
+    )
+    provider = PrometheusMetricSeriesProvider(sources)
+    pipeline = MetricAnalysisPipeline(
+        provider=provider,
+        agent=FakeAgent(),
+        history_reader=FakeHistoryReader(),
+        repository=RecordingRepository([]),
+        result_builder=MetricResultBuilder(lambda: WINDOW_START + timedelta(minutes=5)),
+    )
+
+    direct = run(
+        provider.acquire(execution_context.provider_scope, execution_context.analysis_window)
+    )
+    analysis = run(pipeline.analyze(execution_context))
+
+    assert direct.diagnostic == diagnostic
+    assert analysis.failure == MetricCurrentAcquisitionFailed(diagnostic=diagnostic)
+    assert analysis.terminal_result.payload["status"] == {
+        "state": "failed",
+        "error": {
+            "code": "current_metric_acquisition_failed",
+            "message": "Current metric data acquisition failed.",
+        },
+    }
+
+
+def test_real_composed_provider_empty_current_completes_insufficient() -> None:
+    requests: list[httpx.Request] = []
+
+    def response(request: httpx.Request) -> httpx.Response:
+        requests.append(request)
+        return httpx.Response(
+            200,
+            json={"status": "success", "data": {"resultType": "matrix", "result": []}},
+        )
+
+    source = PrometheusSourceSettings(
+        id="plant-prometheus",
+        name="Plant Prometheus",
+        base_url="https://prometheus.example.test/prometheus",
+        credentials=BearerTokenCredentials(type="bearer_token", token="sentinel"),
+    )
+    provider = PrometheusMetricSeriesProvider(
+        [source], client_factory=lambda: httpx.AsyncClient(transport=httpx.MockTransport(response))
+    )
+    execution_context = context()
+    agent = FakeAgent()
+    pipeline = MetricAnalysisPipeline(
+        provider=provider,
+        agent=agent,
+        history_reader=FakeHistoryReader(),
+        repository=RecordingRepository([]),
+        result_builder=MetricResultBuilder(lambda: WINDOW_START + timedelta(minutes=5)),
+    )
+
+    analysis = run(pipeline.analyze(execution_context))
+
+    assert len(requests) == 1
+    assert requests[0].url.path == "/prometheus/api/v1/query_range"
+    assert parse_qs(requests[0].content.decode(), strict_parsing=True) == {
+        "query": [execution_context.provider_scope.query],
+        "start": [WINDOW_START.isoformat().replace("+00:00", "Z")],
+        "end": [(WINDOW_START + timedelta(seconds=180)).isoformat().replace("+00:00", "Z")],
+        "step": ["3"],
+        "timeout": ["10s"],
+        "limit": ["2"],
+    }
+    assert isinstance(analysis.prepared, PreparedInsufficientSeries)
+    assert analysis.failure is None
+    assert len(agent.requests) == 1
+    assert analysis.terminal_result.status is LensRunStatus.COMPLETED
+    assert analysis.terminal_result.payload["data_quality"] == "insufficient"
+
+
+def test_real_provider_preserves_current_and_ordered_reference_windows() -> None:
+    requests: list[httpx.Request] = []
+
+    def response(request: httpx.Request) -> httpx.Response:
+        requests.append(request)
+        if len(requests) == 3:
+            return httpx.Response(
+                400, json={"status": "error", "errorType": "bad_data", "error": "x"}
+            )
+        form = parse_qs(request.content.decode(), strict_parsing=True)
+        start = datetime.fromisoformat(form["start"][0].replace("Z", "+00:00"))
+        end = datetime.fromisoformat(form["end"][0].replace("Z", "+00:00"))
+        return httpx.Response(
+            200,
+            json={
+                "status": "success",
+                "data": {
+                    "resultType": "matrix",
+                    "result": [
+                        {
+                            "metric": {"private": "label"},
+                            "values": [
+                                [start.timestamp(), "10"],
+                                [(start + timedelta(seconds=60)).timestamp(), "20"],
+                                [end.timestamp(), "40"],
+                            ],
+                        }
+                    ],
+                },
+            },
+        )
+
+    source = PrometheusSourceSettings(
+        id="plant-prometheus",
+        name="Plant Prometheus",
+        base_url="https://prometheus.example.test/prometheus",
+        credentials=BearerTokenCredentials(type="bearer_token", token="sentinel"),
+    )
+    provider = PrometheusMetricSeriesProvider(
+        [source], client_factory=lambda: httpx.AsyncClient(transport=httpx.MockTransport(response))
+    )
+    execution_context = context(reference_periods=("1h", "1d", "1w"))
+    pipeline = MetricAnalysisPipeline(
+        provider=provider,
+        agent=FakeAgent(),
+        history_reader=FakeHistoryReader(),
+        repository=RecordingRepository([]),
+        result_builder=MetricResultBuilder(lambda: WINDOW_START + timedelta(minutes=5)),
+    )
+
+    analysis = run(pipeline.analyze(execution_context))
+
+    assert len(requests) == 4
+    assert [request.url.path for request in requests] == ["/prometheus/api/v1/query_range"] * 4
+    forms = [parse_qs(request.content.decode(), strict_parsing=True) for request in requests]
+    assert [form["step"] for form in forms] == [["3"]] * 4
+    assert [form["start"] for form in forms] == [
+        [WINDOW_START.isoformat().replace("+00:00", "Z")],
+        [(WINDOW_START - timedelta(hours=1)).isoformat().replace("+00:00", "Z")],
+        [(WINDOW_START - timedelta(days=1)).isoformat().replace("+00:00", "Z")],
+        [(WINDOW_START - timedelta(weeks=1)).isoformat().replace("+00:00", "Z")],
+    ]
+    assert [item["offset"] for item in analysis.terminal_result.payload["reference_periods"]] == [
+        "1h",
+        "1w",
+    ]
+    assert analysis.terminal_result.payload["status"]["state"] == "partial"
+
+
+def _provider_scope(*, source_id: str) -> MetricProviderScope:
+    return MetricProviderScope(
+        adapter_type="prometheus", source_id=source_id, query="avg(coolant_temperature_celsius)"
+    )
+
+
+@pytest.mark.parametrize(
     ("stage", "expected_agent_calls"),
     [("statistics", 0), ("semanticization", 0), ("result_validation", 1)],
 )
@@ -2273,6 +2467,288 @@ def test_current_insufficiency_does_not_acquire_or_partial_configured_references
     assert lens_run.status == "completed"
     assert repository.persisted[0].payload["data_quality"] == "insufficient"
     assert "reason" not in repository.persisted[0].payload
+
+
+def test_real_provider_timeout_keeps_the_existing_minimal_current_failure_result() -> None:
+    provider = PrometheusMetricSeriesProvider(
+        [
+            PrometheusSourceSettings(
+                id="plant-prometheus",
+                name="Plant Prometheus",
+                base_url="https://prometheus.example.test",
+                credentials=BearerTokenCredentials(type="bearer_token", token="provider-secret"),
+            )
+        ],
+        client_factory=lambda: httpx.AsyncClient(
+            transport=httpx.MockTransport(
+                lambda _: httpx.Response(
+                    503,
+                    json={
+                        "status": "error",
+                        "errorType": "timeout",
+                        "error": "provider text must not cross the pipeline",
+                    },
+                )
+            )
+        ),
+    )
+    pipeline = MetricAnalysisPipeline(
+        provider=provider,
+        agent=FakeAgent(),
+        history_reader=FakeHistoryReader(),
+        repository=RecordingRepository([]),
+        result_builder=MetricResultBuilder(lambda: WINDOW_START + timedelta(minutes=5)),
+    )
+
+    analysis = run(pipeline.analyze(context()))
+
+    assert analysis.terminal_result.status == LensRunStatus.FAILED
+    assert analysis.terminal_result.payload["status"] == {
+        "state": "failed",
+        "error": {
+            "code": "current_metric_acquisition_failed",
+            "message": "Current metric data acquisition failed.",
+        },
+    }
+
+
+def test_late_close_exception_cannot_mutate_persisted_reference_partial() -> None:
+    class LateCloseStream(httpx.AsyncByteStream):
+        def __init__(self) -> None:
+            self.started = asyncio.Event()
+            self.release = asyncio.Event()
+            self.cancelled = False
+            self.closed = False
+
+        async def __aiter__(self):
+            self.started.set()
+            try:
+                await self.release.wait()
+            except asyncio.CancelledError:
+                self.cancelled = True
+                raise
+            yield b"unreachable"
+
+        async def aclose(self) -> None:
+            self.closed = True
+
+    class LateCloseClient:
+        def __init__(self, stream: LateCloseStream) -> None:
+            self.stream_value = stream
+            self.close_started = asyncio.Event()
+            self.close_finished = asyncio.Event()
+            self.request_calls = 0
+
+        async def __aenter__(self) -> LateCloseClient:
+            return self
+
+        async def __aexit__(self, *_: object) -> None:
+            self.close_started.set()
+            await self.stream_value.release.wait()
+            self.close_finished.set()
+            raise httpx.CloseError("late close must remain private")
+
+        @asynccontextmanager
+        async def stream(self, *_: object, **__: object):
+            self.request_calls += 1
+            response = httpx.Response(200, stream=self.stream_value)
+            try:
+                yield response
+            finally:
+                await response.aclose()
+
+    async def scenario() -> None:
+        stream = LateCloseStream()
+        late_client = LateCloseClient(stream)
+        requests = 0
+        sleeps: list[float] = []
+        clients = 0
+
+        def current_response(_: httpx.Request) -> httpx.Response:
+            nonlocal requests
+            requests += 1
+            return httpx.Response(
+                200,
+                json={
+                    "status": "success",
+                    "data": {
+                        "resultType": "matrix",
+                        "result": [
+                            {
+                                "metric": {},
+                                "values": [
+                                    [WINDOW_START.timestamp(), "10"],
+                                    [(WINDOW_START + timedelta(seconds=60)).timestamp(), "20"],
+                                    [(WINDOW_START + timedelta(seconds=180)).timestamp(), "40"],
+                                ],
+                            }
+                        ],
+                    },
+                },
+            )
+
+        def client_factory() -> httpx.AsyncClient | LateCloseClient:
+            nonlocal clients
+            clients += 1
+            if clients == 1:
+                return httpx.AsyncClient(transport=httpx.MockTransport(current_response))
+            return late_client
+
+        async def sleep(seconds: float) -> None:
+            sleeps.append(seconds)
+
+        async def deadline_runner(awaitable: Awaitable[Any], seconds: float) -> Any:
+            if seconds != 15.0:
+                return await awaitable
+            attempt = asyncio.ensure_future(awaitable)
+            timeout_signal = asyncio.create_task(stream.started.wait())
+            done, _ = await asyncio.wait(
+                {attempt, timeout_signal}, return_when=asyncio.FIRST_COMPLETED
+            )
+            if attempt in done:
+                timeout_signal.cancel()
+                return attempt.result()
+            _cancel_without_waiting(attempt)
+            raise TimeoutError
+
+        source = PrometheusSourceSettings(
+            id="plant-prometheus",
+            name="Plant Prometheus",
+            base_url="https://prometheus.example.test",
+            credentials=BearerTokenCredentials(type="bearer_token", token="provider-secret"),
+        )
+        provider = PrometheusMetricSeriesProvider(
+            [source],
+            client_factory=client_factory,
+            sleep=sleep,
+            deadline_runner=deadline_runner,
+        )
+        repository = RecordingRepository([])
+        pipeline = MetricAnalysisPipeline(
+            provider=provider,
+            agent=FakeAgent(),
+            history_reader=FakeHistoryReader(),
+            repository=repository,
+            result_builder=MetricResultBuilder(lambda: WINDOW_START + timedelta(minutes=5)),
+        )
+
+        analysis = await pipeline.analyze(context(reference_periods=("1h",)))
+        await asyncio.wait_for(late_client.close_started.wait(), timeout=0.1)
+        lens_run = SimpleNamespace(status="running", reason=None)
+        artifact = await pipeline.persist_terminal(object(), lens_run, analysis)
+        committed = (
+            deepcopy(analysis.terminal_result.payload),
+            analysis.terminal_result.status,
+            deepcopy(analysis.reference_diagnostics),
+            lens_run.status,
+            deepcopy(lens_run.reason),
+            deepcopy(repository.persisted),
+            artifact.status,
+            requests,
+            late_client.request_calls,
+            sleeps.copy(),
+        )
+
+        assert stream.cancelled is True
+        assert stream.closed is True
+        assert analysis.terminal_result.status is LensRunStatus.PARTIAL
+        assert analysis.terminal_result.payload["reason"] == {
+            "code": "reference_unavailable",
+            "component": "reference_periods",
+        }
+        assert lens_run.status == "partial"
+        assert len(repository.persisted) == 1
+        assert requests == 1
+        assert late_client.request_calls == 1
+        assert sleeps == []
+
+        stream.release.set()
+        await asyncio.wait_for(late_client.close_finished.wait(), timeout=0.1)
+        for _ in range(10):
+            await asyncio.sleep(0)
+            if provider._transport_capacity._held == 0:
+                break
+
+        assert provider._transport_capacity._held == 0
+        assert (
+            analysis.terminal_result.payload,
+            analysis.terminal_result.status,
+            analysis.reference_diagnostics,
+            lens_run.status,
+            lens_run.reason,
+            repository.persisted,
+            artifact.status,
+            requests,
+            late_client.request_calls,
+            sleeps,
+        ) == committed
+
+    run(scenario())
+
+
+def test_real_provider_retry_exhaustion_makes_only_its_reference_partial() -> None:
+    request_count = 0
+
+    def handler(_: httpx.Request) -> httpx.Response:
+        nonlocal request_count
+        request_count += 1
+        if request_count == 1:
+            return httpx.Response(
+                200,
+                json={
+                    "status": "success",
+                    "data": {
+                        "resultType": "matrix",
+                        "result": [
+                            {
+                                "metric": {},
+                                "values": [
+                                    [WINDOW_START.timestamp(), "10"],
+                                    [(WINDOW_START + timedelta(seconds=60)).timestamp(), "20"],
+                                    [(WINDOW_START + timedelta(seconds=180)).timestamp(), "40"],
+                                ],
+                            }
+                        ],
+                    },
+                },
+            )
+        return httpx.Response(500, content=b"not-json")
+
+    async def no_sleep(_: float) -> None:
+        return None
+
+    provider = PrometheusMetricSeriesProvider(
+        [
+            PrometheusSourceSettings(
+                id="plant-prometheus",
+                name="Plant Prometheus",
+                base_url="https://prometheus.example.test",
+                credentials=BearerTokenCredentials(type="bearer_token", token="provider-secret"),
+            )
+        ],
+        client_factory=lambda: httpx.AsyncClient(transport=httpx.MockTransport(handler)),
+        sleep=no_sleep,
+    )
+    repository = RecordingRepository([])
+    pipeline = MetricAnalysisPipeline(
+        provider=provider,
+        agent=FakeAgent(),
+        history_reader=FakeHistoryReader(),
+        repository=repository,
+        result_builder=MetricResultBuilder(lambda: WINDOW_START + timedelta(minutes=5)),
+    )
+
+    analysis = run(pipeline.analyze(context(reference_periods=("1h",))))
+    lens_run = SimpleNamespace(status="running", reason=None)
+    run(pipeline.persist_terminal(object(), lens_run, analysis))
+
+    assert request_count == 4
+    assert lens_run.status == "partial"
+    assert repository.persisted[0].payload["reason"] == {
+        "code": "reference_unavailable",
+        "component": "reference_periods",
+    }
+    assert "reference_periods" not in repository.persisted[0].payload
 
 
 @pytest.mark.parametrize("history_failure", [False, True])

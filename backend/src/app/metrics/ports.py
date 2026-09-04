@@ -17,9 +17,14 @@ from app.metrics.contracts import (
 
 
 class MetricSeriesProvider(Protocol):
+    """Acquire provider-neutral samples for an immutable Metric scope and window."""
+
     async def acquire(
         self, scope: MetricProviderScope, window: MetricAnalysisWindow
-    ) -> MetricSeriesAcquisitionOutcome: ...
+    ) -> MetricSeriesAcquisitionOutcome:
+        """Return the typed acquisition outcome for the requested scope and exact window."""
+
+        ...
 
 
 class MetricsAnalysisAgent(Protocol):

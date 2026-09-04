@@ -16,8 +16,10 @@ contracts must remain free of PydanticAI types.
 construction. Providers and agent adapters return typed port outcomes only; they
 must not construct result payloads, advance LensRun state, or persist artifacts.
 
-A future Prometheus implementation belongs behind `MetricSeriesProvider` in
-infrastructure. It may translate provider-specific query/authentication/retry
-behavior into the existing typed acquisition outcomes, but must not widen the
-immutable provider scope, choose a window, or introduce transport objects into
-the Metrics domain or result contract.
+The production Prometheus implementation lives in infrastructure behind the unchanged
+`MetricSeriesProvider` port. It translates provider-specific query, authentication, and
+retry behavior into the existing typed acquisition outcomes without widening the
+immutable provider scope, choosing a window, or introducing transport objects into the
+Metrics domain or result contract. See the
+[development guide](development-guide.md#53-prometheus-metric-provider-configuration-and-operation)
+for source configuration and operational constraints.
