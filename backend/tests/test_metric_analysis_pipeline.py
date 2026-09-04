@@ -2537,6 +2537,7 @@ def test_late_close_exception_cannot_mutate_persisted_reference_partial() -> Non
             self.stream_value = stream
             self.close_started = asyncio.Event()
             self.close_finished = asyncio.Event()
+            self.request_calls = 0
 
         async def __aenter__(self) -> LateCloseClient:
             return self
@@ -2549,6 +2550,7 @@ def test_late_close_exception_cannot_mutate_persisted_reference_partial() -> Non
 
         @asynccontextmanager
         async def stream(self, *_: object, **__: object):
+            self.request_calls += 1
             response = httpx.Response(200, stream=self.stream_value)
             try:
                 yield response
@@ -2586,11 +2588,10 @@ def test_late_close_exception_cannot_mutate_persisted_reference_partial() -> Non
             )
 
         def client_factory() -> httpx.AsyncClient | LateCloseClient:
-            nonlocal clients, requests
+            nonlocal clients
             clients += 1
             if clients == 1:
                 return httpx.AsyncClient(transport=httpx.MockTransport(current_response))
-            requests += 1
             return late_client
 
         async def sleep(seconds: float) -> None:
@@ -2644,6 +2645,7 @@ def test_late_close_exception_cannot_mutate_persisted_reference_partial() -> Non
             deepcopy(repository.persisted),
             artifact.status,
             requests,
+            late_client.request_calls,
             sleeps.copy(),
         )
 
@@ -2656,7 +2658,8 @@ def test_late_close_exception_cannot_mutate_persisted_reference_partial() -> Non
         }
         assert lens_run.status == "partial"
         assert len(repository.persisted) == 1
-        assert requests == 2
+        assert requests == 1
+        assert late_client.request_calls == 1
         assert sleeps == []
 
         stream.release.set()
@@ -2676,6 +2679,7 @@ def test_late_close_exception_cannot_mutate_persisted_reference_partial() -> Non
             repository.persisted,
             artifact.status,
             requests,
+            late_client.request_calls,
             sleeps,
         ) == committed
 
