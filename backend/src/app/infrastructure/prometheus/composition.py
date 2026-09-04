@@ -45,6 +45,7 @@ _RETRYABLE_STATUS_CODES = frozenset({429, 500, 502, 504})
 _ATTEMPT_DEADLINE_SECONDS = 15.0
 _ACQUISITION_DEADLINE_SECONDS = 50.0
 _RETRY_WAITS_SECONDS = (0.5, 1.0)
+_PRIVATE_TRANSPORT_CAPACITY = 8
 
 
 @dataclass(frozen=True)
@@ -95,13 +96,44 @@ class _AttemptConnectRetryEligible:
     """A connection failure that alone may enter the provider retry policy."""
 
 
+@dataclass(frozen=True)
+class _AttemptCapacityUnavailable:
+    """A private transport-capacity rejection before client construction."""
+
+
 _AttemptResult = (
     _AttemptAvailable
     | _AttemptFailure
     | _AttemptTimeout
     | _AttemptRetryEligible
     | _AttemptConnectRetryEligible
+    | _AttemptCapacityUnavailable
 )
+
+
+class _TransportCapacity:
+    """Track finite provider-private transport work and detached cleanup."""
+
+    def __init__(self, limit: int = _PRIVATE_TRANSPORT_CAPACITY) -> None:
+        if limit < 1:
+            raise ValueError("private transport capacity must be positive")
+        self._limit = limit
+        self._held = 0
+
+    def try_acquire(self) -> bool:
+        """Reserve one private slot without waiting."""
+
+        if self._held >= self._limit:
+            return False
+        self._held += 1
+        return True
+
+    def release(self) -> None:
+        """Release one slot after its attempt task has actually terminated."""
+
+        if self._held < 1:
+            raise RuntimeError("private transport capacity was released without a lease")
+        self._held -= 1
 
 
 class PrometheusMetricSeriesProvider:
@@ -115,6 +147,7 @@ class PrometheusMetricSeriesProvider:
         monotonic_clock: Callable[[], float] | None = None,
         sleep: Callable[[float], Awaitable[None]] | None = None,
         deadline_runner: Callable[[Awaitable[Any], float], Awaitable[Any]] | None = None,
+        _transport_capacity: _TransportCapacity | None = None,
     ) -> None:
         self._sources = {
             source.id: _ConfiguredPrometheusSource(
@@ -128,6 +161,7 @@ class PrometheusMetricSeriesProvider:
         self._monotonic_clock = monotonic_clock or time.monotonic
         self._sleep = sleep or _async_sleep
         self._deadline_runner = deadline_runner or _run_with_deadline
+        self._transport_capacity = _transport_capacity or _TransportCapacity()
 
     async def acquire(
         self, scope: MetricProviderScope, window: MetricAnalysisWindow
@@ -164,7 +198,7 @@ class PrometheusMetricSeriesProvider:
                 return MetricSeriesAvailable(source="prometheus", samples=attempt.samples)
             if isinstance(attempt, _AttemptTimeout):
                 return MetricSeriesAcquisitionTimeout(diagnostic=_ACQUISITION_TIMEOUT)
-            if isinstance(attempt, _AttemptFailure):
+            if isinstance(attempt, (_AttemptFailure, _AttemptCapacityUnavailable)):
                 return MetricSeriesAcquisitionFailure(diagnostic=_ACQUISITION_FAILED)
             if attempt_number == 2:
                 return MetricSeriesAcquisitionFailure(diagnostic=_ACQUISITION_FAILED)
@@ -181,10 +215,17 @@ class PrometheusMetricSeriesProvider:
     async def _execute_attempt_with_deadline(self, request: _LogicalRangeQuery) -> _AttemptResult:
         """Run and classify one complete HTTP attempt within its hard local deadline."""
 
+        if not self._transport_capacity.try_acquire():
+            return _AttemptCapacityUnavailable()
+
+        async def execute_with_capacity() -> _AttemptResult:
+            try:
+                return await self._execute_one_attempt(request)
+            finally:
+                self._transport_capacity.release()
+
         try:
-            return await self._deadline_runner(
-                self._execute_one_attempt(request), _ATTEMPT_DEADLINE_SECONDS
-            )
+            return await self._deadline_runner(execute_with_capacity(), _ATTEMPT_DEADLINE_SECONDS)
         except TimeoutError:
             return _AttemptTimeout()
         except httpx.TimeoutException:
@@ -259,21 +300,27 @@ async def _run_with_deadline[Result](awaitable: Awaitable[Result], seconds: floa
             {task}, timeout=max(0.0, deadline - asyncio.get_running_loop().time())
         )
     except BaseException:
-        await _cancel_and_wait(task)
+        _cancel_without_waiting(task)
         raise
     if task in done and asyncio.get_running_loop().time() < deadline:
         return task.result()
 
-    await _cancel_and_wait(task)
+    _cancel_without_waiting(task)
     raise TimeoutError
 
 
-async def _cancel_and_wait(task: asyncio.Future[Any]) -> None:
-    """Cancel an in-flight task and wait until its cancellation cleanup is complete."""
+def _cancel_without_waiting(task: asyncio.Future[Any]) -> None:
+    """Signal cancellation while detached cleanup retains its private capacity lease."""
 
     task.cancel()
+    task.add_done_callback(_consume_background_task_outcome)
+
+
+def _consume_background_task_outcome(task: asyncio.Future[Any]) -> None:
+    """Consume a detached cleanup outcome after it becomes state-inert."""
+
     try:
-        await task
+        task.exception()
     except BaseException:
         pass
 
