@@ -1,14 +1,14 @@
 ---
 name: ipo-implementation-planner
 description: >-
-  Create a non-normative vertical-slice implementation plan for an already approved OpenSpec change. Use before coding a large or complex approved change to map requirements, scenarios, and tasks into dependency-ordered slices sized for fresh contexts; stop on source conflicts or unresolved decisions.
+  Create a non-normative, risk-proportionate implementation plan for an already approved OpenSpec change. Use before coding a change that warrants execution planning to choose the minimum sufficient vertical-slice graph, preserve requirement traceability and reviewability, and stop on source conflicts or unresolved decisions.
 ---
 
 # IPO Implementation Planner
 
 ## Purpose
 
-Convert one already-approved OpenSpec change into a compact, executable vertical-slice plan. Optimize for correctness, early integration, and fresh-context implementation. Do not implement production code.
+Convert one already-approved OpenSpec change into the simplest safe, executable plan. Optimize for correctness, reviewable vertical progress, early integration where useful, and fresh-context implementation. Do not implement production code.
 
 ## Source of truth
 
@@ -16,12 +16,39 @@ Read repository governance first, then the complete approved OpenSpec change and
 
 The implementation plan is non-normative. Never invent or change product behavior to make planning easier.
 
-## Planning method
+## Minimum-sufficient-plan principle
 
-Plan from observable behavior and acceptance scenarios, not from folders, layers, or task numbering. Prefer a walking-skeleton slice that closes a real end-to-end path early, then add coherent behavioral increments.
+Prefer the smallest plan that gives clear ownership, dependency ordering, reviewable vertical progress, and adequate verification.
+
+Do not create additional slices merely to isolate small implementation details that can safely be completed and reviewed together. Before decomposing the change, assess its actual implementation complexity and risk. A feature may legitimately need one implementation slice, a small number of sequential slices, or a larger vertical-slice graph only when its behavior and risk justify it. Do not assume every feature requires several slices or several high-risk slices.
+
+Decomposition is justified by factors such as:
+
+- independently meaningful end-to-end behaviors;
+- substantial persistence or migration work;
+- complex lifecycle or failure semantics;
+- concurrency, deadline, cancellation, or security behavior;
+- agent or tool boundaries;
+- multiple independently risky integration surfaces; or
+- changes that benefit materially from isolated implementation and review.
+
+Small integration, configuration, UI, documentation, or conformance changes should usually have a much smaller plan.
+
+Typical sizing examples:
+
+- One slice: a narrow provider configuration addition with its validation, wiring, and focused tests.
+- Two or three slices: a moderate endpoint feature split into a usable happy path, separately risky failure behavior, and integration conformance when those increments are independently reviewable.
+- Larger graph: a durable agent workflow involving migrations, lifecycle/concurrency semantics, tool boundaries, and multiple external integrations whose risks need separate review.
+
+## Behavioral vertical slicing
+
+Plan from observable behavior and acceptance scenarios, not from folders, layers, or task numbering. For a multi-slice change, prefer an initial walking-skeleton slice that closes a real end-to-end path, then add coherent behavioral increments.
+
+When decomposition is useful, prefer one usable behavior across contract -> implementation -> tests over separate contract, repository, service, and test slices. Separate technical layers only when doing so is necessary for dependency ordering or concrete risk control.
 
 Each slice must:
-- deliver one meaningful observable increment;
+
+- deliver one meaningful, reviewable increment;
 - include the layers needed to make that behavior real rather than defer critical integration to a final catch-all slice;
 - have explicit dependencies and focused verification;
 - leave the repository valid when complete;
@@ -30,13 +57,49 @@ Each slice must:
 
 Avoid horizontal plans such as "all models -> all repositories -> all algorithms -> integrate everything".
 
+## Proportional risk classification
+
+Classify every slice independently as `normal` or `high-risk` based on the expected semantics of that slice's implementation delta. Use `high-risk` when the slice is expected to materially affect public or domain contracts, persistence or migrations, lifecycle or failure semantics, concurrency/deadline/cancellation, security or credentials, external transport semantics, dependencies, or architecture-sensitive integration.
+
+Do not mark every slice high-risk because the overall feature contains one high-risk area. Preserve fresh independent review for the slices whose own deltas are genuinely high-risk.
+
+This planned classification is the initial expected review risk, not an irrevocable fact about the later implementation. Do not try to predict every implementation detail. Before acceptance, the Coordinator inspects the completed delta and increases review depth when the actual delta is high-risk. Fresh high-risk review is required when either the planned classification is `high-risk` or the actual completed delta is high-risk.
+
+## Verification proportionality
+
+The plan should define intended scope, behavioral goal, dependencies, important boundaries and non-goals, verification strategy, and a completion gate. It should not normally prescribe custom checksum algorithms, source-byte reconstruction, AST or token inventory scripts, custom newline parsers, detailed shell algorithms, or redundant commit/digest tracking.
+
+Put low-level audit mechanisms in implementation or review tooling only when a concrete risk cannot be adequately controlled with normal Git diff/history, focused tests, static checks, and independent review. Name that risk when such machinery is required.
+
+If exact Git identity is needed, define one authoritative execution-anchor location. Elsewhere prefer named concepts such as `approved planning state`, `accepted previous slice`, and `current candidate tip`, with exact Git resolution recorded once in durable execution metadata. Do not scatter raw commit SHAs through slice descriptions and gates.
+
+## Bounded corrections after approval
+
+Approved/normative semantics are the behavior defined by the approved OpenSpec, accepted ADRs and architecture, and public/domain contracts. Implementation behavior is the behavior currently produced by the code.
+
+Bounded implementation corrections do not require a new slice graph when the approved/normative semantics and other approved structural boundaries remain unchanged. A bounded correction may materially change defective implementation behavior to restore conformance. For example, changing an implementation from one retry to the approved two retries is a behavioral bounded correction, not a change to the approved retry semantics.
+
+Require structural re-planning, independent plan review, and renewed human approval only when the correction requires changing the approved/normative definition itself or another approved boundary such as slice ownership/dependencies, schema/migrations, dependencies, or scope. Review the correction's implementation risk separately. Do not pre-create speculative correction slices.
+
+## Final conformance
+
+Use one compact final conformance or review step when it adds value. It should verify the whole approved change and repository compatibility. Do not create multiple overlapping final verification slices that repeat the same checks unless distinct risks genuinely require them.
+
+## Complexity sanity check
+
+Before finalizing, ask:
+
+- Is the execution/governance complexity materially larger than the implementation complexity? If yes, simplify unless a concrete risk justifies the additional complexity.
+- Could two adjacent slices be safely combined while retaining clear behavioral ownership and reviewability? If yes, prefer the simpler graph.
+
 ## Required plan content
 
 Write `openspec/changes/<change>/implementation-plan.md` using the project template. Include:
+
 - change identity and approved-source references;
 - dependency-ordered slices;
-- for each slice: behavioral goal, OpenSpec coverage, dependencies, vertical boundary, expected code impact, contracts consumed/changed, non-goals, focused verification, context pack, handoff expectations, `normal|high-risk`;
-- a coverage matrix proving every approved requirement/scenario/task has an owning slice and appropriate verification;
+- for each slice: behavioral goal, OpenSpec coverage, ownership, dependencies, vertical boundary, expected code impact, contracts consumed/changed, non-goals, verification strategy, completion gate, context pack, handoff expectations, and `normal|high-risk` classification;
+- a compact coverage matrix showing that every approved requirement/scenario/task has an owning slice and appropriate verification;
 - frozen-plan vs mutable execution-state rules.
 
 Default execution is sequential even if independent slices are identified.
@@ -51,4 +114,4 @@ Report the exact conflicting/insufficient sources, why planning cannot proceed s
 
 ## Completion
 
-Return either `PLAN READY FOR REVIEW` or `IMPLEMENTATION PLANNING BLOCKED`. Do not modify production code or mark the plan human-approved.
+Return either `PLAN READY FOR REVIEW` or `IMPLEMENTATION PLANNING BLOCKED`. A ready plan still requires independent plan review and explicit human approval before execution. Do not modify production code or mark the plan human-approved.
