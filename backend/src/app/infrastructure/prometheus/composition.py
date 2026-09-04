@@ -96,18 +96,12 @@ class _AttemptConnectRetryEligible:
     """A connection failure that alone may enter the provider retry policy."""
 
 
-@dataclass(frozen=True)
-class _AttemptCapacityUnavailable:
-    """A private transport-capacity rejection before client construction."""
-
-
 _AttemptResult = (
     _AttemptAvailable
     | _AttemptFailure
     | _AttemptTimeout
     | _AttemptRetryEligible
     | _AttemptConnectRetryEligible
-    | _AttemptCapacityUnavailable
 )
 
 
@@ -129,11 +123,50 @@ class _TransportCapacity:
         return True
 
     def release(self) -> None:
-        """Release one slot after its attempt task has actually terminated."""
+        """Release one slot after its acquisition lifecycle has actually terminated."""
 
         if self._held < 1:
             raise RuntimeError("private transport capacity was released without a lease")
         self._held -= 1
+
+
+class _TransportCapacityLease:
+    """Retain one acquisition slot through its lifecycle and detached cleanup."""
+
+    def __init__(self, capacity: _TransportCapacity) -> None:
+        self._capacity = capacity
+        self._tracked_tasks: set[asyncio.Future[Any]] = set()
+        self._lifecycle_finished = False
+        self._released = False
+
+    def track(self, task: asyncio.Future[Any]) -> None:
+        """Retain the lease until one active attempt task actually terminates."""
+
+        if self._lifecycle_finished:
+            raise RuntimeError("cannot track transport work after lifecycle termination")
+        self._tracked_tasks.add(task)
+        task.add_done_callback(self._task_finished)
+
+    def observe(self, task: asyncio.Future[Any]) -> None:
+        """Release an already-finished task without waiting for its callback turn."""
+
+        if task.done():
+            self._task_finished(task)
+
+    def finish(self) -> None:
+        """End active acquisition ownership and release after all cleanup terminates."""
+
+        self._lifecycle_finished = True
+        self._release_if_finished()
+
+    def _task_finished(self, task: asyncio.Future[Any]) -> None:
+        self._tracked_tasks.discard(task)
+        self._release_if_finished()
+
+    def _release_if_finished(self) -> None:
+        if self._lifecycle_finished and not self._tracked_tasks and not self._released:
+            self._released = True
+            self._capacity.release()
 
 
 class PrometheusMetricSeriesProvider:
@@ -192,40 +225,44 @@ class PrometheusMetricSeriesProvider:
         if target is None:
             return MetricSeriesAcquisitionFailure(diagnostic=_INVALID_TARGET)
         request = self._logical_request(source, target, scope, window)
-        for attempt_number in range(3):
-            attempt = await self._execute_attempt_with_deadline(request)
-            if isinstance(attempt, _AttemptAvailable):
-                return MetricSeriesAvailable(source="prometheus", samples=attempt.samples)
-            if isinstance(attempt, _AttemptTimeout):
-                return MetricSeriesAcquisitionTimeout(diagnostic=_ACQUISITION_TIMEOUT)
-            if isinstance(attempt, (_AttemptFailure, _AttemptCapacityUnavailable)):
-                return MetricSeriesAcquisitionFailure(diagnostic=_ACQUISITION_FAILED)
-            if attempt_number == 2:
-                return MetricSeriesAcquisitionFailure(diagnostic=_ACQUISITION_FAILED)
+        if not self._transport_capacity.try_acquire():
+            return MetricSeriesAcquisitionFailure(diagnostic=_ACQUISITION_FAILED)
 
-            retry_wait = _RETRY_WAITS_SECONDS[attempt_number]
-            if acquisition_deadline - self._monotonic_clock() < (
-                retry_wait + _ATTEMPT_DEADLINE_SECONDS
-            ):
-                return MetricSeriesAcquisitionTimeout(diagnostic=_ACQUISITION_TIMEOUT)
-            await self._sleep(retry_wait)
+        capacity_lease = _TransportCapacityLease(self._transport_capacity)
+        try:
+            for attempt_number in range(3):
+                attempt = await self._execute_attempt_with_deadline(request, capacity_lease)
+                if isinstance(attempt, _AttemptAvailable):
+                    return MetricSeriesAvailable(source="prometheus", samples=attempt.samples)
+                if isinstance(attempt, _AttemptTimeout):
+                    return MetricSeriesAcquisitionTimeout(diagnostic=_ACQUISITION_TIMEOUT)
+                if isinstance(attempt, _AttemptFailure):
+                    return MetricSeriesAcquisitionFailure(diagnostic=_ACQUISITION_FAILED)
+                if attempt_number == 2:
+                    return MetricSeriesAcquisitionFailure(diagnostic=_ACQUISITION_FAILED)
+
+                retry_wait = _RETRY_WAITS_SECONDS[attempt_number]
+                if acquisition_deadline - self._monotonic_clock() < (
+                    retry_wait + _ATTEMPT_DEADLINE_SECONDS
+                ):
+                    return MetricSeriesAcquisitionTimeout(diagnostic=_ACQUISITION_TIMEOUT)
+                await self._sleep(retry_wait)
+        finally:
+            capacity_lease.finish()
 
         raise AssertionError("three-attempt retry policy was not exhaustive")
 
-    async def _execute_attempt_with_deadline(self, request: _LogicalRangeQuery) -> _AttemptResult:
+    async def _execute_attempt_with_deadline(
+        self,
+        request: _LogicalRangeQuery,
+        capacity_lease: _TransportCapacityLease,
+    ) -> _AttemptResult:
         """Run and classify one complete HTTP attempt within its hard local deadline."""
 
-        if not self._transport_capacity.try_acquire():
-            return _AttemptCapacityUnavailable()
-
-        async def execute_with_capacity() -> _AttemptResult:
-            try:
-                return await self._execute_one_attempt(request)
-            finally:
-                self._transport_capacity.release()
-
+        task = asyncio.ensure_future(self._execute_one_attempt(request))
+        capacity_lease.track(task)
         try:
-            return await self._deadline_runner(execute_with_capacity(), _ATTEMPT_DEADLINE_SECONDS)
+            return await self._deadline_runner(task, _ATTEMPT_DEADLINE_SECONDS)
         except TimeoutError:
             return _AttemptTimeout()
         except httpx.TimeoutException:
@@ -238,12 +275,19 @@ class PrometheusMetricSeriesProvider:
             return _AttemptFailure()
         except httpx.HTTPError:
             return _AttemptFailure()
+        finally:
+            capacity_lease.observe(task)
 
     @staticmethod
     def _new_client() -> httpx.AsyncClient:
         """Create the one-attempt client with ambient routing and redirects disabled."""
 
-        return httpx.AsyncClient(follow_redirects=False, trust_env=False, verify=True)
+        return httpx.AsyncClient(
+            follow_redirects=False,
+            trust_env=False,
+            verify=True,
+            timeout=None,
+        )
 
     @staticmethod
     def _logical_request(
