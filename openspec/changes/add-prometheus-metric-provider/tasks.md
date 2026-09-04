@@ -140,11 +140,11 @@
   contract, budget-rejection timeout versus executed-retry exhaustion failure, ordered
   HTTPX exception and strict Prometheus error-envelope classification, hard deadlines,
   retries, and Prometheus lookback/staleness limitations without storing real credentials.
-- [ ] 5.2 Verify no dependency, database schema/migration, public API,
+- [x] 5.2 Verify no dependency, database schema/migration, public API,
   MetricAnalysisResult, deterministic analysis, History, Metrics Agent,
   reference-period semantics, or Observation orchestration changes were introduced.
-- [ ] 5.3 Run focused Prometheus provider, configuration, preflight, Metrics pipeline,
+- [x] 5.3 Run focused Prometheus provider, configuration, preflight, Metrics pipeline,
   and integration tests; report every failure accurately.
-- [ ] 5.4 Run `openspec validate add-prometheus-metric-provider --strict` and the
+- [x] 5.4 Run `openspec validate add-prometheus-metric-provider --strict` and the
   repository `make check` as the final local gate. Do not archive, push, create a pull
   request, or begin Observation orchestration in this implementation pass.
