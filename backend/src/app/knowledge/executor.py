@@ -59,26 +59,23 @@ class BoundedRetrievalExecutor:
 
         try:
             outcome = await self._retrieve(request)
+            attempt = RetrievalAttempt(
+                submission_ordinal=submission_ordinal,
+                execution_ordinal=execution_ordinal,  # execution ordinals are bounded by admission.
+                supported_finding_ids=request.finding_ids,
+                refines_execution_ordinal=1 if request.refinement is not None else None,
+                executed=True,
+                consumed_slot=True,
+                outcome=outcome.outcome,
+                diagnostic_code=getattr(outcome, "diagnostic_code", None),
+                knowledge_refs=_references(outcome),
+            )
+            await self._record_outcome(submission_ordinal, attempt)
+            return outcome
         except asyncio.CancelledError:
             # A cancellation has no typed outcome and therefore no ledger entry.
             await self._release_active()
             raise
-
-        attempt = RetrievalAttempt(
-            submission_ordinal=submission_ordinal,
-            execution_ordinal=execution_ordinal,  # execution ordinals are bounded by admission.
-            supported_finding_ids=request.finding_ids,
-            refines_execution_ordinal=1 if request.refinement is not None else None,
-            executed=True,
-            consumed_slot=True,
-            outcome=outcome.outcome,
-            diagnostic_code=getattr(outcome, "diagnostic_code", None),
-            knowledge_refs=_references(outcome),
-        )
-        async with self._lock:
-            self._attempts[submission_ordinal] = attempt
-            self._active = False
-        return outcome
 
     def _rejection_reason(self, request: KnowledgeRetrievalRequest) -> str | None:
         if self._consumed_slots >= 2:
@@ -123,6 +120,12 @@ class BoundedRetrievalExecutor:
     async def _release_active(self) -> None:
         """Release the run-local active guard after caller cancellation."""
         async with self._lock:
+            self._active = False
+
+    async def _record_outcome(self, submission_ordinal: int, attempt: RetrievalAttempt) -> None:
+        """Record one completed typed outcome and release the active guard atomically."""
+        async with self._lock:
+            self._attempts[submission_ordinal] = attempt
             self._active = False
 
 

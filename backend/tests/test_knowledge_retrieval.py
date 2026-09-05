@@ -164,3 +164,39 @@ async def test_concurrent_rejection_and_cancellation_leave_a_slot_and_ordinal_ga
         (2, None),
         (3, 2),
     ]
+
+
+@pytest.mark.anyio
+async def test_cancellation_while_waiting_to_record_outcome_releases_active_guard() -> None:
+    """Cancellation after retrieval completion must not strand the session as concurrent."""
+    completed = asyncio.Event()
+    permit_return = asyncio.Event()
+
+    class CompletedRetriever:
+        """Retriever fake that completes before the recording lock is released."""
+
+        async def retrieve(
+            self, item: KnowledgeRetrievalRequest
+        ) -> tuple[RetrievedKnowledgeItem, ...]:
+            """Return an empty valid batch after signaling completion."""
+            completed.set()
+            await permit_return.wait()
+            return ()
+
+    executor = BoundedRetrievalExecutor(frozenset({"finding-1"}), CompletedRetriever())
+    task = asyncio.create_task(executor.execute(request()))
+    await completed.wait()
+    await executor._lock.acquire()  # noqa: SLF001 - deterministic post-retrieval race setup.
+    permit_return.set()
+    await asyncio.sleep(0)
+    task.cancel()
+    executor._lock.release()  # noqa: SLF001 - allow cancellation cleanup to release the guard.
+    with pytest.raises(asyncio.CancelledError):
+        await task
+
+    later = await executor.execute(request())
+    assert isinstance(later, RetrievalSuccess)
+    assert executor.consumed_slots == 2
+    assert [(entry.submission_ordinal, entry.execution_ordinal) for entry in executor.ledger] == [
+        (2, 2)
+    ]
