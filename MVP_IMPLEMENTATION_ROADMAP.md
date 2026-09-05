@@ -45,7 +45,7 @@ Keep the checkbox and the status aligned:
 
 ## 2. Current work
 
-No critical-path feature is active. The next planned item is `add-jira-alert-provider`.
+`add-relationship-evaluator` is implemented, independently reviewed, archived, and awaiting merge in PR #11. Its roadmap state remains `IN PROGRESS` until PR/CI completion and merge, as required by the status convention.
 
 ---
 
@@ -55,7 +55,7 @@ No critical-path feature is active. The next planned item is `add-jira-alert-pro
 
 | Done | # | Feature / Change | Status | Depends on | Purpose / Exit condition |
 |---|---:|---|---|---|---|
-| [ ] | 8 | `add-jira-alert-provider` | PLANNED | #7 | Real Jira Track and Release provider adapter behind the Alert provider port; provider mapping/auth/retry/timeout decisions become concrete here. |
+| [x] | 8 | `add-jira-alert-provider` | DONE | #7 | Merged through PR #8. Real Jira Track and Release provider adapter behind the Alert provider port. |
 | [ ] | 9 | `add-prometheus-metric-provider` | PLANNED | #5 | Real Prometheus provider adapter behind the existing Metric provider port. |
 
 **Phase A milestone:** Metric and Alert pipelines can both run against real external data sources.
@@ -66,7 +66,7 @@ No critical-path feature is active. The next planned item is `add-jira-alert-pro
 
 | Done | # | Feature / Change | Status | Depends on | Purpose / Exit condition |
 |---|---:|---|---|---|---|
-| [ ] | 10 | `add-relationship-evaluator` | PLANNED | #5 | Deterministic evaluation of engineer-defined Metric Relationships using accepted `current_state` semantics. |
+| [ ] | 10 | `add-relationship-evaluator` | IN PROGRESS | #5 | Implementation, full PostgreSQL-enabled verification, independent review, and OpenSpec archive are complete; PR #11 is open pending CI/review and merge. |
 | [ ] | 11 | `add-knowledge-retrieval` | PLANNED | Foundation only | Minimal production retrieval capability with structured provenance suitable for bounded agent use. Avoid building a broad standalone RAG platform. |
 
 **Phase B milestone:** The system can combine deterministic cross-Metric evidence with a reusable bounded knowledge-retrieval capability.
@@ -151,10 +151,10 @@ Do not move these into the critical path unless the MVP goal changes:
 Update this section when a feature changes state.
 
 ```text
-Completed runtime/product features: 5 / 14 (merged and accepted)
+Completed runtime/product features: 6 / 14 (merged and accepted)
 Completed engineering/documentation foundations: 2
-Current feature: none selected
-First-MVP critical-path remaining: 9 (#8–#16)
+Current feature: add-relationship-evaluator (PR #11 open; implementation complete)
+First-MVP critical-path remaining: 8 (#9–#16; #10 awaits merge)
 Deferred feature group: Logs
 ```
 
@@ -187,17 +187,19 @@ DONE
   #5  add-metrics-analysis-pipeline
   #6  add-alert-lens-definition
   #7  add-alerts-analysis-pipeline
+  #8  add-jira-alert-provider
 
 NEXT
-  #8  add-jira-alert-provider
   #9  add-prometheus-metric-provider
-  #10 add-relationship-evaluator
   #11 add-knowledge-retrieval
   #12 add-observation-reasoning
   #13 add-report-generation
   #14 add-observation-execution
   #15 add-observation-management-ui
   #16 add-observation-run-ui
+
+IN PROGRESS
+  #10 add-relationship-evaluator (PR #11 open)
 
 DEFERRED / MVP+
   add-log-lens-definition
