@@ -121,10 +121,14 @@ class RetrievalAttempt(StrictKnowledgeModel):
             if self.outcome == "retrieved":
                 if self.diagnostic_code is not None:
                     raise ValueError("retrieved attempts must not contain a diagnostic code")
-            elif self.diagnostic_code is None:
-                raise ValueError("failed and timed-out attempts require a diagnostic code")
-            elif self.knowledge_refs:
-                raise ValueError(
-                    "failed and timed-out attempts must not contain knowledge references"
-                )
+            elif self.outcome == "timed_out":
+                if self.diagnostic_code != "retriever_timed_out":
+                    raise ValueError("timed-out attempts require the timeout diagnostic code")
+                if self.knowledge_refs:
+                    raise ValueError("timed-out attempts must not contain knowledge references")
+            else:
+                if self.diagnostic_code not in {"retriever_failed", "invalid_retriever_result"}:
+                    raise ValueError("failed attempts require a failure diagnostic code")
+                if self.knowledge_refs:
+                    raise ValueError("failed attempts must not contain knowledge references")
         return self

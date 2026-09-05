@@ -10,6 +10,7 @@ from pydantic import ValidationError
 from app.knowledge.contracts import (
     KnowledgeReference,
     KnowledgeRetrievalRequest,
+    RetrievalAttempt,
     RetrievalFailure,
     RetrievalRefinement,
     RetrievalRejected,
@@ -56,6 +57,30 @@ def test_contracts_are_strict_immutable_and_keep_opaque_references() -> None:
         KnowledgeRetrievalRequest(query="x", finding_ids=("finding-1",), extra="forbidden")
     with pytest.raises(ValidationError):
         item.statement = "changed"  # type: ignore[misc]
+
+
+@pytest.mark.parametrize(
+    ("outcome", "diagnostic_code"),
+    [
+        ("timed_out", "retriever_failed"),
+        ("timed_out", "invalid_retriever_result"),
+        ("failed", "retriever_timed_out"),
+    ],
+)
+def test_ledger_rejects_contradictory_outcome_diagnostics(
+    outcome: str, diagnostic_code: str
+) -> None:
+    """Ledger diagnostics must match the exact typed execution outcome."""
+    with pytest.raises(ValidationError):
+        RetrievalAttempt(
+            submission_ordinal=1,
+            execution_ordinal=1,
+            supported_finding_ids=("finding-1",),
+            executed=True,
+            consumed_slot=True,
+            outcome=outcome,  # type: ignore[arg-type]
+            diagnostic_code=diagnostic_code,  # type: ignore[arg-type]
+        )
 
 
 @pytest.mark.anyio
