@@ -196,6 +196,15 @@ async def test_executor_freezes_before_retrieval_and_isolates_overall_state() ->
 async def test_executor_admits_refinement_and_independent_second_retrieval() -> None:
     """The hypothesis consumer may use both legal second-call trajectories."""
 
+    reference = KnowledgeReference(source_id="manual", reference="first")
+
+    class NonEmptyFirstRetriever(FakeRetriever):
+        async def retrieve(self, request: object) -> object:
+            self.calls.append(request)
+            if len(self.calls) == 1:
+                return (RetrievedKnowledgeItem(statement="knowledge", references=(reference,)),)
+            return ()
+
     async def hypotheses(_: object, retrieval: object) -> HypothesisCompletion:
         await retrieval.execute(  # type: ignore[attr-defined]
             KnowledgeRetrievalRequest(query="first", finding_ids=("f-1",))
@@ -210,10 +219,54 @@ async def test_executor_admits_refinement_and_independent_second_retrieval() -> 
         assert retrieval.consumed_slots == 2  # type: ignore[attr-defined]
         return HypothesisCompletion()
 
-    retriever = FakeRetriever(())
+    retriever = NonEmptyFirstRetriever()
     executor = ObservationReasoningExecutor(FakeAgent(_finding, hypotheses), retriever)
     outcome = await executor.execute(_input())
     assert outcome.outcome == "success" and len(retriever.calls) == 2
+
+
+@pytest.mark.anyio
+@pytest.mark.parametrize("first_result", [(), TimeoutError(), RuntimeError("internal")])
+async def test_executor_rejects_refinement_after_non_result_and_permits_independent_call(
+    first_result: object,
+) -> None:
+    """Consumer refinement eligibility cannot be bypassed outside the model adapter."""
+
+    class SequencedRetriever(FakeRetriever):
+        async def retrieve(self, request: object) -> object:
+            self.calls.append(request)
+            if len(self.calls) == 1:
+                if isinstance(first_result, BaseException):
+                    raise first_result
+                return first_result
+            return ()
+
+    async def hypotheses(_: object, retrieval: object) -> HypothesisCompletion:
+        await retrieval.execute(  # type: ignore[attr-defined]
+            KnowledgeRetrievalRequest(query="first", finding_ids=("f-1",))
+        )
+        rejected = await retrieval.execute(  # type: ignore[attr-defined]
+            KnowledgeRetrievalRequest(
+                query="refinement",
+                finding_ids=("f-1",),
+                refinement=RetrievalRefinement(unresolved_gap="gap"),
+            )
+        )
+        assert rejected.outcome == "rejected"
+        assert rejected.rejection_reason == "invalid_refinement"
+        independent = await retrieval.execute(  # type: ignore[attr-defined]
+            KnowledgeRetrievalRequest(query="independent", finding_ids=("f-1",))
+        )
+        assert independent.outcome in {"retrieved", "timed_out", "failed"}
+        assert retrieval.consumed_slots == 2  # type: ignore[attr-defined]
+        return HypothesisCompletion()
+
+    retriever = SequencedRetriever()
+    outcome = await ObservationReasoningExecutor(
+        FakeAgent(_finding, hypotheses), retriever
+    ).execute(_input())
+    assert outcome.outcome == "success"
+    assert len(retriever.calls) == 2
 
 
 @pytest.mark.anyio

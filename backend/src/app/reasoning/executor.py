@@ -7,6 +7,7 @@ import asyncio
 
 from pydantic_ai.exceptions import UnexpectedModelBehavior, UsageLimitExceeded
 
+from app.knowledge.contracts import KnowledgeRetrievalRequest, RetrievalOutcome, RetrievalRejected
 from app.knowledge.executor import BoundedRetrievalExecutor
 from app.knowledge.ports import KnowledgeRetriever
 from app.reasoning.builder import build_result, freeze_findings, validate_hypotheses
@@ -19,6 +20,34 @@ from app.reasoning.contracts import (
 )
 from app.reasoning.input import derive_limitations, validate_input
 from app.reasoning.ports import ObservationReasoningAgent
+
+
+class _ReasoningRetrievalSession:
+    """Add Observation Reasoning's refinement policy to the generic retrieval budget."""
+
+    def __init__(self, executor: BoundedRetrievalExecutor) -> None:
+        self._executor = executor
+
+    @property
+    def ledger(self):
+        """Return the underlying metadata-only retrieval ledger."""
+        return self._executor.ledger
+
+    @property
+    def consumed_slots(self) -> int:
+        """Return the irreversible retrieval budget consumed by this session."""
+        return self._executor.consumed_slots
+
+    async def execute(self, request: KnowledgeRetrievalRequest) -> RetrievalOutcome:
+        """Reject a refinement unless execution one returned at least one item."""
+        if request.refinement is not None and not self._first_retrieval_has_items():
+            return RetrievalRejected(rejection_reason="invalid_refinement")
+        return await self._executor.execute(request)
+
+    def _first_retrieval_has_items(self) -> bool:
+        """Determine eligibility from the metadata projection of execution one."""
+        first = next((attempt for attempt in self.ledger if attempt.execution_ordinal == 1), None)
+        return first is not None and first.outcome == "retrieved" and bool(first.knowledge_refs)
 
 
 class ObservationReasoningExecutor:
@@ -64,8 +93,8 @@ class ObservationReasoningExecutor:
             return ReasoningFailure(code="reasoning_model_failed", component="finding_phase")
         hypotheses = ()
         if findings:
-            retrieval = BoundedRetrievalExecutor(
-                frozenset(item.id for item in findings), self._retriever
+            retrieval = _ReasoningRetrievalSession(
+                BoundedRetrievalExecutor(frozenset(item.id for item in findings), self._retriever)
             )
             try:
                 from app.reasoning.contracts import HypothesisRequest

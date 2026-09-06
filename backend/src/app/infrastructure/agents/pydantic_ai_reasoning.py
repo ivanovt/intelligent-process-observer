@@ -13,7 +13,6 @@ from pydantic_ai.models.wrapper import WrapperModel
 from pydantic_ai.usage import UsageLimits
 
 from app.knowledge.contracts import KnowledgeRetrievalRequest, RetrievalRejected
-from app.knowledge.executor import BoundedRetrievalExecutor
 from app.reasoning.contracts import (
     FindingCompletion,
     FindingRequest,
@@ -23,11 +22,12 @@ from app.reasoning.contracts import (
     OverallStateRequest,
     ReasoningPolicyViolation,
 )
+from app.reasoning.ports import ReasoningRetrievalSession
 
 
 @dataclass
 class _HypothesisState:
-    retrieval: BoundedRetrievalExecutor
+    retrieval: ReasoningRetrievalSession
     model_requests: int = 0
     outcomes: dict[str, object] | None = None
 
@@ -114,7 +114,7 @@ class PydanticAIObservationReasoningAgent:
         return FindingCompletion.model_validate(result.output)
 
     async def form_hypotheses(
-        self, request: HypothesisRequest, retrieval: BoundedRetrievalExecutor
+        self, request: HypothesisRequest, retrieval: ReasoningRetrievalSession
     ) -> HypothesisCompletion:
         """Invoke grounded hypothesis formation with the sole admitted retrieval tool."""
         state = _HypothesisState(retrieval=retrieval, outcomes={})
