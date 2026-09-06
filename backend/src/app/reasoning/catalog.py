@@ -24,65 +24,99 @@ def _walk(value: Any, prefix: tuple[str | int, ...] = ()) -> tuple[tuple[str | i
     return (prefix,)
 
 
-def _allowed_alert_locator(locator: tuple[str | int, ...]) -> bool:
-    """Keep provider/source metadata out of citeable Alert evidence."""
-    return "source_ref" not in locator and locator[-1] != "source"
-
-
 def build_catalog(value: ObservationReasoningInput) -> tuple[EvidenceCatalogEntry, ...]:
-    """Project evidence-only leaves in stable supplied-source order."""
+    """Project source-specific evidence in stable supplied-source order."""
     entries: list[EvidenceCatalogEntry] = []
 
-    def add(
+    def add_locator(source_type: str, source_id: object, locator: tuple[str | int, ...]) -> None:
+        entries.append(
+            EvidenceCatalogEntry(
+                id=f"evidence_{len(entries) + 1:04d}",
+                reference=EvidenceReference(
+                    source_type=source_type, source_id=source_id, locator=locator
+                ),
+            )
+        )
+
+    def add_leaves(
         source_type: str, source_id: object, artifact: dict[str, Any], roots: tuple[str, ...]
     ) -> None:
         for root in roots:
             if root not in artifact or artifact[root] is None:
                 continue
             for locator in _walk(artifact[root], (root,)):
-                if source_type == "alert_result" and not _allowed_alert_locator(locator):
-                    continue
-                entries.append(
-                    EvidenceCatalogEntry(
-                        id=f"evidence_{len(entries) + 1:04d}",
-                        reference=EvidenceReference(
-                            source_type=source_type, source_id=source_id, locator=locator
-                        ),
-                    )
-                )
+                add_locator(source_type, source_id, locator)
+
+    def add_elements(
+        source_type: str,
+        source_id: object,
+        artifact: dict[str, Any],
+        root: str,
+        prefix: tuple[str | int, ...] = (),
+    ) -> None:
+        items = artifact.get(root)
+        if not isinstance(items, list):
+            return
+        for index in range(len(items)):
+            add_locator(source_type, source_id, prefix + (root, index))
 
     for result in value.usable_results:
         raw = result.model_dump(mode="json")
         if result.lens_type == "metric":
-            add(
+            add_leaves(
                 "metric_result",
                 result.identity.lens_run_id,
                 raw,
-                ("current_state", "reference_periods", "history", "evidence"),
+                ("current_state",),
             )
-        else:
-            add(
-                "alert_result",
+            add_elements("metric_result", result.identity.lens_run_id, raw, "reference_periods")
+            evidence = raw.get("evidence")
+            if isinstance(evidence, dict):
+                if evidence.get("current") is not None:
+                    for locator in _walk(evidence["current"], ("evidence", "current")):
+                        add_locator("metric_result", result.identity.lens_run_id, locator)
+                add_elements(
+                    "metric_result",
+                    result.identity.lens_run_id,
+                    evidence,
+                    "reference_periods",
+                    ("evidence",),
+                )
+            add_leaves(
+                "metric_result",
                 result.identity.lens_run_id,
                 raw,
+                ("history",),
+            )
+            if isinstance(evidence, dict) and evidence.get("history") is not None:
+                for locator in _walk(evidence["history"], ("evidence", "history")):
+                    add_locator("metric_result", result.identity.lens_run_id, locator)
+        else:
+            source_type, source_id = "alert_result", result.identity.lens_run_id
+            add_elements(source_type, source_id, raw, "alerts")
+            add_leaves(
+                source_type,
+                source_id,
+                raw,
                 (
-                    "alerts",
                     "alert_activity",
                     "status_distribution",
                     "duration_statistics",
                     "provider_importance_distribution",
-                    "comparisons",
-                    "findings",
-                    "overall_importance",
                 ),
             )
+            add_elements(source_type, source_id, raw, "comparisons")
+            add_elements(source_type, source_id, raw, "findings")
+            if raw.get("overall_importance") is not None:
+                add_locator(source_type, source_id, ("overall_importance",))
     for relationship in value.relationships:
-        add(
-            "relationship_evaluation",
-            relationship.relationship_id,
-            relationship.model_dump(mode="json"),
-            ("applicability", "state", "conditions", "expectations"),
-        )
+        source_type, source_id = "relationship_evaluation", relationship.relationship_id
+        raw = relationship.model_dump(mode="json")
+        for root in ("applicability", "state"):
+            if raw.get(root) is not None:
+                add_locator(source_type, source_id, (root,))
+        add_elements(source_type, source_id, raw, "conditions")
+        add_elements(source_type, source_id, raw, "expectations")
     return tuple(entries)
 
 

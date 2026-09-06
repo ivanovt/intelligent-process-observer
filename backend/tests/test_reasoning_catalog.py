@@ -19,8 +19,8 @@ from app.reasoning.contracts import (
 from app.reasoning.input import derive_limitations
 
 
-def test_alert_catalog_excludes_provider_source_metadata() -> None:
-    """Provider-native source fields cannot become citeable finding evidence."""
+def test_alert_catalog_projects_each_record_as_one_concrete_element() -> None:
+    """Alert records are referenced as complete immutable source elements."""
     lens_run_id = uuid4()
     alert = SimpleNamespace(
         lens_type="alert",
@@ -43,9 +43,12 @@ def test_alert_catalog_excludes_provider_source_metadata() -> None:
     catalog = build_catalog(value)
 
     locators = {entry.reference.locator for entry in catalog}
-    assert ("alerts", 0, "id") in locators
-    assert ("alerts", 0, "source_ref") not in locators
-    assert ("alerts", 0, "status", "source") not in locators
+    assert locators == {
+        ("alerts", 0),
+        ("alert_activity", "record_count"),
+        ("status_distribution", "active"),
+        ("overall_importance",),
+    }
 
 
 def _source(*, lens_type: str, source_id: object, payload: dict[str, object]):
@@ -111,18 +114,97 @@ def test_catalog_projects_three_source_types_in_supplied_order_with_transient_id
         locator=("current_state", "trend", "direction"),
     )
     assert any(
-        entry.reference.source_type == "alert_result"
-        and entry.reference.locator == ("alerts", 0, "id")
+        entry.reference.source_type == "alert_result" and entry.reference.locator == ("alerts", 0)
         for entry in catalog
     )
     assert any(
         entry.reference.source_type == "relationship_evaluation"
-        and entry.reference.locator == ("conditions", 0, "match")
+        and entry.reference.locator == ("conditions", 0)
         for entry in catalog
     )
     assert all(
         not ({"identity", "provenance", "name"} & set(entry.reference.locator)) for entry in catalog
     )
+
+
+def test_catalog_keeps_compound_evidence_items_whole_and_omits_analysis_windows() -> None:
+    """Catalog granularity is source-specific rather than generic leaf traversal."""
+    metric = _source(
+        lens_type="metric",
+        source_id="metric-run",
+        payload={
+            "analysis_window": {"start": "excluded", "end": "excluded"},
+            "current_state": {"trend": "stable"},
+            "reference_periods": [
+                {
+                    "offset": "1h",
+                    "analysis_window": {"start": "excluded"},
+                    "level": {"relation": "higher"},
+                }
+            ],
+            "history": {"direction": "stable", "run_ids": ["run-1"]},
+            "evidence": {
+                "current": {"mean": 2.0},
+                "reference_periods": [
+                    {"offset": "1h", "analysis_window": {"start": "excluded"}, "mean": 1.0}
+                ],
+                "history": {"direction_changes": 0},
+            },
+        },
+    )
+    alert = _source(
+        lens_type="alert",
+        source_id="alert-run",
+        payload={
+            "alerts": [{"id": "a-1", "title": "High temperature"}],
+            "comparisons": [{"offset": "1h", "occurrence_comparison": {"delta": 1}}],
+            "findings": [{"id": "local", "statement": "present"}],
+            "overall_importance": "high",
+        },
+    )
+    relationship = SimpleNamespace(
+        relationship_id="relationship-1",
+        model_dump=lambda mode: {
+            "applicability": "applicable",
+            "state": "consistent",
+            "conditions": [{"lens_id": "metric", "match": True}],
+            "expectations": [{"lens_id": "metric", "match": False}],
+        },
+    )
+
+    catalog = build_catalog(
+        SimpleNamespace(usable_results=(metric, alert), relationships=(relationship,))
+    )
+    locators_by_source = {
+        source_type: [
+            entry.reference.locator
+            for entry in catalog
+            if entry.reference.source_type == source_type
+        ]
+        for source_type in ("metric_result", "alert_result", "relationship_evaluation")
+    }
+
+    assert locators_by_source["metric_result"] == [
+        ("current_state", "trend"),
+        ("reference_periods", 0),
+        ("evidence", "current", "mean"),
+        ("evidence", "reference_periods", 0),
+        ("history", "direction"),
+        ("history", "run_ids", 0),
+        ("evidence", "history", "direction_changes"),
+    ]
+    assert locators_by_source["alert_result"] == [
+        ("alerts", 0),
+        ("comparisons", 0),
+        ("findings", 0),
+        ("overall_importance",),
+    ]
+    assert locators_by_source["relationship_evaluation"] == [
+        ("applicability",),
+        ("state",),
+        ("conditions", 0),
+        ("expectations", 0),
+    ]
 
 
 def test_catalog_omits_absent_optional_sections_and_ids_translate_per_run() -> None:
