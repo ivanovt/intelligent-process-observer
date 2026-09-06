@@ -132,6 +132,16 @@ The existing architecture package remains in Bulgarian. Do not create a second E
 
 ## 5.1 Alert pipeline integration boundary
 
+### Observation Reasoning OpenRouter configuration
+
+Observation Reasoning uses the native OpenRouter model integration only when its model is
+composed. Set `OPENROUTER_API_KEY` in the local or deployment environment; it is deliberately
+optional during general application startup. The default model is `openai/gpt-5.6-terra` and can
+be switched through `OBSERVATION_REASONING_MODEL`. Requests default to a 120-second timeout and
+12,288 completion tokens. Routing/fallback is enabled by default. To pin exactly one provider,
+set `OPENROUTER_ALLOW_FALLBACKS=false` and a one-element `OPENROUTER_PROVIDER_ORDER`; never put a
+credential in source control.
+
 The Alert pipeline receives a provider and an analysis agent through framework-neutral
 ports. Production composition supplies those dependencies and opens the caller-owned
 transaction only after provider acquisition, normalization, deterministic analysis,

@@ -1,0 +1,37 @@
+"""Compose private OpenRouter-backed Observation Reasoning infrastructure."""
+
+# ruff: noqa: E501
+from __future__ import annotations
+
+from app.core.settings import Settings
+from app.infrastructure.agents.pydantic_ai_reasoning import PydanticAIObservationReasoningAgent
+
+
+def build_reasoning_model(settings: Settings):
+    """Return one configured native OpenRouter model or fail without secret disclosure."""
+    if (
+        settings.openrouter_api_key is None
+        or not settings.openrouter_api_key.get_secret_value().strip()
+    ):
+        raise ValueError("OpenRouter credential is required for reasoning model composition")
+    from pydantic_ai.models.openrouter import OpenRouterModel
+    from pydantic_ai.providers.openrouter import OpenRouterProvider
+
+    provider = OpenRouterProvider(api_key=settings.openrouter_api_key.get_secret_value())
+    policy = {"allow_fallbacks": settings.openrouter_allow_fallbacks}
+    if settings.openrouter_provider_order:
+        policy["order"] = settings.openrouter_provider_order
+    return OpenRouterModel(
+        settings.observation_reasoning_model,
+        provider=provider,
+        settings={"extra_body": {"provider": policy}},
+    )
+
+
+def build_reasoning_agent(settings: Settings) -> PydanticAIObservationReasoningAgent:
+    """Build the configured production adapter for all Observation Reasoning phases."""
+    return PydanticAIObservationReasoningAgent(
+        build_reasoning_model(settings),
+        timeout_seconds=settings.openrouter_request_timeout_seconds,
+        max_output_tokens=settings.observation_reasoning_max_output_tokens,
+    )
