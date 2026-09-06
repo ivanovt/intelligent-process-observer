@@ -3,6 +3,7 @@
 # ruff: noqa: E501
 from __future__ import annotations
 
+import json
 from dataclasses import dataclass
 
 from pydantic_ai import Agent, RunContext
@@ -62,7 +63,9 @@ class _RetrievalObservingModel(WrapperModel):
                 raise ReasoningPolicyViolation("unregistered reasoning tool")
             try:
                 arguments = call.args_as_dict(raise_if_invalid=True)
-                request = KnowledgeRetrievalRequest.model_validate(arguments)
+                # Tool-call arguments arrive as JSON-shaped lists.  Validate through
+                # the JSON boundary so strict tuple contracts retain their wire form.
+                request = KnowledgeRetrievalRequest.model_validate_json(json.dumps(arguments))
             except (ValueError, AssertionError) as error:
                 raise ReasoningPolicyViolation("invalid retrieval request") from error
             if request.refinement is not None:
@@ -124,8 +127,14 @@ class PydanticAIObservationReasoningAgent:
         )
 
         @agent.tool(name="retrieve_knowledge", retries=0)
-        async def retrieve_knowledge(context: RunContext[_HypothesisState]) -> dict[str, object]:
+        async def retrieve_knowledge(
+            context: RunContext[_HypothesisState],
+            query: str,
+            finding_ids: list[str],
+            refinement: dict[str, str] | None = None,
+        ) -> dict[str, object]:
             """Return one application-admitted retrieval outcome."""
+            del query, finding_ids, refinement
             outcome = (context.deps.outcomes or {}).get(context.tool_call_id or "")
             if outcome is None:
                 raise ValueError("retrieval tool was not admitted")
