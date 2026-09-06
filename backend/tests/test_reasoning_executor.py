@@ -383,6 +383,31 @@ async def test_executor_normalizes_hypothesis_policy_and_overall_failures() -> N
 
 @pytest.mark.anyio
 @pytest.mark.parametrize(
+    ("phase", "component"),
+    [
+        ("findings", "finding_phase"),
+        ("overall", "overall_state_phase"),
+    ],
+)
+async def test_executor_normalizes_no_tool_phase_policy_violations(
+    phase: str, component: str
+) -> None:
+    """No-tool adapter policy signals retain their public failure classification."""
+
+    def policy(*_: object) -> object:
+        raise ReasoningPolicyViolation("forbidden tool")
+
+    agent = FakeAgent(
+        findings=policy if phase == "findings" else None,
+        overall=policy if phase == "overall" else None,
+    )
+    outcome = await ObservationReasoningExecutor(agent, FakeRetriever()).execute(_input())
+    assert isinstance(outcome, ReasoningFailure)
+    assert (outcome.code, outcome.component) == ("reasoning_policy_violated", component)
+
+
+@pytest.mark.anyio
+@pytest.mark.parametrize(
     "phase,error,code,component",
     [
         ("findings", UsageLimitExceeded("limit"), "reasoning_policy_violated", "finding_phase"),

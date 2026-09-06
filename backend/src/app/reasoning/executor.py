@@ -85,6 +85,8 @@ class ObservationReasoningExecutor:
             return ReasoningFailure(code="reasoning_model_timed_out", component="finding_phase")
         except UsageLimitExceeded:
             return ReasoningFailure(code="reasoning_policy_violated", component="finding_phase")
+        except ReasoningPolicyViolation:
+            return ReasoningFailure(code="reasoning_policy_violated", component="finding_phase")
         except UnexpectedModelBehavior:
             return ReasoningFailure(code="reasoning_result_invalid", component="finding_phase")
         except ValueError:
@@ -160,6 +162,10 @@ class ObservationReasoningExecutor:
                 code="reasoning_model_timed_out", component="overall_state_phase"
             )
         except UsageLimitExceeded:
+            return ReasoningFailure(
+                code="reasoning_policy_violated", component="overall_state_phase"
+            )
+        except ReasoningPolicyViolation:
             return ReasoningFailure(
                 code="reasoning_policy_violated", component="overall_state_phase"
             )

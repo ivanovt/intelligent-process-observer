@@ -32,6 +32,26 @@ class _HypothesisState:
     outcomes: dict[str, object] | None = None
 
 
+class _NoToolObservingModel(WrapperModel):
+    """Reject function-tool calls in an invocation that permits output only."""
+
+    async def request(
+        self,
+        messages: list[object],
+        model_settings: ModelSettings | None,
+        model_request_parameters: ModelRequestParameters,
+    ) -> ModelResponse:
+        """Permit only the typed output tool supplied by PydanticAI."""
+        response = await self.wrapped.request(messages, model_settings, model_request_parameters)
+        output_names = {tool.name for tool in model_request_parameters.output_tools}
+        if any(
+            isinstance(part, ToolCallPart) and part.tool_name not in output_names
+            for part in response.parts
+        ):
+            raise ReasoningPolicyViolation("tools are not permitted in this reasoning phase")
+        return response
+
+
 class _RetrievalObservingModel(WrapperModel):
     """Admit at most one sequential retrieval call for each model response."""
 
@@ -101,7 +121,7 @@ class PydanticAIObservationReasoningAgent:
     async def form_findings(self, request: FindingRequest) -> FindingCompletion:
         """Invoke evidence-only finding formation with no tools."""
         agent: Agent[None, FindingCompletion] = Agent(
-            self._model,
+            _NoToolObservingModel(self._model),
             output_type=FindingCompletion,
             retries=0,
             system_prompt=(
@@ -155,7 +175,7 @@ class PydanticAIObservationReasoningAgent:
     async def determine_overall_state(self, request: OverallStateRequest) -> OverallStateCompletion:
         """Invoke a fresh knowledge-free overall-state assessment."""
         agent: Agent[None, OverallStateCompletion] = Agent(
-            self._model,
+            _NoToolObservingModel(self._model),
             output_type=OverallStateCompletion,
             retries=0,
             system_prompt="Determine only the overall state from supplied Observation evidence, frozen findings, and limitations. No external knowledge is available.",

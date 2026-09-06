@@ -54,13 +54,28 @@ class ObservationSemanticContext(StrictReasoningModel):
         return self
 
 
+class UnavailableReasonSnapshot(StrictReasoningModel):
+    """Immutable code-and-component snapshot for unavailable Lens metadata."""
+
+    code: str = Field(min_length=1)
+    component: str | None = None
+
+
 class UnavailableLens(StrictReasoningModel):
     """A configured Lens without usable analytical evidence."""
 
     lens_id: str = Field(min_length=1)
     lens_type: Literal["metric", "alert"]
     origin: Literal["caller_unavailable", "completed_insufficient_metric"]
-    reason: StructuredReason
+    reason: UnavailableReasonSnapshot
+
+    @field_validator("reason", mode="before")
+    @classmethod
+    def snapshot_persistence_reason(cls, value: object) -> object:
+        """Copy mutable persistence reasons across the reasoning contract boundary."""
+        if isinstance(value, StructuredReason):
+            return {"code": value.code, "component": value.component}
+        return value
 
     @model_validator(mode="after")
     def validate_origin_reason(self) -> UnavailableLens:

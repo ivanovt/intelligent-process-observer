@@ -270,6 +270,24 @@ def test_overall_state_is_structured_single_request_without_tools_or_hypothesis_
     assert "hypotheses" not in sent and "knowledge" not in sent
 
 
+@pytest.mark.parametrize(
+    ("phase", "invoke"),
+    [
+        ("finding", lambda agent: agent.form_findings(finding_request())),
+        ("overall", lambda agent: agent.determine_overall_state(overall_request())),
+    ],
+)
+def test_no_tool_reasoning_phases_reject_non_output_tool_calls_as_policy_violations(
+    phase: str, invoke
+) -> None:
+    """Forbidden calls are distinguished from malformed typed completions."""
+    del phase
+    model, calls = scripted_model([tool({"query": "forbidden", "finding_ids": ["f-1"]})])
+    with pytest.raises(ReasoningPolicyViolation):
+        run(invoke(PydanticAIObservationReasoningAgent(model)))
+    assert len(calls) == 1
+
+
 @pytest.mark.parametrize("failure", [TimeoutError("deadline"), RuntimeError("provider failure")])
 def test_model_failures_and_invalid_completion_propagate_once_without_retry(
     failure: Exception,

@@ -222,6 +222,22 @@ def test_unavailable_reason_is_strict_and_preserves_metric_and_alert_values() ->
             )
 
 
+def test_unavailable_reason_is_an_immutable_snapshot_of_a_mutable_producer_reason() -> None:
+    """Unavailable metadata cannot retain a mutable persistence-model reason alias."""
+    source = StructuredReason(code="upstream_503", component="current")
+    unavailable = UnavailableLens(
+        lens_id="metric", lens_type="metric", origin="caller_unavailable", reason=source
+    )
+
+    source.code = "mutated"
+    source.component = "other"
+
+    assert unavailable.reason.code == "upstream_503"
+    assert unavailable.reason.component == "current"
+    with pytest.raises((TypeError, ValueError, AttributeError)):
+        unavailable.reason.code = "mutated"
+
+
 def test_completed_insufficient_origin_is_reserved_for_the_projector_shape() -> None:
     """Only the deterministic Metric insufficiency value may use its origin."""
     for value in (
