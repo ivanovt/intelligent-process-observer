@@ -22,6 +22,11 @@ def _walk(value: Any, prefix: tuple[str | int, ...] = ()) -> tuple[tuple[str | i
     return (prefix,)
 
 
+def _allowed_alert_locator(locator: tuple[str | int, ...]) -> bool:
+    """Keep provider/source metadata out of citeable Alert evidence."""
+    return "source_ref" not in locator and locator[-1] != "source"
+
+
 def build_catalog(value: ObservationReasoningInput) -> tuple[EvidenceCatalogEntry, ...]:
     """Project evidence-only leaves in stable supplied-source order."""
     entries: list[EvidenceCatalogEntry] = []
@@ -33,6 +38,8 @@ def build_catalog(value: ObservationReasoningInput) -> tuple[EvidenceCatalogEntr
             if root not in artifact or artifact[root] is None:
                 continue
             for locator in _walk(artifact[root], (root,)):
+                if source_type == "alert_result" and not _allowed_alert_locator(locator):
+                    continue
                 entries.append(
                     EvidenceCatalogEntry(
                         id=f"evidence_{len(entries) + 1:04d}",

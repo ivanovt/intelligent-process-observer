@@ -9,7 +9,12 @@ from app.knowledge.executor import BoundedRetrievalExecutor
 from app.knowledge.ports import KnowledgeRetriever
 from app.reasoning.builder import build_result, freeze_findings, validate_hypotheses
 from app.reasoning.catalog import build_catalog
-from app.reasoning.contracts import ReasoningFailure, ReasoningOutcome, ReasoningSuccess
+from app.reasoning.contracts import (
+    ReasoningFailure,
+    ReasoningOutcome,
+    ReasoningPolicyViolation,
+    ReasoningSuccess,
+)
 from app.reasoning.input import derive_limitations, validate_input
 from app.reasoning.ports import ObservationReasoningAgent
 
@@ -81,6 +86,10 @@ class ObservationReasoningExecutor:
             except TimeoutError:
                 return ReasoningFailure(
                     code="reasoning_model_timed_out", component="hypothesis_phase"
+                )
+            except ReasoningPolicyViolation:
+                return ReasoningFailure(
+                    code="reasoning_policy_violated", component="hypothesis_phase"
                 )
             except ValueError:
                 return ReasoningFailure(

@@ -244,3 +244,7 @@ class ReasoningFailure(StrictReasoningModel):
 
 
 ReasoningOutcome = Annotated[ReasoningSuccess | ReasoningFailure, Field(discriminator="outcome")]
+
+
+class ReasoningPolicyViolation(ValueError):
+    """Internal signal that a bounded reasoning policy was violated."""

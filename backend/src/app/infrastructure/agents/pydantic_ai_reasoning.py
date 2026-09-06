@@ -20,13 +20,14 @@ from app.reasoning.contracts import (
     HypothesisRequest,
     OverallStateCompletion,
     OverallStateRequest,
+    ReasoningPolicyViolation,
 )
 
 
 @dataclass
 class _HypothesisState:
     retrieval: BoundedRetrievalExecutor
-    calls_in_response: int = 0
+    model_requests: int = 0
     outcomes: dict[str, object] | None = None
 
 
@@ -43,6 +44,7 @@ class _RetrievalObservingModel(WrapperModel):
         model_settings: ModelSettings | None,
         model_request_parameters: ModelRequestParameters,
     ) -> ModelResponse:
+        self._state.model_requests += 1
         response = await self.wrapped.request(messages, model_settings, model_request_parameters)
         output_names = {tool.name for tool in model_request_parameters.output_tools}
         calls = [
@@ -51,19 +53,32 @@ class _RetrievalObservingModel(WrapperModel):
             if isinstance(part, ToolCallPart) and part.tool_name not in output_names
         ]
         if len(calls) > 1:
-            raise ValueError("parallel retrieval calls are not permitted")
+            raise ReasoningPolicyViolation("parallel retrieval calls are not permitted")
         if calls:
+            if self._state.model_requests >= 3:
+                raise ReasoningPolicyViolation("final hypothesis request cannot request retrieval")
             call = calls[0]
             if call.tool_name != "retrieve_knowledge":
-                raise ValueError("unregistered reasoning tool")
+                raise ReasoningPolicyViolation("unregistered reasoning tool")
             try:
                 arguments = call.args_as_dict(raise_if_invalid=True)
                 request = KnowledgeRetrievalRequest.model_validate(arguments)
             except (ValueError, AssertionError) as error:
-                raise ValueError("invalid retrieval request") from error
+                raise ReasoningPolicyViolation("invalid retrieval request") from error
+            if request.refinement is not None:
+                first = next(
+                    (
+                        attempt
+                        for attempt in self._state.retrieval.ledger
+                        if attempt.execution_ordinal == 1
+                    ),
+                    None,
+                )
+                if first is None or first.outcome != "retrieved" or not first.knowledge_refs:
+                    raise ReasoningPolicyViolation("refinement requires non-empty first retrieval")
             outcome = await self._state.retrieval.execute(request)
             if isinstance(outcome, RetrievalRejected):
-                raise ValueError("retrieval policy violation")
+                raise ReasoningPolicyViolation("retrieval policy violation")
             self._state.outcomes = {call.tool_call_id: outcome}
         return response
 
