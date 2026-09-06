@@ -5,6 +5,8 @@ from __future__ import annotations
 
 import asyncio
 
+from pydantic_ai.exceptions import UnexpectedModelBehavior, UsageLimitExceeded
+
 from app.knowledge.executor import BoundedRetrievalExecutor
 from app.knowledge.ports import KnowledgeRetriever
 from app.reasoning.builder import build_result, freeze_findings, validate_hypotheses
@@ -52,6 +54,10 @@ class ObservationReasoningExecutor:
             raise
         except TimeoutError:
             return ReasoningFailure(code="reasoning_model_timed_out", component="finding_phase")
+        except UsageLimitExceeded:
+            return ReasoningFailure(code="reasoning_policy_violated", component="finding_phase")
+        except UnexpectedModelBehavior:
+            return ReasoningFailure(code="reasoning_result_invalid", component="finding_phase")
         except ValueError:
             return ReasoningFailure(code="reasoning_result_invalid", component="finding_phase")
         except Exception:
@@ -87,6 +93,14 @@ class ObservationReasoningExecutor:
                 return ReasoningFailure(
                     code="reasoning_model_timed_out", component="hypothesis_phase"
                 )
+            except UsageLimitExceeded:
+                return ReasoningFailure(
+                    code="reasoning_policy_violated", component="hypothesis_phase"
+                )
+            except UnexpectedModelBehavior:
+                return ReasoningFailure(
+                    code="reasoning_result_invalid", component="hypothesis_phase"
+                )
             except ReasoningPolicyViolation:
                 return ReasoningFailure(
                     code="reasoning_policy_violated", component="hypothesis_phase"
@@ -115,6 +129,14 @@ class ObservationReasoningExecutor:
         except TimeoutError:
             return ReasoningFailure(
                 code="reasoning_model_timed_out", component="overall_state_phase"
+            )
+        except UsageLimitExceeded:
+            return ReasoningFailure(
+                code="reasoning_policy_violated", component="overall_state_phase"
+            )
+        except UnexpectedModelBehavior:
+            return ReasoningFailure(
+                code="reasoning_result_invalid", component="overall_state_phase"
             )
         except ValueError:
             return ReasoningFailure(

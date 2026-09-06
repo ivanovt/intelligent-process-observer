@@ -8,6 +8,7 @@ from datetime import UTC, datetime, timedelta
 from uuid import uuid4
 
 import pytest
+from pydantic_ai.exceptions import UnexpectedModelBehavior, UsageLimitExceeded
 
 from app.knowledge.contracts import (
     KnowledgeReference,
@@ -325,6 +326,61 @@ async def test_executor_normalizes_hypothesis_policy_and_overall_failures() -> N
         "reasoning_model_failed",
         "overall_state_phase",
     )
+
+
+@pytest.mark.anyio
+@pytest.mark.parametrize(
+    "phase,error,code,component",
+    [
+        ("findings", UsageLimitExceeded("limit"), "reasoning_policy_violated", "finding_phase"),
+        (
+            "hypotheses",
+            UsageLimitExceeded("limit"),
+            "reasoning_policy_violated",
+            "hypothesis_phase",
+        ),
+        (
+            "overall",
+            UsageLimitExceeded("limit"),
+            "reasoning_policy_violated",
+            "overall_state_phase",
+        ),
+        (
+            "findings",
+            UnexpectedModelBehavior("invalid"),
+            "reasoning_result_invalid",
+            "finding_phase",
+        ),
+        (
+            "hypotheses",
+            UnexpectedModelBehavior("invalid"),
+            "reasoning_result_invalid",
+            "hypothesis_phase",
+        ),
+        (
+            "overall",
+            UnexpectedModelBehavior("invalid"),
+            "reasoning_result_invalid",
+            "overall_state_phase",
+        ),
+    ],
+)
+async def test_executor_normalizes_pydantic_ai_boundary_failures(
+    phase: str, error: Exception, code: str, component: str
+) -> None:
+    """Map framework limit and invalid-output failures to public safe outcomes."""
+
+    def raise_error(*_: object) -> object:
+        raise error
+
+    agent = FakeAgent(
+        findings=raise_error if phase == "findings" else _finding,
+        hypotheses=raise_error if phase == "hypotheses" else None,
+        overall=raise_error if phase == "overall" else None,
+    )
+    outcome = await ObservationReasoningExecutor(agent, FakeRetriever()).execute(_input())
+    assert isinstance(outcome, ReasoningFailure)
+    assert (outcome.code, outcome.component) == (code, component)
 
 
 @pytest.mark.anyio
