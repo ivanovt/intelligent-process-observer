@@ -45,7 +45,7 @@ Keep the checkbox and the status aligned:
 
 ## 2. Current work
 
-No critical-path feature is active. The next planned item is `add-knowledge-retrieval`.
+No critical-path feature is active. The next planned item is `add-report-generation`.
 
 ---
 
@@ -67,7 +67,7 @@ No critical-path feature is active. The next planned item is `add-knowledge-retr
 | Done | # | Feature / Change | Status | Depends on | Purpose / Exit condition |
 |---|---:|---|---|---|---|
 | [x] | 10 | `add-relationship-evaluator` | DONE | #5 | Merged through PR #11. Deterministic evaluation of engineer-defined Metric Relationships using accepted `current_state` semantics. |
-| [ ] | 11 | `add-knowledge-retrieval` | PLANNED | Foundation only | Minimal production retrieval capability with structured provenance suitable for bounded agent use. Avoid building a broad standalone RAG platform. |
+| [x] | 11 | `add-knowledge-retrieval` | DONE | Foundation only | Merged through PR #13. Framework-neutral retrieval contracts and deterministic two-call execution with structured provenance; a concrete retrieval backend remains separate follow-up work. |
 
 **Phase B milestone:** The system can combine deterministic cross-Metric evidence with a reusable bounded knowledge-retrieval capability.
 
@@ -77,7 +77,7 @@ No critical-path feature is active. The next planned item is `add-knowledge-retr
 
 | Done | # | Feature / Change | Status | Depends on | Purpose / Exit condition |
 |---|---:|---|---|---|---|
-| [ ] | 12 | `add-observation-reasoning` | PLANNED | #5, #7, #10, #11 | Produce structured Observation-level findings, grounded hypotheses, limitations, and `overall_state` from usable Metric/Alert results and Relationship evaluations. |
+| [x] | 12 | `add-observation-reasoning` | DONE | #5, #7, #10, #11 | PR #14. Produce structured Observation-level findings, grounded hypotheses, limitations, and `overall_state` from usable Metric/Alert results and Relationship evaluations. |
 | [ ] | 13 | `add-report-generation` | PLANNED | #12 | Convert `ObservationAnalysisResult` into a human-readable Markdown `ObservationReport` without new analysis or retrieval. |
 
 **Phase C milestone:** The analytical backend can produce a complete structured Observation interpretation and a human-readable report.
@@ -151,10 +151,10 @@ Do not move these into the critical path unless the MVP goal changes:
 Update this section when a feature changes state.
 
 ```text
-Completed runtime/product features: 8 / 14 (merged and accepted)
+Completed runtime/product features: 10 / 14 (merged and accepted)
 Completed engineering/documentation foundations: 2
 Current feature: none selected
-First-MVP critical-path remaining: 6 (#11–#16)
+First-MVP critical-path remaining: 4 (#13–#16)
 Deferred feature group: Logs
 ```
 
@@ -190,10 +190,10 @@ DONE
   #8  add-jira-alert-provider
   #9  add-prometheus-metric-provider
   #10 add-relationship-evaluator
-
-NEXT
   #11 add-knowledge-retrieval
   #12 add-observation-reasoning
+
+NEXT
   #13 add-report-generation
   #14 add-observation-execution
   #15 add-observation-management-ui
