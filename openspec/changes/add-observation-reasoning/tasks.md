@@ -45,7 +45,7 @@
 
 ## 7. Integration and Final Verification
 
-- [ ] 7.1 Add one representative end-to-end in-memory reasoning test from mixed Metric/Alert/Relationship inputs through evidence catalog, deterministic limitations, three isolated fake model invocations, injected fake retrieval, frozen findings, grounded hypothesis, knowledge-isolated overall state, and strict ObservationAnalysisResult serialization.
+- [x] 7.1 Add one representative end-to-end in-memory reasoning test from mixed Metric/Alert/Relationship inputs through evidence catalog, deterministic limitations, three isolated fake model invocations, injected fake retrieval, frozen findings, grounded hypothesis, knowledge-isolated overall state, and strict ObservationAnalysisResult serialization.
 - [ ] 7.2 Add degraded-path integration tests for partial and unavailable Lenses, completed-insufficient Metric visibility in final limitations, empty findings with skipped hypothesis model work, empty or failed retrieval with no hypotheses, and failure in each required invocation producing no result.
 - [x] 7.3 Run focused backend tests, Ruff linting, and Ruff formatting checks for the capability and resolve all failures; optionally run a manually credentialed OpenRouter smoke test without making live access or credentials a CI requirement.
 - [x] 7.4 Run `make check` and report any failures accurately before archive or pull-request work.
