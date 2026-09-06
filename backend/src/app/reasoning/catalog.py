@@ -13,6 +13,8 @@ from app.reasoning.contracts import (
 
 
 def _walk(value: Any, prefix: tuple[str | int, ...] = ()) -> tuple[tuple[str | int, ...], ...]:
+    if value is None:
+        return ()
     if isinstance(value, dict):
         return tuple(item for key, child in value.items() for item in _walk(child, prefix + (key,)))
     if isinstance(value, list):

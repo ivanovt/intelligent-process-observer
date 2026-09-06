@@ -10,7 +10,7 @@
 - [x] 2.1 Implement the typed `source_type + source_id + locator` reference resolver over exact immutable validated source artifacts, including strict locator key/index validation and exact-one-source resolution.
 - [x] 2.2 Implement deterministic fine-grained catalog projection and transient ordered IDs for admitted Metric current/reference/History semantics and evidence, Alert records/aggregates/comparisons/findings/importance, and Relationship applicability/state/evidence, while excluding envelope, provenance, reasons, unavailable data, knowledge, and diagnostics.
 - [x] 2.3 Implement deterministic limitation projection in Observation Lens order for unavailable, completed-insufficient Metric, and partial usable Lens inputs using `missing_lens_evidence`, `insufficient_lens_evidence`, and `partial_lens_analysis`, preserving only the allowed partial component.
-- [ ] 2.4 Add exhaustive catalog/resolver tests for optional-section presence and omission, all three source types, stable order, transient-ID translation, exact resolution, malformed locators, source ambiguity, and exclusion of non-evidence fields; add limitation tests for all mappings, ordering, empty output, and immutability.
+- [x] 2.4 Add exhaustive catalog/resolver tests for optional-section presence and omission, all three source types, stable order, transient-ID translation, exact resolution, malformed locators, source ambiguity, and exclusion of non-evidence fields; add limitation tests for all mappings, ordering, empty output, and immutability.
 
 ## 3. Finding Freeze and Final Result Validation
 
