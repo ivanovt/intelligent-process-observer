@@ -18,7 +18,7 @@
 - [x] 3.2 Implement hypothesis validation against the frozen finding set and exact union of KnowledgeReference values returned by this run, including unique IDs/references, mandatory non-empty `supported_by` and `knowledge_refs`, and rejection of unsupported fields or invented grounding.
 - [x] 3.3 Implement strict overall-state completion validation for the three accepted values with no findings, hypotheses, limitations, references, rationale, or other model-authored fields.
 - [x] 3.4 Implement the sole ObservationAnalysisResult 1.0 builder that copies correlated UUID identity, frozen findings, validated hypotheses, isolated overall state, and deterministic limitations while excluding all transient catalog, retrieval, prompt, provider, model, and diagnostic data.
-- [ ] 3.5 Add builder/freeze/state tests for zero and multiple findings/hypotheses, cross-Lens references, exact snapshot preservation, unknown evidence/finding/knowledge rejection, uncertainty with findings, forbidden taxonomy/confidence/recommendation fields, strict serialization, and compatibility with the existing ObservationAnalysisResult persistence envelope without performing persistence.
+- [x] 3.5 Add builder/freeze/state tests for zero and multiple findings/hypotheses, cross-Lens references, exact snapshot preservation, unknown evidence/finding/knowledge rejection, uncertainty with findings, forbidden taxonomy/confidence/recommendation fields, strict serialization, and compatibility with the existing ObservationAnalysisResult persistence envelope without performing persistence.
 
 ## 4. Three-Invocation Application Execution
 
