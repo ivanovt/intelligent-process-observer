@@ -19,6 +19,7 @@ from app.alerts.contracts import (
 )
 from app.alerts.normalization import normalize_current
 from app.alerts.result_builder import AlertResultBuilder
+from app.infrastructure.persistence.runtime_contracts import StructuredReason
 from app.knowledge.contracts import (
     KnowledgeReference,
     KnowledgeRetrievalRequest,
@@ -46,8 +47,10 @@ from app.reasoning.contracts import (
     ObservationSemanticContext,
     OverallStateCompletion,
     ReasoningLens,
+    UnavailableLens,
 )
 from app.reasoning.executor import ObservationReasoningExecutor
+from app.reasoning.input import insufficient_metric_as_unavailable
 from app.relationships.contracts import ApplicableRelationshipEvaluation, DirectionEvidence
 
 NOW = datetime(2026, 9, 1, tzinfo=UTC)
@@ -226,6 +229,67 @@ def _input() -> ObservationReasoningInput:
     )
 
 
+def _degraded_input() -> ObservationReasoningInput:
+    """Build partial, insufficient, and unavailable Lens evidence for one run."""
+    observation_id, run_id = uuid4(), uuid4()
+    partial_context = MetricLensExecutionContext(
+        identity=MetricIdentity(
+            observation_id=observation_id,
+            observation_run_id=run_id,
+            lens_id="partial-temperature",
+            lens_run_id=uuid4(),
+            metric_ref="plant.temperature",
+            unit="C",
+        ),
+        provider_scope=MetricProviderScope(
+            adapter_type="prometheus", source_id="plant", query="temperature"
+        ),
+        analysis_window=MetricAnalysisWindow(**{"from": NOW, "to": NOW + timedelta(minutes=5)}),
+        analysis_objectives=(),
+        reference_periods=(),
+    )
+    insufficient_context = partial_context.model_copy(
+        update={
+            "identity": partial_context.identity.model_copy(
+                update={"lens_id": "insufficient-pressure", "lens_run_id": uuid4()}
+            )
+        }
+    )
+    prepared = PreparedGoodSeries(
+        data_quality="good",
+        samples=(),
+        evidence=MetricEvidence(mean=84.0, std=1.0, min=82.0, max=86.0, slope=0.4),
+        residuals=(),
+    )
+    semantics = MetricSemantics(
+        trend=MetricTrend(direction="increasing", rate="moderate"),
+        variability=MetricVariability(state="low"),
+    )
+    builder = MetricResultBuilder(clock=lambda: NOW)
+    partial, _ = builder.partial_reference_unavailable(partial_context, prepared, semantics, (), ())
+    insufficient, _ = builder.completed_insufficient(insufficient_context)
+    return ObservationReasoningInput(
+        context=ObservationSemanticContext(
+            identity=ObservationIdentity(observation_id=observation_id, observation_run_id=run_id),
+            name="Degraded plant health",
+            lenses=(
+                ReasoningLens(lens_id="partial-temperature", lens_type="metric"),
+                ReasoningLens(lens_id="insufficient-pressure", lens_type="metric"),
+                ReasoningLens(lens_id="alerts", lens_type="alert"),
+            ),
+        ),
+        usable_results=(partial,),
+        unavailable_lenses=(
+            insufficient_metric_as_unavailable(insufficient),
+            UnavailableLens(
+                lens_id="alerts",
+                lens_type="alert",
+                reason=StructuredReason(code="provider_unavailable", component="current"),
+            ),
+        ),
+    )
+
+
 @pytest.mark.anyio
 async def test_reasoning_end_to_end_with_mixed_evidence_and_isolated_phases() -> None:
     """Reasoning produces a strict result from mixed evidence without data-channel leaks."""
@@ -255,3 +319,138 @@ async def test_reasoning_end_to_end_with_mixed_evidence_and_isolated_phases() ->
     payload = outcome.result.model_dump(mode="json")
     assert UUID(payload["identity"]["observation_id"]) == outcome.result.identity.observation_id
     assert "catalog" not in payload and "knowledge" not in payload
+
+
+@pytest.mark.anyio
+async def test_reasoning_integrates_partial_unavailable_and_insufficient_limitations() -> None:
+    """Final reasoning preserves deterministic availability limits from native Lens results."""
+    knowledge_reference = KnowledgeReference(source_id="operations-manual", reference="partial-3")
+    agent = InMemoryAgent(knowledge_reference)
+
+    outcome = await ObservationReasoningExecutor(
+        agent, InMemoryRetriever(knowledge_reference)
+    ).execute(_degraded_input())
+
+    assert outcome.outcome == "success"
+    assert [
+        (item.code, item.lens_id, getattr(item, "component", None))
+        for item in outcome.result.limitations
+    ] == [
+        ("partial_lens_analysis", "partial-temperature", "reference_periods"),
+        ("insufficient_lens_evidence", "insufficient-pressure", None),
+        ("missing_lens_evidence", "alerts", None),
+    ]
+    assert agent.finding_request.limitations == outcome.result.limitations
+    assert agent.overall_request.limitations == outcome.result.limitations
+
+
+@pytest.mark.anyio
+async def test_reasoning_integrates_empty_findings_without_hypothesis_work() -> None:
+    """An empty finding phase skips retrieval and hypothesis reasoning but still assesses state."""
+
+    class EmptyFindingAgent(InMemoryAgent):
+        async def form_findings(self, request):
+            self.calls.append("findings")
+            self.finding_request = request
+            return FindingCompletion()
+
+    reference = KnowledgeReference(source_id="operations-manual", reference="unused")
+    agent = EmptyFindingAgent(reference)
+    retriever = InMemoryRetriever(reference)
+    outcome = await ObservationReasoningExecutor(agent, retriever).execute(_input())
+
+    assert outcome.outcome == "success"
+    assert outcome.result.findings == () and outcome.result.hypotheses == ()
+    assert agent.calls == ["findings", "overall"]
+    assert retriever.requests == []
+
+
+@pytest.mark.anyio
+@pytest.mark.parametrize("retrieval_failure", [(), TimeoutError(), RuntimeError("unavailable")])
+async def test_reasoning_integrates_empty_or_failed_retrieval_without_hypotheses(
+    retrieval_failure: object,
+) -> None:
+    """Empty and failed retrieval leave a valid finding-only result without hypotheses."""
+
+    class EmptyHypothesisAgent(InMemoryAgent):
+        async def form_hypotheses(self, request, retrieval):
+            self.calls.append("hypotheses")
+            self.hypothesis_request = request
+            await retrieval.execute(
+                KnowledgeRetrievalRequest(
+                    query="temperature investigation guidance", finding_ids=("temperature-finding",)
+                )
+            )
+            return HypothesisCompletion()
+
+    class ConfiguredRetriever:
+        async def retrieve(self, request):
+            if isinstance(retrieval_failure, BaseException):
+                raise retrieval_failure
+            return retrieval_failure
+
+    reference = KnowledgeReference(source_id="operations-manual", reference="unused")
+    agent = EmptyHypothesisAgent(reference)
+    outcome = await ObservationReasoningExecutor(agent, ConfiguredRetriever()).execute(_input())
+
+    assert outcome.outcome == "success"
+    assert outcome.result.hypotheses == ()
+    assert agent.calls == ["findings", "hypotheses", "overall"]
+
+
+@pytest.mark.anyio
+@pytest.mark.parametrize(
+    ("failed_phase", "expected_calls", "component"),
+    [
+        ("findings", ["findings"], "finding_phase"),
+        ("hypotheses", ["findings", "hypotheses"], "hypothesis_phase"),
+        ("overall", ["findings", "hypotheses", "overall"], "overall_state_phase"),
+    ],
+)
+async def test_reasoning_required_invocation_failure_produces_no_result(
+    failed_phase: str, expected_calls: list[str], component: str
+) -> None:
+    """Each required invocation fails closed without publishing a partial result."""
+
+    class RequiredPhaseFailureAgent:
+        def __init__(self) -> None:
+            self.calls: list[str] = []
+
+        async def form_findings(self, request):
+            self.calls.append("findings")
+            if failed_phase == "findings":
+                raise RuntimeError("finding failure")
+            metric_entry = next(
+                item for item in request.catalog if item.reference.source_type == "metric_result"
+            )
+            return FindingCompletion(
+                findings=(
+                    FindingDraft(
+                        id="temperature-finding",
+                        statement="Temperature evidence warrants investigation.",
+                        evidence_ids=(metric_entry.id,),
+                    ),
+                )
+            )
+
+        async def form_hypotheses(self, request, retrieval):
+            self.calls.append("hypotheses")
+            if failed_phase == "hypotheses":
+                raise RuntimeError("hypothesis failure")
+            return HypothesisCompletion()
+
+        async def determine_overall_state(self, request):
+            self.calls.append("overall")
+            if failed_phase == "overall":
+                raise RuntimeError("overall failure")
+            return OverallStateCompletion(overall_state="significant_findings_present")
+
+    agent = RequiredPhaseFailureAgent()
+    outcome = await ObservationReasoningExecutor(
+        agent, InMemoryRetriever(KnowledgeReference(source_id="manual", reference="unused"))
+    ).execute(_input())
+
+    assert outcome.outcome == "failure"
+    assert outcome.component == component
+    assert not hasattr(outcome, "result")
+    assert agent.calls == expected_calls
