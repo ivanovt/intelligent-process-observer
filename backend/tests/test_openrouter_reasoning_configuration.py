@@ -6,7 +6,7 @@ import pytest
 from pydantic import ValidationError
 
 from app.core.settings import Settings
-from app.infrastructure.openrouter.composition import build_reasoning_model
+from app.infrastructure.openrouter.composition import build_reasoning_agent, build_reasoning_model
 
 
 def test_reasoning_openrouter_defaults_are_optional_at_application_startup() -> None:
@@ -60,6 +60,21 @@ def test_reasoning_openrouter_composition_uses_the_configured_model_name() -> No
         )
     )
     assert model.model_name == "vendor/model-override"
+
+
+def test_reasoning_agent_composition_applies_configured_request_limits() -> None:
+    """The production adapter receives both model and request settings from Settings."""
+    agent = build_reasoning_agent(
+        Settings(
+            openrouter_api_key="test-composition-credential",
+            observation_reasoning_model="vendor/model-override",
+            openrouter_request_timeout_seconds=321.5,
+            observation_reasoning_max_output_tokens=99_999,
+        )
+    )
+
+    assert agent._model.model_name == "vendor/model-override"
+    assert agent._settings == {"timeout": 321.5, "max_tokens": 99_999}
 
 
 def test_disabled_fallback_requires_one_unique_non_blank_provider() -> None:

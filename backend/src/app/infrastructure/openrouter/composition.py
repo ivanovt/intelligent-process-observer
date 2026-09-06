@@ -1,9 +1,10 @@
-"""Compose the injected PydanticAI OpenRouter model without exposing credentials."""
+"""Compose private OpenRouter-backed Observation Reasoning infrastructure."""
 
 # ruff: noqa: E501
 from __future__ import annotations
 
 from app.core.settings import Settings
+from app.infrastructure.agents.pydantic_ai_reasoning import PydanticAIObservationReasoningAgent
 
 
 def build_reasoning_model(settings: Settings):
@@ -24,4 +25,13 @@ def build_reasoning_model(settings: Settings):
         settings.observation_reasoning_model,
         provider=provider,
         settings={"extra_body": {"provider": policy}},
+    )
+
+
+def build_reasoning_agent(settings: Settings) -> PydanticAIObservationReasoningAgent:
+    """Build the configured production adapter for all Observation Reasoning phases."""
+    return PydanticAIObservationReasoningAgent(
+        build_reasoning_model(settings),
+        timeout_seconds=settings.openrouter_request_timeout_seconds,
+        max_output_tokens=settings.observation_reasoning_max_output_tokens,
     )
