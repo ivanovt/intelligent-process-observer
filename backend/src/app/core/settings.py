@@ -43,6 +43,12 @@ class Settings(BaseSettings):
     jira_alert_provider_raw: str | None = Field(
         default=None, validation_alias="JIRA_ALERT_PROVIDER"
     )
+    openrouter_api_key: SecretStr | None = None
+    observation_reasoning_model: str = Field(default="openai/gpt-5.6-terra", min_length=1)
+    openrouter_request_timeout_seconds: float = Field(default=120, gt=0)
+    observation_reasoning_max_output_tokens: int = Field(default=12_288, gt=0)
+    openrouter_allow_fallbacks: bool = True
+    openrouter_provider_order: list[str] = Field(default_factory=list)
 
     model_config = SettingsConfigDict(
         env_file=_REPOSITORY_ROOT / ".env",
@@ -55,6 +61,17 @@ class Settings(BaseSettings):
         source_ids = [source.id for source in self.prometheus_sources]
         if len(source_ids) != len(set(source_ids)):
             raise ValueError("prometheus_sources must not contain duplicate IDs")
+        return self
+
+    @model_validator(mode="after")
+    def validate_openrouter_routing(self) -> Settings:
+        """Validate provider routing without requiring a model credential at startup."""
+        if any(not provider.strip() for provider in self.openrouter_provider_order):
+            raise ValueError("openrouter_provider_order must not contain blank providers")
+        if len(self.openrouter_provider_order) != len(set(self.openrouter_provider_order)):
+            raise ValueError("openrouter_provider_order must not contain duplicates")
+        if not self.openrouter_allow_fallbacks and len(self.openrouter_provider_order) != 1:
+            raise ValueError("disabled OpenRouter fallback requires exactly one provider")
         return self
 
 
