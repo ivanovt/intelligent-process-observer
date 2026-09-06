@@ -310,7 +310,10 @@ def test_validate_input_rejects_scope_partition_duplicates_missing_unknown_and_c
                 unavailable_lenses=(
                     unavailable,
                     UnavailableLens(
-                        lens_id="alert", lens_type="alert", origin="caller_unavailable", reason={"code": "x"}
+                        lens_id="alert",
+                        lens_type="alert",
+                        origin="caller_unavailable",
+                        reason={"code": "x"},
                     ),
                 ),
             ),
@@ -322,7 +325,10 @@ def test_validate_input_rejects_scope_partition_duplicates_missing_unknown_and_c
                 usable_results=(metric,),
                 unavailable_lenses=(
                     UnavailableLens(
-                        lens_id="metric", lens_type="metric", origin="caller_unavailable", reason={"code": "x"}
+                        lens_id="metric",
+                        lens_type="metric",
+                        origin="caller_unavailable",
+                        reason={"code": "x"},
                     ),
                 ),
             ),
@@ -335,7 +341,10 @@ def test_validate_input_rejects_scope_partition_duplicates_missing_unknown_and_c
                 usable_results=(metric,),
                 unavailable_lenses=(
                     UnavailableLens(
-                        lens_id="other", lens_type="alert", origin="caller_unavailable", reason={"code": "x"}
+                        lens_id="other",
+                        lens_type="alert",
+                        origin="caller_unavailable",
+                        reason={"code": "x"},
                     ),
                 ),
             ),

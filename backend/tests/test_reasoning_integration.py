@@ -220,8 +220,8 @@ def _input() -> ObservationReasoningInput:
             identity=ObservationIdentity(observation_id=observation_id, observation_run_id=run_id),
             name="Plant health",
             lenses=(
-                ReasoningLens(lens_id="temperature", lens_type="metric"),
-                ReasoningLens(lens_id="alerts", lens_type="alert"),
+                ReasoningLens(lens_id="temperature", lens_type="metric", name="Temperature"),
+                ReasoningLens(lens_id="alerts", lens_type="alert", name="Alerts"),
             ),
         ),
         usable_results=(metric, alert),
@@ -273,9 +273,15 @@ def _degraded_input() -> ObservationReasoningInput:
             identity=ObservationIdentity(observation_id=observation_id, observation_run_id=run_id),
             name="Degraded plant health",
             lenses=(
-                ReasoningLens(lens_id="partial-temperature", lens_type="metric"),
-                ReasoningLens(lens_id="insufficient-pressure", lens_type="metric"),
-                ReasoningLens(lens_id="alerts", lens_type="alert"),
+                ReasoningLens(
+                    lens_id="partial-temperature", lens_type="metric", name="Partial temperature"
+                ),
+                ReasoningLens(
+                    lens_id="insufficient-pressure",
+                    lens_type="metric",
+                    name="Insufficient pressure",
+                ),
+                ReasoningLens(lens_id="alerts", lens_type="alert", name="Alerts"),
             ),
         ),
         usable_results=(partial,),
@@ -284,6 +290,7 @@ def _degraded_input() -> ObservationReasoningInput:
             UnavailableLens(
                 lens_id="alerts",
                 lens_type="alert",
+                origin="caller_unavailable",
                 reason=StructuredReason(code="provider_unavailable", component="current"),
             ),
         ),

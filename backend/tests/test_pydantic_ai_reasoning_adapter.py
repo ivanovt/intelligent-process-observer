@@ -42,7 +42,7 @@ def context() -> ObservationSemanticContext:
     return ObservationSemanticContext(
         identity=ObservationIdentity(observation_id=uuid4(), observation_run_id=uuid4()),
         name="Observation",
-        lenses=(ReasoningLens(lens_id="metric", lens_type="metric"),),
+        lenses=(ReasoningLens(lens_id="metric", lens_type="metric", name="Metric"),),
     )
 
 
@@ -156,15 +156,14 @@ def test_findings_are_structured_single_request_with_no_tools_and_exact_projecti
     messages, info = calls[0]
     assert not info.function_tools
     assert prompt(messages) == request.model_dump_json()
-    assert (
-        "external knowledge"
-        in " ".join(
-            part.content
-            for message in messages
-            for part in message.parts
-            if part.part_kind == "system-prompt"
-        ).lower()
-    )
+    system_prompt = " ".join(
+        part.content
+        for message in messages
+        for part in message.parts
+        if part.part_kind == "system-prompt"
+    ).lower()
+    assert "external knowledge" in system_prompt
+    assert "alert record" in system_prompt and "untrusted" in system_prompt
 
 
 def test_hypothesis_retrieval_trajectories_and_refinement_are_bounded() -> None:

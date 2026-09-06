@@ -300,7 +300,9 @@ def test_limitations_map_order_empty_and_immutability(monkeypatch: pytest.Monkey
     import app.reasoning.input as reasoning_input
 
     partial = SimpleNamespace(
-        identity=SimpleNamespace(lens_id="partial"), reason=SimpleNamespace(component="history")
+        lens_type="metric",
+        identity=SimpleNamespace(lens_id="partial"),
+        reason=SimpleNamespace(component="history"),
     )
     monkeypatch.setattr(reasoning_input, "PartialMetricResult", type(partial))
     monkeypatch.setattr(
@@ -312,18 +314,33 @@ def test_limitations_map_order_empty_and_immutability(monkeypatch: pytest.Monkey
             identity=identity,
             name="Observation",
             lenses=(
-                ReasoningLens(lens_id="missing", lens_type="alert"),
-                ReasoningLens(lens_id="partial", lens_type="metric"),
-                ReasoningLens(lens_id="insufficient", lens_type="metric"),
+                ReasoningLens(lens_id="missing", lens_type="alert", name="Missing"),
+                ReasoningLens(lens_id="partial", lens_type="metric", name="Partial"),
+                ReasoningLens(lens_id="insufficient", lens_type="metric", name="Insufficient"),
+                ReasoningLens(
+                    lens_id="caller-insufficient", lens_type="metric", name="Caller insufficient"
+                ),
             ),
         ),
         usable_results=(partial,),
         unavailable_lenses=(
             UnavailableLens(
-                lens_id="insufficient", lens_type="metric", reason={"code": "insufficient_data"}
+                lens_id="insufficient",
+                lens_type="metric",
+                origin="completed_insufficient_metric",
+                reason={"code": "insufficient_data"},
             ),
             UnavailableLens(
-                lens_id="missing", lens_type="alert", reason={"code": "upstream_failed"}
+                lens_id="missing",
+                lens_type="alert",
+                origin="caller_unavailable",
+                reason={"code": "upstream_failed"},
+            ),
+            UnavailableLens(
+                lens_id="caller-insufficient",
+                lens_type="metric",
+                origin="caller_unavailable",
+                reason={"code": "insufficient_data"},
             ),
         ),
         relationships=(),
@@ -338,6 +355,7 @@ def test_limitations_map_order_empty_and_immutability(monkeypatch: pytest.Monkey
         ("missing_lens_evidence", "missing", None),
         ("partial_lens_analysis", "partial", "history"),
         ("insufficient_lens_evidence", "insufficient", None),
+        ("missing_lens_evidence", "caller-insufficient", None),
     ]
     with pytest.raises((TypeError, ValueError, AttributeError)):
         limitations[0].lens_id = "changed"
@@ -345,7 +363,7 @@ def test_limitations_map_order_empty_and_immutability(monkeypatch: pytest.Monkey
         context=ObservationSemanticContext(
             identity=identity,
             name="Observation",
-            lenses=(ReasoningLens(lens_id="usable", lens_type="metric"),),
+            lenses=(ReasoningLens(lens_id="usable", lens_type="metric", name="Usable"),),
         ),
         usable_results=(),
         unavailable_lenses=(),

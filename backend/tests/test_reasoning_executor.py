@@ -80,7 +80,7 @@ def _input() -> ObservationReasoningInput:
         context=ObservationSemanticContext(
             identity=ObservationIdentity(observation_id=observation_id, observation_run_id=run_id),
             name="Observation",
-            lenses=(ReasoningLens(lens_id="metric", lens_type="metric"),),
+            lenses=(ReasoningLens(lens_id="metric", lens_type="metric", name="Metric"),),
         ),
         usable_results=(metric,),
     )
