@@ -7,6 +7,7 @@ from uuid import uuid4
 import pytest
 from pydantic import ValidationError
 
+from app.reasoning.builder import freeze_findings
 from app.reasoning.contracts import (
     EvidenceReference,
     FindingCompletion,
@@ -50,4 +51,15 @@ def test_hypothesis_requires_unique_grounding_references() -> None:
             statement="x",
             supported_by=("f", "f"),
             knowledge_refs=({"source_id": "s", "reference": "r"},),
+        )
+
+
+def test_freeze_rejects_unknown_or_duplicate_catalog_references() -> None:
+    """Finding drafts can only cite unique transient catalog entries."""
+    with pytest.raises(ValueError):
+        freeze_findings(
+            FindingCompletion(
+                findings=(FindingDraft(id="f", statement="x", evidence_ids=("missing",)),)
+            ),
+            (),
         )
