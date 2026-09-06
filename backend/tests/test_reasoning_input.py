@@ -119,10 +119,14 @@ def _input(*, usable_results=(), unavailable_lenses=(), lenses=None, relationshi
     observation_id, run_id = uuid4(), uuid4()
     if lenses is None:
         lenses = tuple(
-            ReasoningLens(lens_id=result.identity.lens_id, lens_type=result.lens_type)
+            ReasoningLens(
+                lens_id=result.identity.lens_id,
+                lens_type=result.lens_type,
+                name=result.identity.lens_id,
+            )
             for result in usable_results
         ) + tuple(
-            ReasoningLens(lens_id=item.lens_id, lens_type=item.lens_type)
+            ReasoningLens(lens_id=item.lens_id, lens_type=item.lens_type, name=item.lens_id)
             for item in unavailable_lenses
         )
     return ObservationReasoningInput(
@@ -155,7 +159,13 @@ def test_validate_input_accepts_every_usable_metric_and_alert_variant(variant: s
         context=ObservationSemanticContext(
             identity=ObservationIdentity(observation_id=observation_id, observation_run_id=run_id),
             name="Observation",
-            lenses=(ReasoningLens(lens_id=result.identity.lens_id, lens_type=result.lens_type),),
+            lenses=(
+                ReasoningLens(
+                    lens_id=result.identity.lens_id,
+                    lens_type=result.lens_type,
+                    name=result.identity.lens_id,
+                ),
+            ),
         ),
         usable_results=(result,),
     )
@@ -174,13 +184,14 @@ def test_insufficient_metric_is_unavailable_not_usable_and_preserves_identity() 
     assert unavailable == UnavailableLens(
         lens_id=insufficient.identity.lens_id,
         lens_type="metric",
+        origin="completed_insufficient_metric",
         reason=StructuredReason(code="insufficient_data"),
     )
     value = ObservationReasoningInput(
         context=ObservationSemanticContext(
             identity=ObservationIdentity(observation_id=observation_id, observation_run_id=run_id),
             name="Observation",
-            lenses=(ReasoningLens(lens_id="metric", lens_type="metric"),),
+            lenses=(ReasoningLens(lens_id="metric", lens_type="metric", name="Metric"),),
         ),
         unavailable_lenses=(unavailable,),
     )
@@ -193,16 +204,48 @@ def test_unavailable_reason_is_strict_and_preserves_metric_and_alert_values() ->
     metric = UnavailableLens(
         lens_id="metric",
         lens_type="metric",
+        origin="caller_unavailable",
         reason={"code": "upstream_503", "component": "current"},
     )
     alert = UnavailableLens(
-        lens_id="alert", lens_type="alert", reason={"code": "jira_throttled", "component": "fetch"}
+        lens_id="alert",
+        lens_type="alert",
+        origin="caller_unavailable",
+        reason={"code": "jira_throttled", "component": "fetch"},
     )
     assert metric.reason.code == "upstream_503" and metric.reason.component == "current"
     assert alert.reason.code == "jira_throttled" and alert.reason.component == "fetch"
     for reason in ({"code": ""}, {"component": "fetch"}, {"code": "x", "diagnostic": "secret"}):
         with pytest.raises(ValidationError):
-            UnavailableLens(lens_id="alert", lens_type="alert", reason=reason)
+            UnavailableLens(
+                lens_id="alert", lens_type="alert", origin="caller_unavailable", reason=reason
+            )
+
+
+def test_completed_insufficient_origin_is_reserved_for_the_projector_shape() -> None:
+    """Only the deterministic Metric insufficiency value may use its origin."""
+    for value in (
+        {
+            "lens_id": "metric",
+            "lens_type": "metric",
+            "origin": "completed_insufficient_metric",
+            "reason": {"code": "upstream_unavailable"},
+        },
+        {
+            "lens_id": "metric",
+            "lens_type": "metric",
+            "origin": "completed_insufficient_metric",
+            "reason": {"code": "insufficient_data", "component": "history"},
+        },
+        {
+            "lens_id": "alert",
+            "lens_type": "alert",
+            "origin": "completed_insufficient_metric",
+            "reason": {"code": "insufficient_data"},
+        },
+    ):
+        with pytest.raises(ValidationError, match="completed insufficient Metric"):
+            UnavailableLens.model_validate(value)
 
 
 def test_context_rejects_log_unsupported_and_infrastructure_fields_before_partition() -> None:
@@ -212,16 +255,18 @@ def test_context_rejects_log_unsupported_and_infrastructure_fields_before_partit
         context=ObservationSemanticContext(
             identity=identity,
             name="Observation",
-            lenses=(ReasoningLens(lens_id="log", lens_type="log"),),
+            lenses=(ReasoningLens(lens_id="log", lens_type="log", name="Log"),),
         ),
         unavailable_lenses=(
-            UnavailableLens(lens_id="log", lens_type="metric", reason={"code": "x"}),
+            UnavailableLens(
+                lens_id="log", lens_type="metric", origin="caller_unavailable", reason={"code": "x"}
+            ),
         ),
     )
     with pytest.raises(ValueError, match="Log Lens"):
         validate_input(log_context)
     with pytest.raises(ValidationError):
-        ReasoningLens.model_validate({"lens_id": "x", "lens_type": "relationship"})
+        ReasoningLens.model_validate({"lens_id": "x", "lens_type": "relationship", "name": "X"})
     with pytest.raises(ValidationError):
         ObservationSemanticContext.model_validate(
             {"identity": identity, "name": "x", "lenses": (), "provider": "secret"}
@@ -237,12 +282,15 @@ def test_validate_input_rejects_scope_partition_duplicates_missing_unknown_and_c
         identity=ObservationIdentity(observation_id=observation_id, observation_run_id=run_id),
         name="Observation",
         lenses=(
-            ReasoningLens(lens_id="metric", lens_type="metric"),
-            ReasoningLens(lens_id="alert", lens_type="alert"),
+            ReasoningLens(lens_id="metric", lens_type="metric", name="Metric"),
+            ReasoningLens(lens_id="alert", lens_type="alert", name="Alert"),
         ),
     )
     unavailable = UnavailableLens(
-        lens_id="alert", lens_type="alert", reason={"code": "failed", "component": "fetch"}
+        lens_id="alert",
+        lens_type="alert",
+        origin="caller_unavailable",
+        reason={"code": "failed", "component": "fetch"},
     )
     valid = ObservationReasoningInput(
         context=context, usable_results=(metric,), unavailable_lenses=(unavailable,)
@@ -261,7 +309,9 @@ def test_validate_input_rejects_scope_partition_duplicates_missing_unknown_and_c
                 usable_results=(metric,),
                 unavailable_lenses=(
                     unavailable,
-                    UnavailableLens(lens_id="alert", lens_type="alert", reason={"code": "x"}),
+                    UnavailableLens(
+                        lens_id="alert", lens_type="alert", origin="caller_unavailable", reason={"code": "x"}
+                    ),
                 ),
             ),
             "duplicate",
@@ -271,7 +321,9 @@ def test_validate_input_rejects_scope_partition_duplicates_missing_unknown_and_c
                 context=context,
                 usable_results=(metric,),
                 unavailable_lenses=(
-                    UnavailableLens(lens_id="metric", lens_type="metric", reason={"code": "x"}),
+                    UnavailableLens(
+                        lens_id="metric", lens_type="metric", origin="caller_unavailable", reason={"code": "x"}
+                    ),
                 ),
             ),
             "overlap",
@@ -282,7 +334,9 @@ def test_validate_input_rejects_scope_partition_duplicates_missing_unknown_and_c
                 context=context,
                 usable_results=(metric,),
                 unavailable_lenses=(
-                    UnavailableLens(lens_id="other", lens_type="alert", reason={"code": "x"}),
+                    UnavailableLens(
+                        lens_id="other", lens_type="alert", origin="caller_unavailable", reason={"code": "x"}
+                    ),
                 ),
             ),
             "exactly partition",
@@ -297,6 +351,43 @@ def test_validate_input_rejects_scope_partition_duplicates_missing_unknown_and_c
                 context=context, usable_results=(other_metric,), unavailable_lenses=(unavailable,)
             )
         )
+
+
+def test_validate_input_uses_type_local_lens_identities() -> None:
+    """A Metric and Alert may share an ID without collapsing their identities."""
+    observation_id, run_id = uuid4(), uuid4()
+    metric_context = _metric_context(observation_id, run_id, lens_id="shared")
+    alert_context = _alert_context(observation_id, run_id, lens_id="shared")
+    metric_builder = MetricResultBuilder(clock=lambda: NOW)
+    metric, _ = metric_builder.completed_sufficient(
+        metric_context,
+        PreparedGoodSeries(
+            data_quality="good",
+            samples=(),
+            evidence=MetricEvidence(mean=1.0, std=0.0, min=1.0, max=1.0, slope=0.0),
+            residuals=(),
+        ),
+        MetricSemantics(
+            trend=MetricTrend(direction="stable", rate="not_classified"),
+            variability=MetricVariability(state="low"),
+        ),
+    )
+    alert, _ = AlertResultBuilder(clock=lambda: NOW).completed_zero(
+        alert_context, AlertMandatoryEvidence()
+    )
+    value = ObservationReasoningInput(
+        context=ObservationSemanticContext(
+            identity=ObservationIdentity(observation_id=observation_id, observation_run_id=run_id),
+            name="Observation",
+            lenses=(
+                ReasoningLens(lens_id="shared", lens_type="metric", name="Metric shared"),
+                ReasoningLens(lens_id="shared", lens_type="alert", name="Alert shared"),
+            ),
+        ),
+        usable_results=(metric, alert),
+    )
+
+    assert validate_input(value) is value
 
 
 def test_validate_input_preserves_order_and_rejects_duplicate_relationship_ids() -> None:
@@ -317,7 +408,7 @@ def test_validate_input_preserves_order_and_rejects_duplicate_relationship_ids()
         context=ObservationSemanticContext(
             identity=ObservationIdentity(observation_id=observation_id, observation_run_id=run_id),
             name="O",
-            lenses=(ReasoningLens(lens_id="metric", lens_type="metric"),),
+            lenses=(ReasoningLens(lens_id="metric", lens_type="metric", name="Metric"),),
         ),
         usable_results=(metric,),
         relationships=(relationship,),

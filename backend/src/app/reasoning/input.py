@@ -16,8 +16,8 @@ def validate_input(value: ObservationReasoningInput) -> ObservationReasoningInpu
     context = value.context
     if any(lens.lens_type == "log" for lens in context.lenses):
         raise ValueError("Log Lens contexts are not supported by Observation reasoning")
-    expected = {lens.lens_id: lens.lens_type for lens in context.lenses}
-    usable: dict[str, str] = {}
+    expected = {(lens.lens_type, lens.lens_id) for lens in context.lenses}
+    usable: set[tuple[str, str]] = set()
     for result in value.usable_results:
         identity = result.identity
         lens_type = result.lens_type
@@ -26,22 +26,20 @@ def validate_input(value: ObservationReasoningInput) -> ObservationReasoningInpu
             or identity.observation_run_id != context.identity.observation_run_id
         ):
             raise ValueError("usable result identity must match reasoning context")
-        if identity.lens_id in usable:
-            raise ValueError("usable results must not contain duplicate Lens ids")
-        usable[identity.lens_id] = lens_type
-    unavailable: dict[str, str] = {}
+        key = (lens_type, identity.lens_id)
+        if key in usable:
+            raise ValueError("usable results must not contain duplicate Lens identities")
+        usable.add(key)
+    unavailable: set[tuple[str, str]] = set()
     for item in value.unavailable_lenses:
-        if item.lens_id in unavailable:
-            raise ValueError("unavailable lenses must not contain duplicate Lens ids")
-        unavailable[item.lens_id] = item.lens_type
-    if set(usable) & set(unavailable):
+        key = (item.lens_type, item.lens_id)
+        if key in unavailable:
+            raise ValueError("unavailable lenses must not contain duplicate Lens identities")
+        unavailable.add(key)
+    if usable & unavailable:
         raise ValueError("usable and unavailable Lens collections must not overlap")
-    if set(usable) | set(unavailable) != set(expected):
+    if usable | unavailable != expected:
         raise ValueError("usable and unavailable collections must exactly partition context Lenses")
-    if any(
-        expected[lens_id] != lens_type for lens_id, lens_type in {**usable, **unavailable}.items()
-    ):
-        raise ValueError("Lens result type must match semantic context")
     if not usable:
         raise ValueError("Observation reasoning requires at least one usable result")
     if len({relationship.relationship_id for relationship in value.relationships}) != len(
@@ -58,6 +56,7 @@ def insufficient_metric_as_unavailable(
     return UnavailableLens(
         lens_id=result.identity.lens_id,
         lens_type="metric",
+        origin="completed_insufficient_metric",
         reason={"code": "insufficient_data"},
     )
 
@@ -65,17 +64,18 @@ def insufficient_metric_as_unavailable(
 def derive_limitations(value: ObservationReasoningInput):
     """Return deterministic availability limitations in semantic Lens order."""
     partials = {
-        item.identity.lens_id: item
+        (item.lens_type, item.identity.lens_id): item
         for item in value.usable_results
         if isinstance(item, (PartialMetricResult, PartialAlertAnalysisResult))
     }
-    unavailable = {item.lens_id: item for item in value.unavailable_lenses}
+    unavailable = {(item.lens_type, item.lens_id): item for item in value.unavailable_lenses}
     limitations = []
     for lens in value.context.lenses:
-        if lens.lens_id in unavailable:
+        identity = (lens.lens_type, lens.lens_id)
+        if identity in unavailable:
             code = (
                 "insufficient_lens_evidence"
-                if unavailable[lens.lens_id].reason.code == "insufficient_data"
+                if unavailable[identity].origin == "completed_insufficient_metric"
                 else "missing_lens_evidence"
             )
             limitations.append(
@@ -85,8 +85,8 @@ def derive_limitations(value: ObservationReasoningInput):
                     "lens_type": lens.lens_type,
                 }
             )
-        elif lens.lens_id in partials:
-            reason = partials[lens.lens_id].reason
+        elif identity in partials:
+            reason = partials[identity].reason
             limitations.append(
                 {
                     "code": "partial_lens_analysis",

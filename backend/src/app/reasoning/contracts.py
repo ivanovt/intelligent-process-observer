@@ -33,6 +33,7 @@ class ReasoningLens(StrictReasoningModel):
 
     lens_id: str = Field(min_length=1)
     lens_type: Literal["metric", "alert", "log"]
+    name: str = Field(min_length=1)
     description: str | None = None
     analysis_objectives: tuple[str, ...] = ()
 
@@ -48,8 +49,8 @@ class ObservationSemanticContext(StrictReasoningModel):
 
     @model_validator(mode="after")
     def unique_lenses(self) -> ObservationSemanticContext:
-        if len({lens.lens_id for lens in self.lenses}) != len(self.lenses):
-            raise ValueError("semantic context lens ids must be unique")
+        if len({(lens.lens_type, lens.lens_id) for lens in self.lenses}) != len(self.lenses):
+            raise ValueError("semantic context Lens identities must be unique")
         return self
 
 
@@ -58,7 +59,22 @@ class UnavailableLens(StrictReasoningModel):
 
     lens_id: str = Field(min_length=1)
     lens_type: Literal["metric", "alert"]
+    origin: Literal["caller_unavailable", "completed_insufficient_metric"]
     reason: StructuredReason
+
+    @model_validator(mode="after")
+    def validate_origin_reason(self) -> UnavailableLens:
+        """Restrict the deterministic insufficient-Metric unavailable value."""
+        if self.origin == "completed_insufficient_metric" and (
+            self.lens_type != "metric"
+            or self.reason.code != "insufficient_data"
+            or self.reason.component is not None
+        ):
+            raise ValueError(
+                "completed insufficient Metric unavailability requires metric "
+                "insufficient_data without a component"
+            )
+        return self
 
 
 UsableLensResult = (
