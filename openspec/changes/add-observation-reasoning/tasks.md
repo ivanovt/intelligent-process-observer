@@ -41,7 +41,7 @@
 - [x] 6.2 Add private OpenRouter settings for optional SecretStr credential, default model `openai/gpt-5.6-terra`, positive 120-second request timeout, positive 12,288 maximum completion tokens, fallback enabled by default, and ordered duplicate-free provider configuration; require exactly one provider when fallback is disabled without making unrelated application startup require a credential.
 - [x] 6.3 Implement native OpenRouterModel/OpenRouterProvider composition and inject the resulting model into all three Reasoning invocations, including configured provider order/fallback request policy and safe composition failure for missing credentials; add no preset, attribution, native web search, prompt cache, fallback-model list, or provider-specific domain contract.
 - [x] 6.4 Document the new environment variables with placeholders in `.env.example` and update focused development guidance for model switching, default routing, and strict one-provider pinning without committing a credential.
-- [ ] 6.5 Add settings/composition tests for defaults, arbitrary positive timeout/token overrides, model override, routing enabled with zero/multiple ordered providers, strict disabled-fallback validation, duplicate/blank provider rejection, missing/blank secret handling, exact provider policy projection, and secret absence from errors/representations.
+- [x] 6.5 Add settings/composition tests for defaults, arbitrary positive timeout/token overrides, model override, routing enabled with zero/multiple ordered providers, strict disabled-fallback validation, duplicate/blank provider rejection, missing/blank secret handling, exact provider policy projection, and secret absence from errors/representations.
 
 ## 7. Integration and Final Verification
 
