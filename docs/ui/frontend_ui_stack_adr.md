@@ -5,15 +5,7 @@
 
 ## Context
 
-UI Direction v1.0 is frozen. The frontend now needs a visual implementation stack that:
-
-- preserves the project-owned visual language instead of imposing a vendor design system;
-- supports desktop-first engineering dashboards;
-- supports reusable semantic components such as analytical-state badges, execution-state badges, Lens cards, Finding/Hypothesis cards, and traceability chips;
-- supports charts for Metric Lens views;
-- supports richer tables where sorting/filtering/pagination are actually needed;
-- remains mainstream, maintainable, and suitable for implementation by coding agents;
-- keeps domain semantics owned by the project rather than by third-party UI libraries.
+UI Direction v1.1 is frozen. The frontend needs a visual implementation stack that preserves the project-owned visual/domain language, supports desktop-first engineering dashboards and forms, and remains mainstream and maintainable.
 
 ## Decision
 
@@ -29,152 +21,49 @@ Recharts
 TanStack Table — only where advanced tabular behavior is required
 ```
 
-### Styling and design tokens
+Project-owned semantic design tokens use CSS custom properties integrated with Tailwind.
 
-Project-owned semantic design tokens will be implemented with:
+Third-party primitives do not own ObserveAI domain semantics. Project-owned components encapsulate analytical state, execution state, Lens configuration, findings/hypotheses, and traceability concepts.
 
-```text
-CSS custom properties
-+
-Tailwind theme integration
-```
+Observation Management UX introduced in UI Direction v1.1 uses the same stack and does not introduce a separate admin design system.
 
-The UI must avoid scattering raw visual values when those values have domain meaning.
+## Tables
 
-Examples of project-owned semantic tokens:
+TanStack Table is optional and should be used only when advanced sorting/filtering/pagination/column behavior is needed. Simple dashboard and Observation-management lists should remain lightweight project-owned components unless real requirements justify a table abstraction.
 
-```text
---background
---surface
---surface-muted
---border
---text-primary
---text-secondary
+## Charts
 
---state-no-findings
---state-uncertain
---state-significant
-
---execution-completed
---execution-partial
---execution-failed
-
---evidence
---relationship
---knowledge
-```
-
-### Project-owned semantic components
-
-Third-party libraries provide primitives and behavior, but the following remain project-owned UI components:
-
-```text
-AppShell
-PageHeader
-SummaryCard
-ObservationRow
-RecentRunsStrip
-
-AnalyticalStateBadge
-ExecutionStatusBadge
-
-LensCard
-FindingCard
-HypothesisCard
-
-EvidenceChip
-RelationshipChip
-KnowledgeChip
-```
-
-The exact list may grow during implementation, but domain semantics must remain encapsulated in project components.
-
-### Tables
-
-TanStack Table is not a mandatory dependency for every list.
-
-Use it only when advanced table behavior is needed, such as:
-
-```text
-sorting
-filtering
-pagination
-column visibility
-row selection
-large tabular datasets
-```
-
-Simple Overview lists/rows should remain project-owned layout components.
-
-### Charts
-
-Recharts is the default MVP visualization library for:
-
-```text
-metric time-series
-reference comparisons
-recent-run/history visualizations
-run activity charts
-```
-
-A future switch to a more specialized visualization engine is allowed if real requirements such as very large datasets, advanced zooming, heatmaps, or high-density engineering visualization emerge.
+Recharts is the default MVP visualization library for Metric time-series, simple comparisons/history, and run-activity charts. It remains replaceable behind project-owned chart components if future high-density engineering visualization requires a different engine.
 
 ## Alternatives considered
 
-### Material UI
-
-Not selected as the default frontend component system because the project already has a distinct visual language and would otherwise require substantial styling overrides of Material conventions.
-
-### Fully custom CSS/components
-
-Not selected because it would duplicate accessibility and interaction behavior already provided by mature headless primitives.
-
-### Apache ECharts
-
-Kept as a future visualization alternative for higher-density or more specialized engineering charts, but not selected for the MVP because the current visualization requirements are relatively conventional.
+- Material UI — not selected because the project already owns a distinct visual language and would require substantial visual overrides.
+- Fully custom primitives — not selected because mature headless primitives already solve interaction/accessibility concerns.
+- Apache ECharts — retained as a future alternative for denser/more specialized visualization, not needed for current MVP requirements.
 
 ## Consequences
 
-### Positive
+Positive:
 
-- high control over the frozen ObserveAI visual direction;
+- full control over the frozen ObserveAI visual direction;
 - mainstream React ecosystem;
-- reusable accessible primitives without adopting a foreign visual language;
-- coding agents can work with familiar declarative component patterns;
-- semantic state remains explicit in project-owned components;
-- design tokens can map directly from the frozen Design System;
-- visualization and table libraries can evolve independently from the rest of the UI.
+- reusable accessible primitives;
+- semantic design tokens and project-owned domain components;
+- chart/table libraries remain independently replaceable.
 
-### Trade-offs
+Trade-offs:
 
-- shadcn/ui components are project-owned copies, so maintenance remains our responsibility;
-- a consistent component layer must be enforced to avoid arbitrary Tailwind styling across screens;
-- Recharts may eventually be insufficient for very large or highly interactive engineering datasets;
-- TanStack Table adds complexity and must not be introduced where a simpler layout is sufficient.
+- generated shadcn components remain project-owned and require maintenance;
+- consistent component discipline is required to avoid arbitrary one-off Tailwind styling;
+- Recharts may be insufficient for future high-density engineering datasets;
+- TanStack Table adds complexity and should not be used by default.
 
 ## Scope
 
-This decision fixes the MVP frontend visual implementation stack.
-
-It does **not** yet define:
-
-- exact component folder structure;
-- exact token names/values beyond the semantic direction;
-- exact responsive breakpoints;
-- frontend state-management strategy;
-- data-fetching/cache strategy;
-- router choice;
-- form-state library;
-- testing-library choices;
-- final chart interaction behavior;
-- dark-mode support.
-
-Those remain separate implementation decisions.
+This decision fixes the MVP frontend visual implementation stack. It does not yet fix routing, global client-state management, data-fetching/cache strategy, forms library, test stack, dark mode, or final responsive breakpoint details.
 
 ## Implementation rule
 
-The frozen UI Direction v1.0 remains the visual source of truth.
+**UI Direction v1.1 is the frozen visual/UX source of truth.**
 
-Third-party libraries must adapt to the design; the design must not be rewritten to match library defaults.
-
-Analytical state, execution state, evidence, relationships, and knowledge references must remain separate semantic concepts in the UI.
+Third-party libraries must adapt to the design; the design must not be rewritten to match library defaults. Domain semantics and backend lifecycle ownership remain governed by accepted architecture/contracts.

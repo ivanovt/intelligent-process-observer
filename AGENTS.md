@@ -264,7 +264,9 @@ Before planning, implementing, or reviewing frontend/UI changes, read:
 
 ### Frozen UI direction
 
-UI Direction v1.0 is frozen.
+UI Direction v1.1 is frozen. The MagicPath project referenced from
+`docs/ui/README.md` is the visual/UX source of truth; accepted architecture/contracts
+remain authoritative for domain and API semantics.
 
 Do not silently change:
 
@@ -273,10 +275,78 @@ Do not silently change:
 - analytical-state semantics;
 - execution-state semantics;
 - finding vs hypothesis semantics;
-- evidence vs knowledge semantics.
+- evidence vs knowledge semantics;
+- Observation aggregate ownership;
+- Lens standalone-resource semantics;
+- Metric-only Relationship boundaries;
+- selector “which” vs runtime “when” semantics.
 
 Minor technical adjustments for accessibility, responsive fit, browser behavior,
-or real data length are allowed when they preserve the accepted semantics.
+real data length, or actual API constraints are allowed when they preserve the accepted
+semantics.
+
+### Observation Management draft semantics
+
+Observation creation is aggregate-oriented. Nested Metric Lens, Alert Lens, and
+Relationship editors modify a client-side Observation draft.
+
+`Apply changes` in a nested editor means:
+
+```text
+validate nested editor state
+-> apply it to the Observation draft
+-> return to Create Observation
+```
+
+It does **not** mean standalone backend persistence of a Lens or Relationship.
+
+Only the final `Create Observation` action submits the validated Observation Definition
+through the supported aggregate API.
+
+Do not invent standalone Metric/Alert Lens CRUD endpoints or Observation update/delete
+capabilities to match the UI.
+
+### Configuration boundaries
+
+- One Metric Lens observes one metric.
+- Metric and Alert `analysis_objectives` are ordered, duplicate-free, non-empty free-text
+  intent strings and are edited inline; they are not tool selectors.
+- Reference periods and persisted Metric Lens history are separate concepts.
+- Alert `selector.query` is opaque provider-native input. The UI must not parse,
+  normalize, rewrite, or automatically add time/lifecycle-status predicates.
+- Alert selector defines **which** alerts; LensRun/runtime defines **when** they are
+  observed.
+- Alert Lens remains an owned child of Observation Definition; its editor does not imply
+  standalone resource lifecycle.
+- Relationships are Metric-only for MVP, use 2..N participants, and expose only accepted
+  current-state property vocabulary.
+- Do not build a generic free-form Relationship rule DSL.
+
+The current public Metric Lens API still restricts `analysis_objectives` to
+`spike | drift | oscillation`. Until that contract is explicitly changed, the Metric
+editor must not submit arbitrary objective strings; treat free-text support as a backend
+dependency. Alert Lens objectives already support opaque non-whitespace strings.
+
+### Scope guardrails for `add-observation-management-ui`
+
+The first UI feature may establish only the reusable frontend foundations required by
+Observation Management. Do not silently expand it to implement the full
+monitoring/run-analysis UI.
+
+Keep out of scope unless explicitly supported and requested:
+
+```text
+Observation update/delete UI
+standalone Lens CRUD
+Log Lens configuration
+runtime relationship discovery
+Alert visual query rewriting/builder semantics
+agent/model/prompt/tool-budget configuration
+new severity/confidence/recommendation semantics
+```
+
+When a frozen mock control is not supported by the current API contract, omit/disable it
+or report the backend dependency explicitly rather than inventing backend behavior.
 
 ### Accepted frontend visual stack
 

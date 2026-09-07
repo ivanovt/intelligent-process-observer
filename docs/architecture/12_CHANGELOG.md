@@ -12,8 +12,11 @@
 - external cancellation API/trigger остава Open; cancellation не стартира automatic retry.
 - added ADR-166, selecting the MVP frontend visual stack while keeping design tokens
   and domain-semantic UI components project-owned;
-- established the frozen UI Direction v1.0 and `docs/ui/` as the frontend
-  presentation and implementation reference without redefining analytical contracts.
+- established the frozen UI Direction v1.1 and `docs/ui/` as the frontend
+  presentation and implementation reference without redefining analytical contracts;
+- extended the UI handoff with Observation Management screens, client-side aggregate
+  draft semantics, Metric/Alert Lens editors, Relationship configuration, and explicit
+  unsupported-API guardrails.
 
 ## 6.4 — 2026-08-31
 

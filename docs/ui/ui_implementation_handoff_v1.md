@@ -1,14 +1,14 @@
-# UI Implementation Handoff — v1.0
+# UI Implementation Handoff — v1.1
 
 **Project:** ObserveAI / Master Thesis
-**Status:** Working implementation handoff based on frozen UI Direction v1.0
+**Status:** Frozen implementation handoff for MVP UI Direction v1.1
 **Date:** 2026-09-07
 
 ## 1. Purpose
 
 This document translates the frozen UI direction into implementation-oriented rules for the MVP frontend.
 
-The frontend must preserve the architecture's semantic boundaries and must not invent new product-level classifications.
+UI Direction v1.1 includes both the original monitoring/investigation experience and the Observation Management configuration UX. The frontend must preserve the architecture's semantic boundaries and must not invent new product-level classifications, lifecycle semantics, or administrative capabilities that are not supported by accepted backend contracts.
 
 ## 2. Accepted frontend visual stack
 
@@ -25,12 +25,25 @@ TanStack Table — only where advanced tabular behavior is required
 Styling foundation:
 
 ```text
-CSS custom properties
-+
-Tailwind theme integration
+CSS custom properties + Tailwind theme integration
 ```
 
-## 3. Screen set — v1
+Third-party libraries provide primitives. Product/domain semantics remain project-owned.
+
+## 3. Visual source of truth
+
+Frozen MagicPath project:
+
+```text
+Observation UI - Master Thesis
+https://magicpath.ai/files/447597481925181440
+```
+
+The mock is a visual/UX reference, not permission to invent API fields or backend lifecycle operations. Accepted architecture/contracts remain authoritative for domain semantics.
+
+## 4. Screen set — v1.1
+
+### Monitoring and investigation
 
 ```text
 00 Design System
@@ -44,13 +57,21 @@ Tailwind theme integration
 08 Report
 ```
 
+### Observation Management
+
+```text
+09 Observations Management
+10 Create Observation
+11 Relationship Configuration
+12 Metric Lens Configuration
+13 Alert Lens Configuration
+```
+
 `00 Design System` is documentation/reference, not an application route.
 
-## 4. Core semantic rules
+## 5. Core semantic rules
 
-### 4.1 Analytical state
-
-Observation-level analytical state:
+### Analytical state
 
 ```text
 no_significant_findings
@@ -66,7 +87,7 @@ Uncertain
 Significant findings present
 ```
 
-Suggested visual semantics:
+Suggested scan colors:
 
 ```text
 green  -> no_significant_findings
@@ -74,11 +95,9 @@ amber  -> uncertain
 red    -> significant_findings_present
 ```
 
-Color is a scan aid only; text must always be present.
+Always pair color with text.
 
-### 4.2 Execution state
-
-Execution state is separate from analytical state:
+### Execution state
 
 ```text
 completed
@@ -86,43 +105,22 @@ partial
 failed
 ```
 
-A failed execution means unavailable analytical evidence, not a detected anomaly.
+Execution state is independent from analytical state. A failed execution means unavailable analytical evidence, not a detected anomaly.
 
-### 4.3 Evidence vs knowledge
-
-The UI must visually separate:
+### Findings, hypotheses and traceability
 
 ```text
-Evidence reference
-Relationship reference
-Knowledge reference
+Finding = evidence-grounded Observation-level conclusion
+Hypothesis = possible explanation supported by finding(s) + knowledge reference(s)
 ```
 
-Observation findings are supported by observational Lens/Relationship evidence.
+Visually distinguish Evidence, Relationship and Knowledge references. Never present a hypothesis as a confirmed root cause.
 
-Hypotheses may additionally use external knowledge references.
+### Report
 
-### 4.4 Findings vs hypotheses
+The Report screen is presentation-only. It must not introduce new findings, hypotheses, recommendations or analytical state.
 
-```text
-Finding
-= evidence-grounded observation-level conclusion
-
-Hypothesis
-= possible explanation supported by finding(s) + knowledge reference(s)
-```
-
-The UI must not present a hypothesis as a confirmed root cause.
-
-### 4.5 Report
-
-The Report screen is presentation-only.
-
-It presents the accepted Observation analysis and does not create new findings, hypotheses, recommendations, or analytical state.
-
-## 5. Design tokens
-
-Exact values should be consolidated during implementation from the frozen mock.
+## 6. Design-token direction
 
 Minimum semantic token groups:
 
@@ -149,21 +147,9 @@ radius.*
 typography.*
 ```
 
-Avoid repeated raw Tailwind colors for domain semantics.
+Avoid scattering raw Tailwind colors for domain semantics. Prefer project-owned semantic components such as `AnalyticalStateBadge` and `ExecutionStatusBadge`.
 
-Bad:
-
-```tsx
-<span className="text-red-500 border-red-500">
-```
-
-Preferred:
-
-```tsx
-<AnalyticalStateBadge state="significant_findings_present" />
-```
-
-## 6. Project-owned component vocabulary
+## 7. Project-owned component vocabulary
 
 ### Shell
 
@@ -182,7 +168,6 @@ AnalyticalStateBadge
 ExecutionStatusBadge
 DataQualityBadge
 ImportanceBadge
-
 EvidenceChip
 RelationshipChip
 KnowledgeChip
@@ -194,13 +179,27 @@ KnowledgeChip
 SummaryCard
 ObservationRow
 RecentRunsStrip
-
 LensCard
 FindingCard
 HypothesisCard
 RelationshipEvaluationCard
 LimitationNotice
 ```
+
+### Configuration
+
+```text
+ConfigurationSection
+DefinitionSummary
+AnalysisObjectivesField
+ReferencePeriodsField
+MetricLensEditor
+AlertLensEditor
+RelationshipEditor
+ParticipantSelector
+```
+
+`AnalysisObjectivesField` should be shared by Metric and Alert Lens editors.
 
 ### Visualization
 
@@ -209,13 +208,11 @@ MetricTimeSeriesChart
 RunActivityChart
 ```
 
-## 7. Screen implementation contracts
+## 8. Monitoring screen contracts
 
-### 7.1 Overview
+### Overview
 
-Purpose:
-
-> What needs my attention right now?
+Purpose: quickly identify what needs attention.
 
 Required areas:
 
@@ -227,46 +224,13 @@ Recent Findings
 Run Activity
 ```
 
-Observation row fields:
+Observation rows show name, description, latest run time, latest analytical state, latest execution state, duration and approximately the latest 7 run states.
 
-```text
-name
-description
-latest run time
-latest analytical state
-latest execution state
-duration
-recent run history
-```
+### Observation Detail
 
-Recent run history should show approximately the latest 7 runs.
+Show Observation identity, Run Observation action, latest run summary, Metric Lens definitions, Alert Lens definitions and Relationships.
 
-Do not use TanStack Table unless richer table behavior becomes necessary.
-
-### 7.2 Observation Detail
-
-Purpose:
-
-> What is this Observation, how is it configured, and what happened recently?
-
-Required areas:
-
-```text
-Observation identity
-Run Observation action
-Latest run summary
-Metric lenses
-Alert lenses
-Relationships
-```
-
-The page describes the Observation definition and recent execution context; it is not the analytical run-detail screen.
-
-### 7.3 Observation Run Summary
-
-Purpose:
-
-> What happened during this execution, and where should I investigate next?
+### Observation Run Summary
 
 Required areas:
 
@@ -279,7 +243,7 @@ Relationships
 Possible Explanation
 ```
 
-Navigation:
+Run navigation:
 
 ```text
 Summary
@@ -290,23 +254,11 @@ Analysis
 Report
 ```
 
-### 7.4 Metric Lens Detail
+### Metric Lens Detail
 
-Purpose:
+Keep current-state evidence, reference periods and persisted run history visually separate.
 
-> What evidence supports the Metric Lens result?
-
-Required areas:
-
-```text
-Current window chart
-Current analytical state
-Reference periods
-Persisted run history
-Optional analyses
-```
-
-Current numerical evidence should include at least:
+Current numerical evidence includes at least:
 
 ```text
 mean
@@ -316,7 +268,7 @@ max
 slope
 ```
 
-Current semantic state should expose:
+Current semantic state includes:
 
 ```text
 trend.direction
@@ -324,193 +276,276 @@ trend.rate
 variability.state
 ```
 
-Reference periods and persisted history are distinct concepts and must remain visually separate.
+### Alert Lens Detail
 
-### 7.5 Alert Lens Detail
+Show current alert summary, current alerts, Lens-local findings, reference periods and analysis boundary.
 
-Purpose:
+`provider importance` and Alert Lens `overall_importance` are not Observation analytical state.
 
-> What alert activity and Lens-local findings were observed?
+### Relationships
+
+Keep applicability separate from evaluation state:
+
+```text
+applicability: applicable | not_applicable | unknown
+state when applicable: consistent | inconsistent | uncertain
+```
+
+Show conditions, expectations, observed values, match/mismatch and evaluation chain.
+
+### Observation Analysis
+
+Show evidence coverage, Relationship evidence, limitations, findings, possible explanations and traceability.
+
+### Report
+
+Presentation-focused document view with Copy Markdown / Export actions.
+
+## 9. Observation Management UX
+
+### Product placement
+
+Observation management is part of the existing `Observations` product area. Do not introduce a separate Admin application or top-level Admin navigation area for MVP.
+
+Conceptual flow:
+
+```text
+Observations Management
+        ↓
+Create Observation
+        ├─ Metric Lens Configuration
+        ├─ Alert Lens Configuration
+        └─ Relationship Configuration
+        ↓
+Review / validate aggregate
+        ↓
+Create Observation
+```
+
+### Observations Management
+
+Purpose: find existing Observation definitions, inspect their latest runtime state, or start creating a new Observation.
 
 Required areas:
 
 ```text
-Current alert summary
-Current alerts
-Lens findings
+Page header
+New Observation action
+Search
+Optional latest-state/execution filters
+Observation definitions list
+```
+
+Rows may show definition composition, latest run timestamp, latest analytical state, latest execution state and Open action.
+
+MVP boundary:
+
+```text
+Create and inspect are allowed.
+Edit/Delete controls remain hidden until the corresponding API lifecycle is explicitly supported.
+```
+
+Do not invent Observation update/delete endpoints from the UI.
+
+### Create Observation
+
+Build one Observation Definition as a single validated aggregate.
+
+Sections:
+
+```text
+General
+Metric lenses
+Alert lenses
+Relationships
+Review
+```
+
+Maintain a local/client-side Observation draft until final `Create Observation` submission. Nested Lens/Relationship editors modify the draft only.
+
+At least one Lens must be configured overall.
+
+### Draft / nested-editor semantics
+
+```text
+Open nested editor
+    ↓
+change Lens/Relationship values
+    ↓
+Apply changes
+    ↓
+update Observation draft
+    ↓
+return to Create Observation
+```
+
+`Apply changes` is **not** a standalone backend persistence operation.
+
+Do not implement standalone Lens persistence merely because a nested editor has its own screen.
+
+### Metric Lens Configuration
+
+One Metric Lens observes exactly one metric.
+
+Keep these areas distinct:
+
+```text
+Lens identity
+Metric reference / unit
+Analysis objectives
 Reference periods
-Analysis boundary
+Persisted-history policy (only where supported by current public config/API)
 ```
 
-Important:
+`analysis_objectives` UX:
 
 ```text
-provider importance != Observation analytical state
-Alert Lens overall importance != Observation analytical state
+ordered free-text list
+inline add/edit/remove
+non-empty values
+exact duplicates rejected
+no controlled vocabulary
+no priority
+no tool-selection semantics
 ```
 
-The screen must not imply system-level root cause.
+Target UI Direction v1.1 treats Metric objectives as free-text intent. The current
+public Metric Lens API accepts only `spike`, `drift`, and `oscillation`. Until that
+contract is explicitly changed, the Metric editor must constrain submitted values to
+the accepted vocabulary or report free-text support as a backend dependency. Do not
+silently send unsupported values.
 
-### 7.6 Relationships
+`+ Add objective` inserts a new inline input. No separate objective screen/modal.
 
-Purpose:
+Do not expose analyzer/tool toggles unless a future accepted contract explicitly introduces them.
 
-> Which deterministic expected-behavior rules were applicable, and were they consistent?
+Reference periods and persisted history are separate temporal concepts.
 
-Required states:
+Primary nested-editor action: `Apply changes`.
+
+### Alert Lens Configuration
+
+Drive the form from the accepted Alert Lens contract, including:
 
 ```text
-applicability:
-  applicable
-  not_applicable
-  unknown
-
-state when applicable:
-  consistent
-  inconsistent
-  uncertain
+id
+type = alert
+name
+description (optional)
+source
+selector.query
+analysis_objectives[]
+reference_periods[]
 ```
 
-The UI must not merge applicability and state into one generic status.
-
-Show:
+Core UX rule:
 
 ```text
-Conditions
-Expectation
-Observed values
-Match/mismatch
-Evaluation chain
+selector = which alerts
+LensRun/runtime = when they are observed
 ```
 
-### 7.7 Observation Analysis
+The selector is opaque provider-native input. The UI must not parse/rewrite it, add lifecycle-status filters automatically, or encode runtime time windows into it.
 
-Purpose:
+Use the same inline `AnalysisObjectivesField` as Metric Lens.
 
-> What did the system conclude from all usable evidence?
+Primary nested-editor action: `Apply changes`.
 
-Required areas:
+Alert Lens remains an owned child of Observation Definition. Do not imply standalone Alert Lens CRUD/resource lifecycle.
+
+### Relationship Configuration
+
+Relationships are engineer-defined deterministic qualitative rules over Metric Lens current-state descriptors.
+
+MVP boundary:
 
 ```text
-Evidence coverage
-Relationship evidence
-Analysis limitations
-Findings
-Possible explanations
-Traceability
+Metric Lens participants only
+2..N participants
+current_state properties only
 ```
 
-Traceability direction:
+Editor structure:
 
 ```text
-Lens / Relationship evidence
-        -> Finding
-        -> Hypothesis
-        <- Knowledge reference
+Relationship identity
+Participants
+When — conditions
+Expect — expectations
 ```
 
-### 7.8 Report
+Provide `+ Add participant` because the model is 2..N.
 
-Purpose:
-
-> Present the accepted analysis in a human-readable format.
-
-Required actions:
+Allowed properties come from the accepted explicit relationship vocabulary, for example:
 
 ```text
-Copy Markdown
-Export
+trend.direction
+trend.rate
+variability.state
 ```
 
-The screen should visually resemble a report/document more than an analytical dashboard.
+Do not implement a generic free-form expression/rule builder.
 
-## 8. Library usage guidance
+Conditions determine applicability; expectations are evaluated only when applicable.
 
-### shadcn/ui / Base UI
+## 10. Form interaction rules
 
-Use for behavior/accessibility primitives:
+### Analysis objectives
+
+Use a shared inline pattern:
 
 ```text
-Tabs
-Tooltip
-Popover
-Dialog
-Dropdown
-Select
+Analysis objectives
+helper text
+objective row [text] [remove]
++ Add objective
 ```
 
-Project styling remains authoritative.
+No objective route or modal is needed.
 
-### Lucide React
+### Reference periods
 
-Use for application icons.
+Use repeatable compact values/rows. Reject duplicates and invalid offsets according to the actual domain contract.
 
-Do not use arbitrary mixed icon sets.
+### Validation
 
-### Recharts
+Prefer local field validation plus aggregate-level review before final create.
 
-Use for:
+Do not expose prompts, agent models, tool-call budgets, orchestration internals or backend implementation details as user configuration.
 
-```text
-Metric time series
-Run activity
-Simple comparative/history charts
-```
+## 11. Library usage
 
-Do not expose the chart library API directly across feature code; wrap charts in project components.
+- shadcn/ui / Base UI: interaction/accessibility primitives such as Tabs, Tooltip, Popover, Dialog, Dropdown and Select.
+- Lucide React: application icons; avoid mixed icon sets.
+- Recharts: wrapped in project-owned chart components.
+- TanStack Table: only when advanced sorting/filtering/pagination/column behavior is genuinely needed; simple dashboard/management rows should stay lightweight.
 
-### TanStack Table
+## 12. Empty / partial / failed state rules
 
-Use only for genuinely advanced tabular screens such as future Runs listings when sorting/filtering/pagination become necessary.
+Empty state explains absence without implying normality.
 
-## 9. Empty / partial / failed state rules
+Partial state shows usable evidence plus explicit limitation.
 
-### Empty
+Failed state means evidence unavailable. Never map failed execution to a red analytical-state badge.
 
-Explain absence without implying normality.
-
-Example:
-
-```text
-No findings were produced for this run.
-```
-
-Avoid:
-
-```text
-Everything is normal.
-```
-
-unless such a conclusion is explicitly present in the analytical result.
-
-### Partial
-
-Show usable evidence plus an explicit limitation.
-
-### Failed
-
-Show execution failure / evidence unavailable.
-
-Never map failed execution to a red analytical-state badge.
-
-## 10. Recommended frontend folder direction
-
-Example only; exact repository fit may vary:
+## 13. Recommended frontend folder direction
 
 ```text
 src/
   app/
   components/
-    ui/                 # shadcn-generated low-level primitives
+    ui/
     domain/
       observation/
       lens/
       analysis/
       traceability/
+      configuration/
     charts/
   features/
     overview/
     observations/
+    observation-management/
     observation-runs/
     metrics/
     alerts/
@@ -521,60 +556,45 @@ src/
   lib/
 ```
 
-Rule:
+`components/ui` = generic primitive layer.
+`components/domain` = ObserveAI semantic component layer.
+`features` = screen/use-case composition.
+
+## 14. Implementation sequence
 
 ```text
-components/ui
-= generic primitive layer
-
-components/domain
-= ObserveAI semantic component layer
-
-features
-= screen/use-case composition
-```
-
-## 11. Implementation sequence
-
-Recommended order:
-
-```text
-1. Foundations / tokens
+1. Frontend foundations / tokens
 2. App shell + navigation
 3. Semantic badges/chips
-4. Overview
-5. Observation Detail
-6. Observation Run Summary
-7. Metric Lens Detail
-8. Alert Lens Detail
-9. Relationships
-10. Observation Analysis
-11. Report
+4. Observation Management flow (first roadmap UI feature)
+5. Overview
+6. Observation Detail
+7. Observation Run Summary
+8. Metric Lens Detail
+9. Alert Lens Detail
+10. Relationships
+11. Observation Analysis
+12. Report
 ```
 
-The first production screen should reuse semantic primitives rather than introduce one-off styling.
+If `add-observation-management-ui` is the first frontend OpenSpec change, it may establish the minimum reusable frontend foundations needed by that feature. Do not expand it into implementation of the entire monitoring UI.
 
-## 12. Freeze rule
+## 15. Freeze rule
 
-UI Direction v1.0 is frozen.
+**UI Direction v1.1 is frozen.**
 
-Implementation may make minor technical adjustments for:
-
-```text
-responsive fit
-accessibility
-browser behavior
-real data length
-```
-
-but must not silently change:
+Implementation may make minor technical adjustments for responsive fit, accessibility, browser behavior, real data length and actual API constraints, but must not silently change:
 
 ```text
 information architecture
-domain terminology
+product terminology
 analytical/execution semantics
 finding/hypothesis boundary
 evidence/knowledge boundary
+Observation aggregate ownership
+Lens standalone-resource semantics
+Metric-only Relationship boundary
+selector "which" vs runtime "when" semantics
 ```
 
-A meaningful visual or semantic change requires an explicit v1.x/v2 decision rather than an incidental implementation deviation.
+Meaningful visual, UX or semantic changes require an explicit versioned decision rather than incidental implementation deviation.

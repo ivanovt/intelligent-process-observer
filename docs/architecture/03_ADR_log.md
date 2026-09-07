@@ -3079,9 +3079,9 @@ ADR-164 и създава нов runtime aggregate.
 **Status:** Accepted
 
 **Context**
-UI Direction v1.0 is frozen and requires an implementation stack that
-preserves project-owned visual and domain semantics without imposing
-an external design language.
+UI Direction v1.1 is frozen and requires an implementation stack that preserves
+project-owned visual and domain semantics, supports desktop-first engineering
+dashboards and forms, and does not impose an external design language.
 
 **Decision**
 For the MVP frontend visual layer use:
@@ -3096,13 +3096,17 @@ For the MVP frontend visual layer use:
 
 Design tokens and domain-semantic UI components remain project-owned.
 
+Observation Management introduced in UI Direction v1.1 uses the same visual stack and
+does not introduce a separate admin design system. Accepted architecture and contracts
+remain authoritative for aggregate ownership, API, and runtime semantics.
+
 The detailed decision and implementation guidance live in
 `docs/ui/frontend_ui_stack_adr.md` and the supporting documents under `docs/ui/`.
 
 **Consequences**
 - third-party libraries provide primitives rather than product semantics;
 - analytical and execution states remain separate;
-- the frozen UI direction remains the visual source of truth;
+- frozen UI Direction v1.1 remains the visual/UX source of truth;
 - future replacement of chart/table libraries does not redefine domain contracts.
 
 ---

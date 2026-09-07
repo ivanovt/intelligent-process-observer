@@ -1,32 +1,47 @@
 # UI Documentation
 
-This directory contains the frozen UI direction and implementation guidance for the MVP frontend.
+This directory contains the frozen UI direction, frontend technology decision, and implementation guidance for the MVP frontend.
 
 ## Files
 
 - `frontend_ui_stack_adr.md` — accepted frontend visual technology stack and related trade-offs.
-- `ui_implementation_handoff_v1.md` — implementation-oriented UI specification, including screen contracts, semantic rules, design tokens, reusable components, and library usage guidance.
+- `ui_implementation_handoff_v1.md` — frozen implementation-oriented UI specification covering monitoring/investigation and Observation Management UX.
 
 ## Status
 
-**UI Direction v1.0 is frozen.**
+**UI Direction v1.1 is frozen.**
 
-The current implementation should preserve the accepted information architecture, terminology, analytical/execution-state semantics, and evidence/knowledge boundaries.
+v1.1 extends the original monitoring/investigation direction with Observation Management:
 
-Minor implementation adjustments are allowed for technical reasons such as responsive fit, accessibility, browser behavior, and real data length. Meaningful visual or semantic changes should be handled explicitly as a new UI version rather than introduced silently during implementation.
+```text
+09 Observations Management
+10 Create Observation
+11 Relationship Configuration
+12 Metric Lens Configuration
+13 Alert Lens Configuration
+```
+
+The implementation must preserve accepted information architecture, terminology, analytical/execution semantics, aggregate ownership, Lens configuration boundaries, and evidence/knowledge boundaries.
+
+Minor implementation adjustments are allowed for responsive fit, accessibility, browser behavior, real data length, and actual API constraints. Meaningful visual, UX, or semantic changes require an explicit UI version change.
 
 ## Source of truth
 
-The visual reference is the frozen MagicPath design.
+Frozen MagicPath visual reference:
 
-The Markdown files in this directory are the implementation handoff and decision record used by planning, implementation, and review agents.
+```text
+Observation UI - Master Thesis
+https://magicpath.ai/files/447597481925181440
+```
+
+Accepted domain/runtime contracts under `docs/architecture/` remain authoritative for backend/domain semantics.
 
 ## Usage
 
-Before planning or implementing a frontend change, read:
+Before planning, implementing, or reviewing a frontend change, read:
 
 1. `frontend_ui_stack_adr.md`
 2. `ui_implementation_handoff_v1.md`
-3. the relevant architecture/contracts under `docs/architecture/`
+3. relevant architecture/contracts under `docs/architecture/`
 
-Frontend features should be implemented incrementally and reuse the project-owned semantic component layer rather than introducing one-off styling or new domain semantics.
+For Observation Management, preserve the draft/aggregate workflow: nested Metric Lens, Alert Lens, and Relationship editors apply changes to the Observation draft; only the final `Create Observation` action submits the validated aggregate.
