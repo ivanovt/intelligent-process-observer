@@ -45,6 +45,9 @@ class RecordingSession:
     async def flush(self) -> None:
         return None
 
+    async def refresh(self, _instance, **_kwargs) -> None:
+        return None
+
     async def scalar(self, _statement) -> None:
         return None
 
@@ -449,6 +452,31 @@ def test_cancelled_lens_run_rejects_result_attachment() -> None:
         run(
             repository.persist_lens_analysis_result(
                 RecordingSession(), lens_run, result_input(lens_run, LensRunStatus.COMPLETED)
+            )
+        )
+
+
+def test_result_attachment_refreshes_the_durable_lens_lifecycle_state() -> None:
+    class CancellationRefreshingSession(RecordingSession):
+        async def refresh(self, instance, **kwargs) -> None:
+            assert kwargs == {
+                "attribute_names": ["status", "reason"],
+                "with_for_update": True,
+            }
+            instance.status = LensRunStatus.CANCELLED.value
+            instance.reason = {"code": "execution_cancelled", "component": None}
+
+    repository = RuntimePersistenceRepository()
+    observation_run = pending_observation_run()
+    lens_run = pending_lens_run(observation_run, LensType.METRIC)
+    lens_run.status = LensRunStatus.COMPLETED.value
+
+    with pytest.raises(ValueError, match="Cancelled LensRun"):
+        run(
+            repository.persist_lens_analysis_result(
+                CancellationRefreshingSession(),
+                lens_run,
+                result_input(lens_run, LensRunStatus.COMPLETED),
             )
         )
 

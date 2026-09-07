@@ -403,6 +403,11 @@ class RuntimePersistenceRepository:
                     ObservationRunModel.id == lens_run.observation_run_id
                 )
             )
+        await session.refresh(
+            lens_run,
+            attribute_names=["status", "reason"],
+            with_for_update=True,
+        )
         self._validate_lens_result(lens_run, observation_run, result)
         existing_result = await session.scalar(
             select(LensAnalysisResultModel.id).where(
