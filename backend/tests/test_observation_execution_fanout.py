@@ -19,7 +19,12 @@ from app.execution import (
     verify_and_partition_lens_outcomes,
 )
 from app.infrastructure.persistence.models import LensRunModel
-from app.infrastructure.persistence.runtime_contracts import LensRunStatus
+from app.infrastructure.persistence.runtime_contracts import (
+    LensAnalysisResultInput,
+    LensResultIdentity,
+    LensRunStatus,
+    LensType,
+)
 from app.metrics.contracts import MetricLensExecutionContext, MetricMandatoryAnalysisFailure
 from app.metrics.result_builder import MetricResultBuilder
 
@@ -65,17 +70,36 @@ class Factory:
         *,
         first_commit_gate: asyncio.Event | None = None,
         first_exit_error: BaseException | None = None,
+        later_commit_gate: asyncio.Event | None = None,
+        later_exit_error: BaseException | None = None,
+        later_transaction_index: int | None = None,
     ) -> None:
         self.runs = runs
         self.first_commit_gate = first_commit_gate
         self.first_exit_error = first_exit_error
+        self.later_commit_gate = later_commit_gate
+        self.later_exit_error = later_exit_error
+        self.later_transaction_index = later_transaction_index
         self.transactions: list[Transaction] = []
 
     def begin(self) -> Transaction:
+        index = len(self.transactions)
         transaction = Transaction(
             Session(self.runs),
-            commit_gate=self.first_commit_gate if not self.transactions else None,
-            exit_error=self.first_exit_error if not self.transactions else None,
+            commit_gate=(
+                self.first_commit_gate
+                if index == 0
+                else self.later_commit_gate
+                if index == self.later_transaction_index
+                else None
+            ),
+            exit_error=(
+                self.first_exit_error
+                if index == 0
+                else self.later_exit_error
+                if index == self.later_transaction_index
+                else None
+            ),
         )
         self.transactions.append(transaction)
         return transaction
@@ -115,6 +139,31 @@ class Adapter:
         finally:
             self.active -= 1
         return _metric_outcome(assignment, "completed", "good")
+
+
+class InfrastructureFailingAdapter(Adapter):
+    """Raise one exact infrastructure error after a sibling has begun work."""
+
+    def __init__(
+        self,
+        *,
+        failing_lens_run_id: object,
+        sibling_started: asyncio.Event,
+        error: BaseException,
+    ) -> None:
+        super().__init__()
+        self.failing_lens_run_id = failing_lens_run_id
+        self.sibling_started = sibling_started
+        self.error = error
+
+    async def execute(
+        self, assignment: LensExecutionAssignment, policy: ExecutionPolicy
+    ) -> CollectedLensOutcome:
+        if assignment.lens_run_id != self.failing_lens_run_id:
+            return await super().execute(assignment, policy)
+        self.started.append(assignment.lens_run_id)
+        await self.sibling_started.wait()
+        raise self.error
 
 
 def test_fan_out_uses_fixed_work_conserving_workers_and_canonical_result_order() -> None:
@@ -208,6 +257,74 @@ def test_fan_out_settles_active_siblings_after_admission_commit_failure() -> Non
     assert assignments[2].lens_run_id not in adapter.started
 
 
+def test_fan_out_settles_siblings_after_adapter_infrastructure_error() -> None:
+    assignments = tuple(_metric_assignment(str(index)) for index in range(3))
+    runs = {assignment.lens_run_id: _run(assignment) for assignment in assignments}
+    sibling_started = asyncio.Event()
+    error = RuntimeError("adapter infrastructure failed")
+    adapter = InfrastructureFailingAdapter(
+        failing_lens_run_id=assignments[0].lens_run_id,
+        sibling_started=sibling_started,
+        error=error,
+    )
+    adapter.on_started = sibling_started
+    factory = Factory(runs)
+
+    async def exercise() -> None:
+        with pytest.raises(RuntimeError) as caught:
+            await fan_out_lens_runs(
+                session_factory=factory,
+                runtime_repository=Repository(),  # type: ignore[arg-type]
+                adapter=adapter,
+                assignments=assignments,
+                policy=ExecutionPolicy(max_parallel_lens_runs=2, lens_deadline_seconds=1),
+            )
+        assert caught.value is error
+
+    asyncio.run(exercise())
+
+    assert len(factory.transactions) == 2
+    assert len({id(transaction.session) for transaction in factory.transactions}) == 2
+    assert adapter.started == [assignments[0].lens_run_id, assignments[1].lens_run_id]
+    assert adapter.cancelled == [assignments[1].lens_run_id]
+    assert adapter.active == 0
+    assert runs[assignments[2].lens_run_id].status == "pending"
+
+
+def test_fan_out_settles_siblings_after_later_admission_commit_failure() -> None:
+    assignments = tuple(_metric_assignment(str(index)) for index in range(3))
+    runs = {assignment.lens_run_id: _run(assignment) for assignment in assignments}
+    sibling_started = asyncio.Event()
+    error = RuntimeError("later admission commit failed")
+    adapter = Adapter(on_started=sibling_started)
+    factory = Factory(
+        runs,
+        later_commit_gate=sibling_started,
+        later_exit_error=error,
+        later_transaction_index=1,
+    )
+
+    async def exercise() -> None:
+        with pytest.raises(RuntimeError) as caught:
+            await fan_out_lens_runs(
+                session_factory=factory,
+                runtime_repository=Repository(),  # type: ignore[arg-type]
+                adapter=adapter,
+                assignments=assignments,
+                policy=ExecutionPolicy(max_parallel_lens_runs=2, lens_deadline_seconds=1),
+            )
+        assert caught.value is error
+
+    asyncio.run(exercise())
+
+    assert len(factory.transactions) == 2
+    assert len({id(transaction.session) for transaction in factory.transactions}) == 2
+    assert adapter.started == [assignments[0].lens_run_id]
+    assert adapter.cancelled == [assignments[0].lens_run_id]
+    assert adapter.active == 0
+    assert runs[assignments[2].lens_run_id].status == "pending"
+
+
 def test_fan_out_settles_owned_workers_when_caller_cancels() -> None:
     assignments = tuple(_metric_assignment(str(index)) for index in range(2))
     runs = {assignment.lens_run_id: _run(assignment) for assignment in assignments}
@@ -240,24 +357,39 @@ def test_fan_out_settles_owned_workers_when_caller_cancels() -> None:
 
 def test_strict_join_verifies_topology_and_partitions_exact_result_variants() -> None:
     good = _metric_assignment("good")
+    partial_good = _metric_assignment("partial-good")
     insufficient = _metric_assignment("insufficient")
     failed = _metric_assignment("failed")
+    alert_completed = _alert_assignment("alert-completed")
+    alert_partial = _alert_assignment("alert-partial")
     alert_failed = _alert_assignment("alert-failed")
     outcomes = (
         _metric_outcome(good, "completed", "good"),
+        _metric_outcome(partial_good, "partial", "degraded"),
         _metric_outcome(insufficient, "completed", "insufficient"),
         _metric_outcome(failed, "failed", None),
-        _alert_outcome(alert_failed),
+        _alert_outcome(alert_completed, "completed"),
+        _alert_outcome(alert_partial, "partial"),
+        _alert_outcome(alert_failed, "failed"),
     )
 
     partition = verify_and_partition_lens_outcomes(
-        (good, insufficient, failed, alert_failed), outcomes
+        (good, partial_good, insufficient, failed, alert_completed, alert_partial, alert_failed),
+        outcomes,
     )
 
-    assert partition.usable == (outcomes[0],)
-    assert partition.unavailable == (outcomes[1], outcomes[2], outcomes[3])
+    assert partition.usable == (outcomes[0], outcomes[1], outcomes[4], outcomes[5])
+    assert partition.unavailable == (outcomes[2], outcomes[3], outcomes[6])
+    assert outcomes[3].artifact is not None
+    assert outcomes[6].artifact is None
     with pytest.raises(ValueError, match="differs from initialized topology"):
         verify_and_partition_lens_outcomes((good,), (outcomes[0], outcomes[1]))
+    with pytest.raises(ValueError, match="differs from initialized topology"):
+        verify_and_partition_lens_outcomes((good, partial_good), (outcomes[1], outcomes[0]))
+    with pytest.raises(ValueError, match="invalid data-quality"):
+        verify_and_partition_lens_outcomes(
+            (partial_good,), (_metric_outcome(partial_good, "partial", "insufficient"),)
+        )
 
 
 def _metric_assignment(lens_id: str) -> LensExecutionAssignment:
@@ -340,6 +472,10 @@ def _metric_outcome(
     else:
         _, artifact = builder.completed_insufficient(context)
         artifact.payload["data_quality"] = quality
+        if status == "partial":
+            artifact.status = LensRunStatus.PARTIAL
+            artifact.payload["status"]["state"] = "partial"
+            artifact.payload["reason"] = {"code": "test", "component": "test"}
     return CollectedLensOutcome(
         assignment=assignment,
         status=status,  # type: ignore[arg-type]
@@ -348,7 +484,38 @@ def _metric_outcome(
     )
 
 
-def _alert_outcome(assignment: LensExecutionAssignment) -> CollectedLensOutcome:
+def _alert_outcome(
+    assignment: LensExecutionAssignment, status: str = "failed"
+) -> CollectedLensOutcome:
+    if status == "failed":
+        return CollectedLensOutcome(
+            assignment=assignment, status="failed", reason=ExecutionReason(code="test")
+        )
+    provenance = {"source": "test"}
+    identity = LensResultIdentity(
+        observation_id=assignment.observation_id,
+        observation_run_id=assignment.observation_run_id,
+        lens_id=assignment.lens.lens_id,
+        lens_run_id=assignment.lens_run_id,
+    )
+    artifact = LensAnalysisResultInput(
+        result_type=LensType.ALERT,
+        status=LensRunStatus(status),
+        schema_version="1.0",
+        identity=identity,
+        provenance=provenance,
+        payload={
+            "schema_version": "1.0",
+            "lens_type": "alert",
+            "identity": identity.model_dump(mode="json"),
+            "provenance": provenance,
+            "status": status,
+            **({"reason": {"code": "test", "component": "test"}} if status == "partial" else {}),
+        },
+    )
     return CollectedLensOutcome(
-        assignment=assignment, status="failed", reason=ExecutionReason(code="test")
+        assignment=assignment,
+        status=status,  # type: ignore[arg-type]
+        artifact=artifact,
+        reason=ExecutionReason(code="test") if status == "partial" else None,
     )
