@@ -6,7 +6,6 @@ import string
 import unicodedata
 from collections.abc import Hashable, Iterable
 from datetime import datetime, timedelta
-from json import dumps
 from uuid import UUID
 
 from app.reasoning.contracts import EvidenceReference, Hypothesis, Limitation
@@ -175,24 +174,24 @@ def _normalize_prose(value: str) -> str:
 
 
 def _markdown_opaque(value: UUID | str | int) -> str:
-    """Render an opaque value as reversible typed JSON escaped for Markdown."""
+    """Render an opaque value as a typed reversible literal escaped for Markdown."""
     if isinstance(value, UUID):
         value_type = "uuid"
-        serialized_value: str | int = str(value)
+        serialized_value = ascii(str(value))
     elif type(value) is str:
         value_type = "string"
-        serialized_value = value
+        serialized_value = ascii(value)
     elif type(value) is int:
         value_type = "integer"
-        serialized_value = value
+        serialized_value = f"0x{value:x}"
     else:  # pragma: no cover - callers are constrained by domain contracts.
         raise TypeError("unsupported opaque value type")
-    return _markdown_json({"type": value_type, "value": serialized_value})
+    return _markdown_encoded(f"{value_type}={serialized_value}")
 
 
-def _markdown_json(value: object) -> str:
-    """Render one deterministic JSON value as escaped Markdown plain content."""
-    return dumps(value, ensure_ascii=True, separators=(",", ":")).translate(_MARKDOWN_ESCAPE_TABLE)
+def _markdown_encoded(value: str) -> str:
+    """Render a deterministic traceability encoding as Markdown plain content."""
+    return value.translate(_MARKDOWN_ESCAPE_TABLE)
 
 
 def _reference_lines(label: str, references: tuple[EvidenceReference, ...]) -> list[str]:
@@ -217,19 +216,19 @@ def _knowledge_reference_lines(hypothesis: Hypothesis) -> list[str]:
 
 def _inline_values(values: tuple[str, ...]) -> str:
     """Render source identifiers as one boundary-preserving typed sequence."""
-    return _markdown_json([{"type": "string", "value": value} for value in values])
+    return _markdown_encoded("[" + ",".join(f"string={ascii(value)}" for value in values) + "]")
 
 
 def _locator_text(locator: tuple[str | int, ...]) -> str:
-    """Render locator segments as a reversible typed JSON sequence."""
-    return _markdown_json(
-        [
-            {
-                "type": "index" if type(segment) is int else "key",
-                "value": segment,
-            }
+    """Render locator segments as a reversible typed literal sequence."""
+    return _markdown_encoded(
+        "["
+        + ",".join(
+            f"{'index' if type(segment) is int else 'key'}="
+            + (f"0x{segment:x}" if type(segment) is int else ascii(segment))
             for segment in locator
-        ]
+        )
+        + "]"
     )
 
 

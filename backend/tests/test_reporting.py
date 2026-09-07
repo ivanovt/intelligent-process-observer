@@ -271,8 +271,8 @@ def test_renderer_uses_injective_delimiter_safe_traceability_encoding() -> None:
     assert _markdown_opaque(uuid_source_id) != _markdown_opaque(string_uuid_source_id)
     assert _markdown_opaque(actual_control_reference) != _markdown_opaque(literal_escape_reference)
     assert _locator_text(delimiter_bearing_locator) != _locator_text(split_locator)
-    assert r"\"type\"" in _markdown_opaque(actual_control)
-    assert r"\"type\"" in _locator_text(delimiter_bearing_locator)
+    assert r"string\=" in _markdown_opaque(actual_control)
+    assert r"key\=" in _locator_text(delimiter_bearing_locator)
     assert f"source ID {_markdown_opaque(actual_control)}" in content
     assert f"source ID {_markdown_opaque(literal_escape)}" in content
     assert f"source ID {_markdown_opaque(uuid_source_id)}" in content
@@ -281,6 +281,55 @@ def test_renderer_uses_injective_delimiter_safe_traceability_encoding() -> None:
     assert f"reference {_markdown_opaque(literal_escape_reference)}" in content
     assert f"locator {_locator_text(delimiter_bearing_locator)}" in content
     assert f"locator {_locator_text(split_locator)}" in content
+
+
+def test_renderer_encoding_distinguishes_astral_and_surrogate_values_without_int_limits() -> None:
+    """Traceability encoding preserves Python string code units and arbitrary index size."""
+    astral_scalar = "\U0001f600"
+    surrogate_pair = "\ud83d\ude00"
+    unbounded_index = 10**5000
+    opaque_astral = _markdown_opaque(astral_scalar)
+    opaque_surrogate = _markdown_opaque(surrogate_pair)
+    astral_locator = _locator_text((astral_scalar,))
+    surrogate_locator = _locator_text((surrogate_pair,))
+    unbounded_locator = _locator_text((unbounded_index,))
+
+    assert opaque_astral != opaque_surrogate
+    assert astral_locator != surrogate_locator
+    assert r"\\U0001f600" in opaque_astral
+    assert r"\\ud83d\\ude00" in opaque_surrogate
+    assert unbounded_locator.startswith(r"\[index\=0x")
+    assert len(unbounded_locator) > 4_000
+
+    finding = Finding(
+        id="finding-unbounded-index",
+        statement="A traceability regression fixture.",
+        evidence_refs=(
+            EvidenceReference(
+                source_type="metric_result",
+                source_id=astral_scalar,
+                locator=(astral_scalar,),
+            ),
+            EvidenceReference(
+                source_type="metric_result",
+                source_id=surrogate_pair,
+                locator=(surrogate_pair,),
+            ),
+            EvidenceReference(
+                source_type="metric_result",
+                source_id="large-index",
+                locator=(unbounded_index,),
+            ),
+        ),
+    )
+    request = _request(findings=(finding,), hypotheses=(), limitations=())
+    content = build_report(request, _draft(request), NOW).content
+
+    assert f"source ID {opaque_astral}" in content
+    assert f"source ID {opaque_surrogate}" in content
+    assert f"locator {astral_locator}" in content
+    assert f"locator {surrogate_locator}" in content
+    assert f"locator {unbounded_locator}" in content
 
 
 def test_renderer_honestly_represents_empty_analysis_collections() -> None:
