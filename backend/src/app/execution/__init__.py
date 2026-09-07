@@ -42,6 +42,14 @@ from app.execution.initialization import (
     initialize_observation_execution,
 )
 from app.execution.ordering import canonical_lens_order
+from app.execution.projectors import (
+    admissible_artifacts,
+    build_observation_reasoning_input,
+    relationship_definitions,
+    validate_reasoning_success,
+    validate_relationship_batch,
+)
+from app.execution.stages import evaluate_and_persist_relationships, invoke_and_persist_reasoning
 
 __all__ = [
     "AlertLensSnapshot",
@@ -79,4 +87,11 @@ __all__ = [
     "metric_execution_context",
     "project_observation_execution",
     "verify_and_partition_lens_outcomes",
+    "admissible_artifacts",
+    "build_observation_reasoning_input",
+    "relationship_definitions",
+    "validate_reasoning_success",
+    "validate_relationship_batch",
+    "evaluate_and_persist_relationships",
+    "invoke_and_persist_reasoning",
 ]
