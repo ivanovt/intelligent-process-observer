@@ -7,10 +7,13 @@ import pytest
 
 from app.execution.contracts import (
     AnalysisWindow,
+    CollectedLensOutcome,
     CompletedObservationExecutionOutcome,
     ExecutionPolicy,
     ExecutionReason,
     FailedObservationExecutionOutcome,
+    LensExecutionAssignment,
+    MetricLensSnapshot,
     ObservationExecutionRequest,
     RejectedObservationExecutionOutcome,
     project_observation_execution,
@@ -194,6 +197,44 @@ def test_closed_outcome_variants_enforce_their_required_shape() -> None:
         failed.reason = ExecutionReason(code="changed")  # type: ignore[misc]
 
 
+def test_rejected_outcome_requires_an_actual_execution_reason() -> None:
+    with pytest.raises(ValueError, match="requires an execution reason"):
+        RejectedObservationExecutionOutcome(
+            reason=SimpleNamespace(
+                code="invalid_execution_request", component="execution_preparation"
+            )
+        )  # type: ignore[arg-type]
+    with pytest.raises(ValueError, match="requires an execution reason"):
+        RejectedObservationExecutionOutcome(reason="invalid_execution_request")  # type: ignore[arg-type]
+
+
+def test_collected_lens_outcome_requires_assignment_and_actual_reason() -> None:
+    assignment = _assignment()
+    partial_reason = ExecutionReason(code="reference_unavailable", component="metric")
+
+    completed = CollectedLensOutcome(assignment=assignment, status="completed")
+    partial = CollectedLensOutcome(assignment=assignment, status="partial", reason=partial_reason)
+    failed = CollectedLensOutcome(assignment=assignment, status="failed", reason=partial_reason)
+
+    assert completed.reason is None
+    assert partial.reason is partial_reason
+    assert failed.reason is partial_reason
+    with pytest.raises(ValueError, match="requires a Lens execution assignment"):
+        CollectedLensOutcome(  # type: ignore[arg-type]
+            assignment=SimpleNamespace(), status="completed"
+        )
+    with pytest.raises(ValueError, match="require an execution reason"):
+        CollectedLensOutcome(assignment=assignment, status="partial", reason="raw")  # type: ignore[arg-type]
+    with pytest.raises(ValueError, match="require an execution reason"):
+        CollectedLensOutcome(
+            assignment=assignment,
+            status="failed",
+            reason=SimpleNamespace(code="analysis_failed", component="metric"),
+        )  # type: ignore[arg-type]
+    with pytest.raises(ValueError, match="cannot carry a reason"):
+        CollectedLensOutcome(assignment=assignment, status="completed", reason=partial_reason)
+
+
 def test_projection_rejects_log_or_other_unsupported_lenses() -> None:
     definition = _definition()
     definition.log_lenses = [SimpleNamespace()]
@@ -214,6 +255,27 @@ def _request(observation_id):
 
 def _policy() -> ExecutionPolicy:
     return ExecutionPolicy(max_parallel_lens_runs=2, lens_deadline_seconds=30)
+
+
+def _assignment() -> LensExecutionAssignment:
+    return LensExecutionAssignment(
+        observation_id=uuid4(),
+        observation_run_id=uuid4(),
+        lens_run_id=uuid4(),
+        analysis_window=_request(uuid4()).analysis_window,
+        lens=MetricLensSnapshot(
+            lens_id="cpu",
+            name="CPU",
+            description=None,
+            metric_id="node_cpu",
+            adapter_type="prometheus",
+            source_id="prometheus",
+            query="rate(cpu[5m])",
+            unit="percent",
+            analysis_objectives=("spike",),
+            reference_periods=("1h",),
+        ),
+    )
 
 
 def _definition(schema_version: int = 1) -> ObservationModel:

@@ -145,12 +145,14 @@ class CollectedLensOutcome:
     reason: ExecutionReason | None = None
 
     def __post_init__(self) -> None:
+        if not isinstance(self.assignment, LensExecutionAssignment):
+            raise ValueError("collected Lens outcome requires a Lens execution assignment")
         if self.status not in {"completed", "partial", "failed"}:
             raise ValueError("collected Lens outcome must be terminal")
         if self.status == "completed" and self.reason is not None:
             raise ValueError("completed Lens outcome cannot carry a reason")
-        if self.status in {"partial", "failed"} and self.reason is None:
-            raise ValueError("partial and failed Lens outcomes require a reason")
+        if self.status in {"partial", "failed"} and type(self.reason) is not ExecutionReason:
+            raise ValueError("partial and failed Lens outcomes require an execution reason")
 
 
 @dataclass(frozen=True, slots=True)
@@ -196,6 +198,8 @@ class RejectedObservationExecutionOutcome:
     def __post_init__(self) -> None:
         if self.kind != "rejected":
             raise ValueError("rejected outcome has a fixed kind")
+        if type(self.reason) is not ExecutionReason:
+            raise ValueError("rejected outcome requires an execution reason")
         if self.reason.component != "execution_preparation" or self.reason.code not in {
             "invalid_execution_request",
             "observation_not_found",
