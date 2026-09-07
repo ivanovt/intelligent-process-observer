@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from collections.abc import Sequence
 from uuid import UUID
 
@@ -207,7 +208,7 @@ def _usable_result(outcome: CollectedLensOutcome):
     adapter: TypeAdapter = TypeAdapter(
         __import__("app.reasoning.contracts", fromlist=["UsableLensResult"]).UsableLensResult
     )
-    return adapter.validate_python(envelope.payload)
+    return _validate_json_roundtrip(envelope.payload, adapter)
 
 
 def _unavailable_result(outcome: CollectedLensOutcome) -> UnavailableLens:
@@ -223,7 +224,10 @@ def _unavailable_result(outcome: CollectedLensOutcome) -> UnavailableLens:
 
             adapter = TypeAdapter(CompletedInsufficientMetricResult)
             return insufficient_metric_as_unavailable(
-                adapter.validate_python(outcome.artifact.to_persistence_envelope().payload)
+                _validate_json_roundtrip(
+                    outcome.artifact.to_persistence_envelope().payload,
+                    adapter,
+                )
             )
     if outcome.reason is None:
         raise ValueError("unavailable outcome requires a reason")
@@ -233,3 +237,14 @@ def _unavailable_result(outcome: CollectedLensOutcome) -> UnavailableLens:
         origin="caller_unavailable",
         reason={"code": outcome.reason.code, "component": outcome.reason.component},
     )
+
+
+def _validate_json_roundtrip(payload: dict, adapter: TypeAdapter):
+    """Validate a persisted payload strictly, then retry through its JSON representation."""
+    try:
+        return adapter.validate_python(payload)
+    except (TypeError, ValueError):
+        try:
+            return adapter.validate_json(json.dumps(payload))
+        except (TypeError, ValueError) as json_error:
+            raise ValueError("persisted Lens result payload is invalid") from json_error

@@ -291,6 +291,12 @@ def validate_lens_run_transition(
     if current is LensRunStatus.PENDING and target is LensRunStatus.RUNNING:
         _validate_transition_reason(target, reason, requires_reason=False)
         return
+    if current is LensRunStatus.PENDING and target is LensRunStatus.FAILED:
+        if reason is None or reason.code != "execution_aborted" or not reason.component:
+            raise ValueError(
+                "pending failed LensRun transition requires execution_aborted with a component"
+            )
+        return
     if (
         current in {LensRunStatus.PENDING, LensRunStatus.RUNNING}
         and target is LensRunStatus.CANCELLED

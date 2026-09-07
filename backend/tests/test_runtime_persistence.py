@@ -155,6 +155,11 @@ def test_observation_and_lens_lifecycle_transitions() -> None:
         StructuredReason(code="execution_cancelled"),
     )
     validate_lens_run_transition(LensRunStatus.PENDING, LensRunStatus.RUNNING)
+    validate_lens_run_transition(
+        LensRunStatus.PENDING,
+        LensRunStatus.FAILED,
+        StructuredReason(code="execution_aborted", component="fanout"),
+    )
     for terminal_status in (LensRunStatus.COMPLETED,):
         validate_lens_run_transition(LensRunStatus.RUNNING, terminal_status)
     for terminal_status in (LensRunStatus.PARTIAL, LensRunStatus.FAILED):
@@ -180,6 +185,17 @@ def test_observation_and_lens_lifecycle_transitions() -> None:
         )
     with pytest.raises(ValueError):
         validate_lens_run_transition(LensRunStatus.RUNNING, LensRunStatus.RUNNING)
+    for reason in (
+        None,
+        StructuredReason(code="analysis_failed", component="fanout"),
+        StructuredReason(code="execution_aborted"),
+    ):
+        with pytest.raises(ValueError):
+            validate_lens_run_transition(
+                LensRunStatus.PENDING,
+                LensRunStatus.FAILED,
+                reason,
+            )
     with pytest.raises(ValueError, match="structured reason"):
         validate_observation_run_transition(
             ObservationRunStatus.RUNNING, ObservationRunStatus.FAILED
