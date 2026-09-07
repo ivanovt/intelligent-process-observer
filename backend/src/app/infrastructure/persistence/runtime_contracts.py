@@ -323,5 +323,10 @@ def _validate_transition_reason(
         raise ValueError(f"{target.value} lifecycle transition requires a structured reason")
     if not requires_reason and reason is not None:
         raise ValueError(f"{target.value} lifecycle transition cannot include a structured reason")
-    if target.value == "cancelled" and reason is not None and reason.code != "execution_cancelled":
-        raise ValueError("cancelled lifecycle transition requires reason code execution_cancelled")
+    if target.value == "cancelled" and reason is not None:
+        if reason.code != "execution_cancelled":
+            raise ValueError(
+                "cancelled lifecycle transition requires reason code execution_cancelled"
+            )
+        if reason.component is not None:
+            raise ValueError("cancelled lifecycle transition cannot include a component")

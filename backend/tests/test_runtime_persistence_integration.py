@@ -411,6 +411,87 @@ async def _seed_observation(session: AsyncSession) -> ObservationModel:
     return observation
 
 
+def test_lifecycle_transition_rejects_stale_persisted_runtime_state(
+    session_factory: async_sessionmaker[AsyncSession],
+) -> None:
+    """A stale session cannot overwrite a terminal run committed by another session."""
+
+    async def scenario() -> None:
+        repository = RuntimePersistenceRepository()
+        async with session_factory() as session:
+            observation = await _seed_observation(session)
+            observation_run = await repository.create_observation_run(
+                session, ObservationRunInput(observation_id=observation.id)
+            )
+            await repository.advance_observation_run(
+                session, observation_run, ObservationRunStatus.RUNNING
+            )
+            lens_run = await repository.create_lens_run(
+                session,
+                observation_run,
+                LensRunInput(lens_id=f"stale-{uuid4()}", lens_type=LensType.METRIC),
+            )
+            await repository.advance_lens_run(session, lens_run, LensRunStatus.RUNNING)
+            observation_run_id, lens_run_id = observation_run.id, lens_run.id
+            await session.commit()
+
+        async with session_factory() as stale_session:
+            stale_observation_run = await stale_session.get(ObservationRunModel, observation_run_id)
+            stale_lens_run = await stale_session.get(LensRunModel, lens_run_id)
+            assert stale_observation_run is not None and stale_lens_run is not None
+            async with session_factory() as terminal_session:
+                terminal_observation_run = await terminal_session.get(
+                    ObservationRunModel, observation_run_id
+                )
+                terminal_lens_run = await terminal_session.get(LensRunModel, lens_run_id)
+                assert terminal_observation_run is not None and terminal_lens_run is not None
+                await repository.advance_observation_run(
+                    terminal_session,
+                    terminal_observation_run,
+                    ObservationRunStatus.FAILED,
+                    reason=StructuredReason(code="execution_failed"),
+                )
+                await repository.advance_lens_run(
+                    terminal_session,
+                    terminal_lens_run,
+                    LensRunStatus.FAILED,
+                    reason=StructuredReason(code="execution_aborted"),
+                )
+                await terminal_session.commit()
+            with pytest.raises(ValueError, match="persisted lifecycle state changed"):
+                await repository.advance_observation_run(
+                    stale_session,
+                    stale_observation_run,
+                    ObservationRunStatus.CANCELLED,
+                    reason=StructuredReason(code="execution_cancelled"),
+                )
+            with pytest.raises(ValueError, match="persisted lifecycle state changed"):
+                await repository.advance_lens_run(
+                    stale_session,
+                    stale_lens_run,
+                    LensRunStatus.CANCELLED,
+                    reason=StructuredReason(code="execution_cancelled"),
+                )
+            await stale_session.rollback()
+
+        async with session_factory() as session:
+            persisted_observation_run = await session.get(ObservationRunModel, observation_run_id)
+            persisted_lens_run = await session.get(LensRunModel, lens_run_id)
+            assert persisted_observation_run is not None and persisted_lens_run is not None
+            assert persisted_observation_run.status == ObservationRunStatus.FAILED.value
+            assert persisted_observation_run.reason == {
+                "code": "execution_failed",
+                "component": None,
+            }
+            assert persisted_lens_run.status == LensRunStatus.FAILED.value
+            assert persisted_lens_run.reason == {
+                "code": "execution_aborted",
+                "component": None,
+            }
+
+    asyncio.run(scenario())
+
+
 def test_alert_zero_record_walking_skeleton_persists_completed_result(
     session_factory: async_sessionmaker[AsyncSession],
 ) -> None:

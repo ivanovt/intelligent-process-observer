@@ -6,7 +6,7 @@ import json
 from datetime import UTC, datetime
 from uuid import UUID
 
-from sqlalchemy import DateTime, String, cast, select
+from sqlalchemy import DateTime, String, cast, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
@@ -261,17 +261,34 @@ class RuntimePersistenceRepository:
     ) -> ObservationRunModel:
         """Advance one ObservationRun through its approved lifecycle and record its reason."""
 
-        validate_observation_run_transition(
-            ObservationRunStatus(observation_run.status), target, reason
+        current = ObservationRunStatus(observation_run.status)
+        validate_observation_run_transition(current, target, reason)
+        timestamp = now or datetime.now(UTC)
+        values: dict[str, object] = {
+            "status": target.value,
+            "reason": self._reason_payload(reason),
+        }
+        if target is ObservationRunStatus.RUNNING:
+            values["started_at"] = timestamp
+        else:
+            values["finished_at"] = timestamp
+        result = await session.execute(
+            update(ObservationRunModel)
+            .where(
+                ObservationRunModel.id == observation_run.id,
+                ObservationRunModel.status == current.value,
+            )
+            .values(**values)
+            .execution_options(synchronize_session=False)
         )
+        if result.rowcount != 1:
+            raise ValueError("ObservationRun persisted lifecycle state changed before transition")
         observation_run.status = target.value
         observation_run.reason = self._reason_payload(reason)
-        timestamp = now or datetime.now(UTC)
         if target is ObservationRunStatus.RUNNING:
             observation_run.started_at = timestamp
         else:
             observation_run.finished_at = timestamp
-        await session.flush()
         return observation_run
 
     async def advance_lens_run(
@@ -285,15 +302,34 @@ class RuntimePersistenceRepository:
     ) -> LensRunModel:
         """Advance one LensRun and preserve required terminal reason metadata."""
 
-        validate_lens_run_transition(LensRunStatus(lens_run.status), target, reason)
+        current = LensRunStatus(lens_run.status)
+        validate_lens_run_transition(current, target, reason)
+        timestamp = now or datetime.now(UTC)
+        values: dict[str, object] = {
+            "status": target.value,
+            "reason": self._reason_payload(reason),
+        }
+        if target is LensRunStatus.RUNNING:
+            values["started_at"] = timestamp
+        else:
+            values["finished_at"] = timestamp
+        result = await session.execute(
+            update(LensRunModel)
+            .where(
+                LensRunModel.id == lens_run.id,
+                LensRunModel.status == current.value,
+            )
+            .values(**values)
+            .execution_options(synchronize_session=False)
+        )
+        if result.rowcount != 1:
+            raise ValueError("LensRun persisted lifecycle state changed before transition")
         lens_run.status = target.value
         lens_run.reason = self._reason_payload(reason)
-        timestamp = now or datetime.now(UTC)
         if target is LensRunStatus.RUNNING:
             lens_run.started_at = timestamp
         else:
             lens_run.finished_at = timestamp
-        await session.flush()
         return lens_run
 
     async def persist_lens_analysis_result(
