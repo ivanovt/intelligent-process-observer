@@ -742,7 +742,11 @@ def test_cancellation_rejects_artifact_from_an_already_loaded_child(
             await session.commit()
 
         async with session_factory() as stale_session:
-            stale_lens_run = await stale_session.get(LensRunModel, lens_run_id)
+            stale_lens_run = await stale_session.scalar(
+                select(LensRunModel)
+                .where(LensRunModel.id == lens_run_id)
+                .options(selectinload(LensRunModel.observation_run))
+            )
             assert stale_lens_run is not None
             async with session_factory() as cancellation_session:
                 running_observation_run = await cancellation_session.get(
@@ -754,19 +758,23 @@ def test_cancellation_rejects_artifact_from_an_already_loaded_child(
                 )
                 await cancellation_session.commit()
 
-            with pytest.raises(ValueError, match="Cancelled LensRun"):
-                await repository.persist_lens_analysis_result(
-                    stale_session,
-                    stale_lens_run,
-                    _result_input(
-                        lens_run_id,
-                        observation_id,
-                        observation_run_id,
-                        lens_id,
-                        LensType.METRIC,
-                        LensRunStatus.COMPLETED,
-                    ),
-                )
+            # This matches the candidate artifact locally.  Without the durable
+            # refresh/lock, the former implementation would validate and insert it.
+            stale_lens_run.status = LensRunStatus.COMPLETED.value
+            with stale_session.no_autoflush:
+                with pytest.raises(ValueError, match="Cancelled LensRun"):
+                    await repository.persist_lens_analysis_result(
+                        stale_session,
+                        stale_lens_run,
+                        _result_input(
+                            lens_run_id,
+                            observation_id,
+                            observation_run_id,
+                            lens_id,
+                            LensType.METRIC,
+                            LensRunStatus.COMPLETED,
+                        ),
+                    )
             await stale_session.rollback()
 
         async with session_factory() as session:
