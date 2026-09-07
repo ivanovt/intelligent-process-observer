@@ -162,10 +162,7 @@ def _semantic_descriptor(value) -> SemanticDescriptor:
 
 
 def _canonical_lenses(snapshot: ObservationExecutionSnapshot):
-    return sorted(
-        (*snapshot.metric_lenses, *snapshot.alert_lenses),
-        key=lambda x: (x.lens_type, x.lens_id),
-    )
+    return canonical_lens_order(snapshot)
 
 
 def _reasoning_lens(lens: MetricLensSnapshot | AlertLensSnapshot) -> ReasoningLens:

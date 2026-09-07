@@ -9,10 +9,12 @@ from app.execution.contracts import (
     CollectedLensOutcome,
     ExecutionReason,
     FailedObservationExecutionOutcome,
+    LensExecutionAssignment,
     LensOutcomePartition,
     ObservationExecutionSnapshot,
 )
 from app.execution.fanout import verify_and_partition_lens_outcomes
+from app.execution.ordering import canonical_lens_order
 from app.execution.projectors import (
     admissible_artifacts,
     build_observation_reasoning_input,
@@ -56,8 +58,14 @@ async def evaluate_and_persist_relationships(
     """Evaluate once outside a transaction, then atomically persist the validated batch."""
     run_id = _run_id(outcomes)
     try:
-        # The evaluator must only see the exact initialized, canonical JOIN.
+        _validate_assignments(snapshot, assignments, outcomes, run_id)
         verify_and_partition_lens_outcomes(assignments, outcomes)
+    except Exception:
+        return FailedObservationExecutionOutcome(
+            observation_run_id=run_id,
+            reason=ExecutionReason("relationship_evaluation_failed", "relationship_evaluator"),
+        )
+    try:
         definitions = relationship_definitions(snapshot)
         evaluations = evaluator.evaluate(definitions, admissible_artifacts(outcomes, snapshot))
         validate_relationship_batch(
@@ -73,7 +81,7 @@ async def evaluate_and_persist_relationships(
             )
             for evaluation in evaluations
         )
-    except (AttributeError, TypeError, ValueError):
+    except Exception:
         return FailedObservationExecutionOutcome(
             observation_run_id=run_id,
             reason=ExecutionReason("relationship_evaluation_failed", "relationship_evaluator"),
@@ -87,6 +95,30 @@ async def evaluate_and_persist_relationships(
                 persistence_input,
             )
     return tuple(evaluations)
+
+
+def _validate_assignments(snapshot, assignments, outcomes, run_id) -> None:
+    """Require the initialized assignment topology to equal frozen Lens topology."""
+    expected = tuple((lens.lens_type, lens.lens_id) for lens in canonical_lens_order(snapshot))
+    if len(assignments) != len(expected):
+        raise ValueError("initialized assignment topology is invalid")
+    actual: list[tuple[str, str]] = []
+    lens_run_ids = set()
+    for assignment in assignments:
+        if not isinstance(assignment, LensExecutionAssignment):
+            raise ValueError("initialized assignment topology is invalid")
+        if assignment.observation_id != snapshot.observation_id:
+            raise ValueError("initialized assignment observation identity is invalid")
+        if assignment.observation_run_id != run_id:
+            raise ValueError("initialized assignment run identity is invalid")
+        actual.append((assignment.lens.lens_type, assignment.lens.lens_id))
+        lens_run_ids.add(assignment.lens_run_id)
+    if (
+        tuple(actual) != expected
+        or len(set(actual)) != len(actual)
+        or len(lens_run_ids) != len(actual)
+    ):
+        raise ValueError("initialized assignment topology is invalid")
 
 
 async def invoke_and_persist_reasoning(

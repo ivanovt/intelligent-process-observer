@@ -1,12 +1,20 @@
 from __future__ import annotations
 
+import asyncio
+from dataclasses import replace
 from datetime import UTC, datetime
 from uuid import uuid4
 
 import pytest
 
 from app.execution.contracts import (
+    AlertLensSnapshot,
     AnalysisWindow,
+    CollectedLensOutcome,
+    ExecutionReason,
+    FailedObservationExecutionOutcome,
+    LensExecutionAssignment,
+    MetricLensSnapshot,
     ObservationExecutionSnapshot,
     RelationshipSnapshot,
     SemanticDescriptorSnapshot,
@@ -15,6 +23,7 @@ from app.execution.projectors import (
     relationship_definitions,
     validate_relationship_batch,
 )
+from app.execution.stages import evaluate_and_persist_relationships
 
 
 def _snapshot() -> ObservationExecutionSnapshot:
@@ -71,4 +80,120 @@ def test_relationship_batch_rejects_missing_duplicate_or_reordered_identity() ->
             (Evaluation(),),
             observation_id=observation_id,
             observation_run_id=run_id,
+        )
+
+
+def _alert_snapshot() -> ObservationExecutionSnapshot:
+    return replace(
+        _snapshot(),
+        alert_lenses=(
+            AlertLensSnapshot(
+                lens_id="alert-a",
+                name="Alert",
+                description=None,
+                source="jira_track_and_release",
+                selector_query="project = plant",
+                analysis_objectives=("detect drift",),
+                reference_periods=(),
+            ),
+        ),
+        metric_lenses=(
+            MetricLensSnapshot(
+                lens_id="metric-z",
+                name="Metric",
+                description=None,
+                metric_id="temperature",
+                adapter_type="prometheus",
+                source_id="plant",
+                query="temperature",
+                unit="C",
+                analysis_objectives=("detect drift",),
+                reference_periods=(),
+            ),
+        ),
+    )
+
+
+def _failed_alert(
+    snapshot: ObservationExecutionSnapshot,
+) -> tuple[LensExecutionAssignment, CollectedLensOutcome]:
+    run_id = uuid4()
+    assignment = LensExecutionAssignment(
+        observation_id=snapshot.observation_id,
+        observation_run_id=run_id,
+        lens_run_id=uuid4(),
+        analysis_window=snapshot.analysis_window,
+        lens=snapshot.alert_lenses[0],
+    )
+    return assignment, CollectedLensOutcome(
+        assignment=assignment,
+        status="failed",
+        reason=ExecutionReason("caller_unavailable", "alert_provider"),
+    )
+
+
+class _NoopSessionFactory:
+    def begin(self):
+        raise AssertionError("persistence must not be reached")
+
+
+class _CountingEvaluator:
+    def __init__(self, error: BaseException) -> None:
+        self.calls = 0
+        self.error = error
+
+    def evaluate(self, relationships, results):
+        self.calls += 1
+        raise self.error
+
+
+def test_relationship_stage_rejects_reordered_or_incomplete_topology_before_evaluator() -> None:
+    snapshot = _alert_snapshot()
+    assignment, outcome = _failed_alert(snapshot)
+    evaluator = _CountingEvaluator(RuntimeError("must not run"))
+
+    result = asyncio.run(
+        evaluate_and_persist_relationships(
+            session_factory=_NoopSessionFactory(),
+            runtime_repository=object(),
+            evaluator=evaluator,
+            snapshot=snapshot,
+            outcomes=(outcome,),
+            assignments=(assignment,),
+        )
+    )
+
+    assert isinstance(result, FailedObservationExecutionOutcome)
+    assert result.reason.code == "relationship_evaluation_failed"
+    assert evaluator.calls == 0
+
+
+def test_relationship_stage_maps_evaluator_runtime_error_but_not_cancellation() -> None:
+    snapshot = replace(_alert_snapshot(), metric_lenses=())
+    assignment, outcome = _failed_alert(snapshot)
+    evaluator = _CountingEvaluator(RuntimeError("evaluator failed"))
+    result = asyncio.run(
+        evaluate_and_persist_relationships(
+            session_factory=_NoopSessionFactory(),
+            runtime_repository=object(),
+            evaluator=evaluator,
+            snapshot=snapshot,
+            outcomes=(outcome,),
+            assignments=(assignment,),
+        )
+    )
+    assert isinstance(result, FailedObservationExecutionOutcome)
+    assert evaluator.calls == 1
+
+    cancelled = _CountingEvaluator(asyncio.CancelledError())
+    with pytest.raises(asyncio.CancelledError):
+        asyncio.run(
+            evaluate_and_persist_relationships(
+                session_factory=_NoopSessionFactory(),
+                runtime_repository=object(),
+                evaluator=cancelled,
+                snapshot=snapshot,
+                outcomes=(outcome,),
+                assignments=(assignment,),
+            )
         )
