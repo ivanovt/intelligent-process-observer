@@ -661,6 +661,73 @@ def test_reasoning_persistence_error_rolls_back_and_does_not_claim_success() -> 
     assert not transaction.committed
 
 
+def test_reasoning_success_persists_persistence_identity_and_correlated_payload() -> None:
+    """A valid reasoning success persists an explicit persistence identity envelope."""
+    base_snapshot = _stage_snapshot(include_alert=False)
+    snapshot = replace(base_snapshot, metric_lenses=(base_snapshot.metric_lenses[0],))
+    run_id = uuid4()
+    assignment = LensExecutionAssignment(
+        observation_id=snapshot.observation_id,
+        observation_run_id=run_id,
+        lens_run_id=uuid4(),
+        analysis_window=snapshot.analysis_window,
+        lens=snapshot.metric_lenses[0],
+    )
+    partition = LensOutcomePartition(
+        usable=(
+            CollectedLensOutcome(
+                assignment=assignment,
+                status="completed",
+                artifact=_metric_artifact(snapshot, assignment),
+            ),
+        ),
+        unavailable=(),
+    )
+    domain_identity = ObservationIdentity(
+        observation_id=snapshot.observation_id,
+        observation_run_id=run_id,
+    )
+    result = ObservationAnalysisResult(
+        identity=domain_identity,
+        overall_state="no_significant_findings",
+        findings=(),
+        hypotheses=(),
+        limitations=(),
+    )
+    persisted = []
+
+    class Executor:
+        async def execute(self, _value):
+            return ReasoningSuccess(result=result)
+
+    class Repository:
+        async def persist_observation_analysis_result(self, _session, _run, value):
+            persisted.append(value)
+
+    transaction = _StageTransaction(
+        ObservationRunModel(id=run_id, observation_id=snapshot.observation_id, status="running")
+    )
+    outcome = asyncio.run(
+        invoke_and_persist_reasoning(
+            session_factory=_StageFactory(transaction),
+            runtime_repository=Repository(),
+            executor=Executor(),
+            snapshot=snapshot,
+            partition=partition,
+            evaluations=(),
+            observation_run_id=run_id,
+        )
+    )
+
+    assert outcome == ReasoningSuccess(result=result)
+    assert len(persisted) == 1
+    envelope = persisted[0]
+    assert isinstance(envelope.identity, ObservationAnalysisIdentity)
+    assert envelope.identity.observation_id == snapshot.observation_id
+    assert envelope.identity.observation_run_id == run_id
+    assert envelope.payload["identity"] == domain_identity.model_dump(mode="json")
+
+
 def test_relationship_stage_accepts_empty_ordered_batch_and_evaluator_sees_complete_artifacts() -> (
     None
 ):

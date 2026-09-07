@@ -33,6 +33,7 @@ from app.infrastructure.persistence.models import (
 )
 from app.infrastructure.persistence.repository import RuntimePersistenceRepository
 from app.infrastructure.persistence.runtime_contracts import (
+    ObservationAnalysisIdentity,
     ObservationAnalysisResultInput,
     ObservationReportInput,
     ObservationRunStatus,
@@ -289,7 +290,10 @@ async def invoke_and_persist_reasoning(
             run,
             ObservationAnalysisResultInput(
                 schema_version=result.schema_version,
-                identity=result.identity,
+                identity=ObservationAnalysisIdentity(
+                    observation_id=result.identity.observation_id,
+                    observation_run_id=result.identity.observation_run_id,
+                ),
                 payload=result.model_dump(mode="json"),
             ),
         )
