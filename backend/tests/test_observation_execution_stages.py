@@ -10,10 +10,13 @@ import pytest
 from app.execution.contracts import (
     AlertLensSnapshot,
     AnalysisWindow,
+    CollectedLensArtifact,
     CollectedLensOutcome,
+    CollectedLensResultIdentity,
     ExecutionReason,
     FailedObservationExecutionOutcome,
     LensExecutionAssignment,
+    LensOutcomePartition,
     MetricLensSnapshot,
     ObservationExecutionSnapshot,
     RelationshipSnapshot,
@@ -23,7 +26,21 @@ from app.execution.projectors import (
     relationship_definitions,
     validate_relationship_batch,
 )
-from app.execution.stages import evaluate_and_persist_relationships
+from app.execution.stages import evaluate_and_persist_relationships, invoke_and_persist_reasoning
+from app.infrastructure.persistence.models import ObservationRunModel
+from app.infrastructure.persistence.runtime_contracts import ObservationAnalysisIdentity
+from app.metrics.contracts import (
+    MetricEvidence,
+    MetricIdentity,
+    MetricLensExecutionContext,
+    MetricProviderScope,
+    MetricSemantics,
+    MetricTrend,
+    MetricVariability,
+    PreparedGoodSeries,
+)
+from app.metrics.result_builder import MetricResultBuilder
+from app.reasoning.contracts import ObservationAnalysisResult, ReasoningSuccess
 
 
 def _snapshot() -> ObservationExecutionSnapshot:
@@ -263,3 +280,161 @@ def test_relationship_stage_maps_evaluator_runtime_error_but_not_cancellation() 
                 assignments=(assignment,),
             )
         )
+
+
+def test_reasoning_persistence_error_rolls_back_and_does_not_claim_success() -> None:
+    """A valid reasoning success must propagate an exact persistence failure unchanged."""
+    observation_id, run_id, lens_run_id = uuid4(), uuid4(), uuid4()
+    snapshot = ObservationExecutionSnapshot(
+        observation_id=observation_id,
+        schema_version=1,
+        analysis_window=AnalysisWindow(
+            from_=datetime(2026, 1, 1, tzinfo=UTC),
+            to=datetime(2026, 1, 2, tzinfo=UTC),
+        ),
+        name="Observation",
+        description=None,
+        objective="detect drift",
+        metric_lenses=(
+            MetricLensSnapshot(
+                lens_id="metric",
+                name="Metric",
+                description=None,
+                metric_id="process.temperature",
+                adapter_type="prometheus",
+                source_id="plant",
+                query="temperature",
+                unit="C",
+                analysis_objectives=(),
+                reference_periods=(),
+            ),
+        ),
+        alert_lenses=(),
+        relationships=(),
+    )
+    assignment = LensExecutionAssignment(
+        observation_id=observation_id,
+        observation_run_id=run_id,
+        lens_run_id=lens_run_id,
+        analysis_window=snapshot.analysis_window,
+        lens=snapshot.metric_lenses[0],
+    )
+    context = MetricLensExecutionContext(
+        identity=MetricIdentity(
+            observation_id=observation_id,
+            observation_run_id=run_id,
+            lens_id="metric",
+            lens_run_id=lens_run_id,
+            metric_ref="process.temperature",
+            unit="C",
+        ),
+        provider_scope=MetricProviderScope(
+            adapter_type="prometheus", source_id="plant", query="temperature"
+        ),
+        analysis_window={"from": snapshot.analysis_window.from_, "to": snapshot.analysis_window.to},
+        analysis_objectives=(),
+        reference_periods=(),
+    )
+    metric_result, envelope = MetricResultBuilder(
+        clock=lambda: snapshot.analysis_window.to
+    ).completed_sufficient(
+        context,
+        PreparedGoodSeries(
+            data_quality="good",
+            samples=(),
+            evidence=MetricEvidence(mean=1.0, std=0.0, min=1.0, max=1.0, slope=0.0),
+            residuals=(),
+        ),
+        MetricSemantics(
+            trend=MetricTrend(direction="stable", rate="not_classified"),
+            variability=MetricVariability(state="low"),
+        ),
+    )
+    artifact = object.__new__(CollectedLensArtifact)
+    object.__setattr__(artifact, "result_type", envelope.result_type)
+    object.__setattr__(artifact, "status", envelope.status)
+    object.__setattr__(artifact, "schema_version", envelope.schema_version)
+    object.__setattr__(
+        artifact,
+        "identity",
+        CollectedLensResultIdentity(
+            observation_id=observation_id,
+            observation_run_id=run_id,
+            lens_id="metric",
+            lens_run_id=lens_run_id,
+            metric_ref="process.temperature",
+            unit="C",
+        ),
+    )
+    object.__setattr__(artifact, "provenance", metric_result.provenance.model_dump(mode="python"))
+    object.__setattr__(artifact, "payload", metric_result.model_dump(mode="python", by_alias=True))
+    partition = LensOutcomePartition(
+        usable=(
+            CollectedLensOutcome(assignment=assignment, status="completed", artifact=artifact),
+        ),
+        unavailable=(),
+    )
+    success = ReasoningSuccess.model_construct(
+        result=ObservationAnalysisResult.model_construct(
+            identity=ObservationAnalysisIdentity(
+                observation_id=observation_id, observation_run_id=run_id
+            ),
+            overall_state="no_significant_findings",
+            findings=(),
+            hypotheses=(),
+            limitations=(),
+        )
+    )
+    error = RuntimeError("injected analysis persistence failure")
+
+    class Transaction:
+        committed = False
+        rolled_back = False
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, exc_type, _exc, _tb):
+            if exc_type is None:
+                self.committed = True
+            else:
+                self.rolled_back = True
+            return False
+
+        async def get(self, model, identity):
+            assert model is ObservationRunModel and identity == run_id
+            return ObservationRunModel(
+                id=run_id, observation_id=observation_id, status="running"
+            )
+
+    transaction = Transaction()
+
+    class SessionFactory:
+        def begin(self):
+            return transaction
+
+    class Executor:
+        async def execute(self, value):
+            assert value.context.identity.observation_run_id == run_id
+            return success
+
+    class Repository:
+        async def persist_observation_analysis_result(self, session, run, result):
+            assert session is transaction and run.id == run_id
+            raise error
+
+    with pytest.raises(RuntimeError) as raised:
+        asyncio.run(
+            invoke_and_persist_reasoning(
+                session_factory=SessionFactory(),
+                runtime_repository=Repository(),
+                executor=Executor(),
+                snapshot=snapshot,
+                partition=partition,
+                evaluations=(),
+            )
+        )
+
+    assert raised.value is error
+    assert transaction.rolled_back
+    assert not transaction.committed
