@@ -5,11 +5,13 @@ from __future__ import annotations
 from collections.abc import Mapping
 from dataclasses import dataclass
 from datetime import UTC, datetime
+from types import MappingProxyType
 from typing import Literal, Protocol
 from uuid import UUID
 
 from app.infrastructure.persistence.runtime_contracts import (
     LensAnalysisResultInput,
+    LensResultIdentity,
     LensRunStatus,
     LensType,
 )
@@ -143,12 +145,88 @@ class LensExecutionAssignment:
 
 
 @dataclass(frozen=True, slots=True)
+class CollectedLensResultIdentity:
+    """Detached identity retained with one collected durable Lens artifact."""
+
+    observation_id: UUID
+    observation_run_id: UUID
+    lens_id: str
+    lens_run_id: UUID
+    metric_ref: str | None
+    unit: str | None
+
+
+@dataclass(frozen=True, slots=True)
+class CollectedLensArtifact:
+    """Immutable, detached projection of the exact terminal artifact persistence returned."""
+
+    result_type: LensType
+    status: LensRunStatus
+    schema_version: str
+    identity: CollectedLensResultIdentity
+    provenance: Mapping[str, object]
+    payload: Mapping[str, object]
+
+    def __post_init__(self) -> None:
+        """Detach mappings supplied by either persistence or a later projection caller."""
+
+        if not isinstance(self.identity, CollectedLensResultIdentity):
+            raise ValueError("collected Lens artifact requires a detached identity")
+        if not isinstance(self.provenance, Mapping) or not isinstance(self.payload, Mapping):
+            raise ValueError("collected Lens artifact requires mapping provenance and payload")
+        object.__setattr__(self, "provenance", _freeze_mapping(self.provenance))
+        object.__setattr__(self, "payload", _freeze_mapping(self.payload))
+        self.to_persistence_envelope()
+
+    @classmethod
+    def from_persistence_envelope(cls, envelope: LensAnalysisResultInput) -> CollectedLensArtifact:
+        """Detach and recursively freeze a validated persistence envelope."""
+
+        validated = LensAnalysisResultInput.model_validate(envelope.model_dump(mode="json"))
+        identity = validated.identity
+        return cls(
+            result_type=validated.result_type,
+            status=validated.status,
+            schema_version=validated.schema_version,
+            identity=CollectedLensResultIdentity(
+                observation_id=identity.observation_id,
+                observation_run_id=identity.observation_run_id,
+                lens_id=identity.lens_id,
+                lens_run_id=identity.lens_run_id,
+                metric_ref=identity.metric_ref,
+                unit=identity.unit,
+            ),
+            provenance=validated.provenance,
+            payload=validated.payload,
+        )
+
+    def to_persistence_envelope(self) -> LensAnalysisResultInput:
+        """Return an independent mutable envelope for a later in-memory projection."""
+
+        return LensAnalysisResultInput(
+            result_type=self.result_type,
+            status=self.status,
+            schema_version=self.schema_version,
+            identity=LensResultIdentity(
+                observation_id=self.identity.observation_id,
+                observation_run_id=self.identity.observation_run_id,
+                lens_id=self.identity.lens_id,
+                lens_run_id=self.identity.lens_run_id,
+                metric_ref=self.identity.metric_ref,
+                unit=self.identity.unit,
+            ),
+            provenance=_thaw_mapping(self.provenance),
+            payload=_thaw_mapping(self.payload),
+        )
+
+
+@dataclass(frozen=True, slots=True)
 class CollectedLensOutcome:
     """Compact terminal Lens result collected after its durable terminal write."""
 
     assignment: LensExecutionAssignment
     status: LensTerminalStatus
-    artifact: LensAnalysisResultInput | None = None
+    artifact: CollectedLensArtifact | LensAnalysisResultInput | None = None
     reason: ExecutionReason | None = None
 
     def __post_init__(self) -> None:
@@ -160,24 +238,26 @@ class CollectedLensOutcome:
             raise ValueError("completed Lens outcome cannot carry a reason")
         if self.status in {"partial", "failed"} and type(self.reason) is not ExecutionReason:
             raise ValueError("partial and failed Lens outcomes require an execution reason")
-        _validate_collected_artifact(self.assignment, self.status, self.artifact)
+        artifact = _validate_collected_artifact(self.assignment, self.status, self.artifact)
+        object.__setattr__(self, "artifact", artifact)
 
 
 def _validate_collected_artifact(
     assignment: LensExecutionAssignment,
     status: LensTerminalStatus,
-    artifact: LensAnalysisResultInput | None,
-) -> None:
+    artifact: CollectedLensArtifact | LensAnalysisResultInput | None,
+) -> CollectedLensArtifact | None:
     """Require the exact durable artifact shape for one terminal Lens variant."""
 
     is_metric = isinstance(assignment.lens, MetricLensSnapshot)
     if artifact is None:
         if not is_metric and status == "failed":
-            return
+            return None
         raise ValueError("collected Lens outcome requires its terminal artifact")
-    if not isinstance(artifact, LensAnalysisResultInput):
+    if isinstance(artifact, LensAnalysisResultInput):
+        artifact = CollectedLensArtifact.from_persistence_envelope(artifact)
+    if not isinstance(artifact, CollectedLensArtifact):
         raise ValueError("collected Lens outcome artifact must be a validated persistence envelope")
-    LensAnalysisResultInput.model_validate(artifact.model_dump())
     expected_type = LensType.METRIC if is_metric else LensType.ALERT
     expected_status = LensRunStatus(status)
     identity = artifact.identity
@@ -199,6 +279,37 @@ def _validate_collected_artifact(
             raise ValueError("collected Metric artifact identity contradicts its assignment")
     elif status == "failed":
         raise ValueError("failed Alert outcome cannot carry an artifact")
+    return artifact
+
+
+def _freeze_mapping(value: Mapping[str, object]) -> Mapping[str, object]:
+    """Recursively detach JSON-compatible mapping content into immutable values."""
+
+    return MappingProxyType({key: _freeze_value(item) for key, item in value.items()})
+
+
+def _freeze_value(value: object) -> object:
+    if isinstance(value, Mapping):
+        return _freeze_mapping(value)
+    if isinstance(value, (list, tuple)):
+        return tuple(_freeze_value(item) for item in value)
+    if value is None or isinstance(value, str | int | float | bool):
+        return value
+    raise ValueError("collected Lens artifact contains a non-JSON value")
+
+
+def _thaw_mapping(value: Mapping[str, object]) -> dict[str, object]:
+    """Recreate a mutable JSON-compatible mapping without exposing collected state."""
+
+    return {key: _thaw_value(item) for key, item in value.items()}
+
+
+def _thaw_value(value: object) -> object:
+    if isinstance(value, Mapping):
+        return _thaw_mapping(value)
+    if isinstance(value, tuple):
+        return [_thaw_value(item) for item in value]
+    return value
 
 
 @dataclass(frozen=True, slots=True)

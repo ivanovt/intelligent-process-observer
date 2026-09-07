@@ -11,6 +11,7 @@ from app.execution.adapters import (
 from app.execution.contracts import (
     AlertLensSnapshot,
     AnalysisWindow,
+    CollectedLensArtifact,
     CollectedLensOutcome,
     CompletedObservationExecutionOutcome,
     ExecutionPolicy,
@@ -40,6 +41,7 @@ __all__ = [
     "AlertLensExecutionAdapter",
     "AlertProviderResolver",
     "AnalysisWindow",
+    "CollectedLensArtifact",
     "CollectedLensOutcome",
     "CompletedObservationExecutionOutcome",
     "ExecutionReason",

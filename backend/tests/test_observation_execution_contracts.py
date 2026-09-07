@@ -288,6 +288,39 @@ def test_collected_alert_failure_requires_artifact_absence() -> None:
     assert failed.artifact is None
 
 
+def test_collected_artifact_is_a_recursively_immutable_detached_snapshot() -> None:
+    assignment = _assignment()
+    context = _metric_context(assignment)
+    _, source = MetricResultBuilder().failed(
+        context, MetricMandatoryAnalysisFailure(diagnostic="test")
+    )
+
+    outcome = CollectedLensOutcome(
+        assignment=assignment,
+        status="failed",
+        artifact=source,
+        reason=ExecutionReason(code="analysis_failed", component="metric"),
+    )
+
+    assert outcome.artifact is not None
+    source.payload["status"]["error"]["code"] = "mutated-source"  # type: ignore[index]
+    source.provenance["source"] = "mutated-source"
+    assert outcome.artifact.payload["status"]["error"]["code"] == (  # type: ignore[index]
+        "mandatory_metric_analysis_failed"
+    )
+    assert outcome.artifact.provenance["source"] == "prometheus"
+    with pytest.raises(TypeError):
+        outcome.artifact.payload["new"] = "value"  # type: ignore[index]
+    with pytest.raises(TypeError):
+        outcome.artifact.payload["status"]["error"]["code"] = "mutated"  # type: ignore[index]
+
+    projected = outcome.artifact.to_persistence_envelope()
+    projected.payload["status"]["error"]["code"] = "mutated-projection"  # type: ignore[index]
+    assert outcome.artifact.payload["status"]["error"]["code"] == (  # type: ignore[index]
+        "mandatory_metric_analysis_failed"
+    )
+
+
 def test_projection_rejects_log_or_other_unsupported_lenses() -> None:
     definition = _definition()
     definition.log_lenses = [SimpleNamespace()]

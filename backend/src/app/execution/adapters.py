@@ -102,7 +102,9 @@ class MetricLensExecutionAdapter:
             persisted = await self._pipeline.persist_terminal(
                 cast(object, session), lens_run, analysis
             )
-            return _collected_outcome(assignment, lens_run, _persisted_artifact(persisted))
+            return _collected_outcome(
+                assignment, lens_run, _persisted_artifact(persisted, assignment)
+            )
 
     async def _persist_wrapper_failure(
         self,
@@ -126,7 +128,9 @@ class MetricLensExecutionAdapter:
             persisted = await self._repository.persist_lens_analysis_result(
                 cast(object, session), lens_run, artifact
             )
-            return _collected_outcome(assignment, lens_run, _persisted_artifact(persisted))
+            return _collected_outcome(
+                assignment, lens_run, _persisted_artifact(persisted, assignment)
+            )
 
 
 class AlertLensExecutionAdapter:
@@ -175,7 +179,7 @@ class AlertLensExecutionAdapter:
             return _collected_outcome(
                 assignment,
                 lens_run,
-                _persisted_artifact(persisted) if persisted is not None else None,
+                _persisted_artifact(persisted, assignment) if persisted is not None else None,
             )
 
     async def _persist_wrapper_failure(
@@ -195,7 +199,7 @@ class AlertLensExecutionAdapter:
             return _collected_outcome(
                 assignment,
                 lens_run,
-                _persisted_artifact(persisted) if persisted is not None else None,
+                _persisted_artifact(persisted, assignment) if persisted is not None else None,
             )
 
 
@@ -338,11 +342,15 @@ def _collected_outcome(
     )
 
 
-def _persisted_artifact(persisted: object) -> LensAnalysisResultInput:
+def _persisted_artifact(
+    persisted: object, assignment: LensExecutionAssignment
+) -> LensAnalysisResultInput:
     """Rebuild and validate the exact envelope just accepted by persistence."""
 
     if not isinstance(persisted, LensAnalysisResultModel):
         raise ValueError("terminal persistence did not return a Lens analysis result")
+    if persisted.lens_run_id != assignment.lens_run_id:
+        raise ValueError("terminal persistence returned an artifact for another LensRun")
     payload = persisted.payload
     if not isinstance(payload, dict):
         raise ValueError("persisted Lens analysis result payload must be an object")

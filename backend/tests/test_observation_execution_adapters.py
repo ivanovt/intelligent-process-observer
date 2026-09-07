@@ -8,6 +8,8 @@ from datetime import UTC, datetime
 from unittest.mock import patch
 from uuid import uuid4
 
+import pytest
+
 from app.alerts.contracts import (
     AlertProviderFailure,
     AlertRecordsAvailable,
@@ -241,7 +243,7 @@ def test_alert_adapter_persists_completed_artifact_path_with_exact_context() -> 
 
     assert outcome.status == "completed"
     assert outcome.artifact is not None
-    assert outcome.artifact.payload == repository.artifacts[0].payload
+    assert outcome.artifact.to_persistence_envelope().payload == repository.artifacts[0].payload
     assert resolver.scope.source == "jira_track_and_release"
     assert resolver.scope.query == "project = OPS"
     assert phases == ["terminal_transaction"]
@@ -285,7 +287,7 @@ def test_alert_adapter_persists_normal_partial_outcome() -> None:
     assert outcome.reason.code == "reference_unavailable"
     assert outcome.artifact is not None
     assert outcome.artifact.status is LensRunStatus.PARTIAL
-    assert outcome.artifact.payload == repository.artifacts[0].payload
+    assert outcome.artifact.to_persistence_envelope().payload == repository.artifacts[0].payload
 
 
 def test_metric_adapter_normalizes_timeout_with_wrapper_reason_and_assigned_artifact() -> None:
@@ -324,7 +326,81 @@ def test_metric_adapter_normalizes_timeout_with_wrapper_reason_and_assigned_arti
     }
     assert artifact.provenance["source"] == "prometheus"
     assert outcome.artifact is not None
-    assert outcome.artifact.payload == artifact.payload
+    assert outcome.artifact.to_persistence_envelope().payload == artifact.payload
+
+
+def test_metric_adapter_collects_history_replacement_returned_by_terminal_persistence() -> None:
+    assignment, lens_run, parent = _metric_assignment()
+    phases: list[str] = []
+
+    class HistoryReplacingMetricPipeline(MetricPipeline):
+        async def persist_terminal(
+            self, session: object, lens_run: LensRunModel, analysis: object
+        ) -> LensAnalysisResultModel:
+            lens_run.status = LensRunStatus.COMPLETED.value
+            payload = deepcopy(analysis.terminal_result.payload)
+            payload["history"] = {"source": "persisted-history", "sample_count": 3}
+            replacement = LensAnalysisResultInput(
+                **(analysis.terminal_result.model_dump() | {"payload": payload})
+            )
+            assert "history" not in analysis.terminal_result.payload
+            self.persisted = _persisted(lens_run, replacement)
+            return self.persisted
+
+    pipeline = HistoryReplacingMetricPipeline(phases, LensRunStatus.COMPLETED)
+    outcome = asyncio.run(
+        MetricLensExecutionAdapter(
+            session_factory=Factory(_session(lens_run, parent), phases),
+            pipeline=pipeline,
+            repository=Repository(),  # type: ignore[arg-type]
+        ).execute(assignment, _policy())
+    )
+
+    assert outcome.artifact is not None
+    assert outcome.artifact.payload["history"] == {
+        "source": "persisted-history",
+        "sample_count": 3,
+    }
+    pipeline.persisted.payload["history"]["source"] = "mutated-model"
+    assert outcome.artifact.payload["history"]["source"] == "persisted-history"
+
+
+def test_metric_adapter_rejects_corrupt_returned_terminal_artifact_models() -> None:
+    """Returned terminal models must correlate exactly to the assigned durable LensRun."""
+
+    for contradiction in ("lens_run_id", "type", "status", "payload_identity"):
+        assignment, lens_run, parent = _metric_assignment()
+
+        class CorruptReturningMetricPipeline(MetricPipeline):
+            def __init__(self, artifact_contradiction: str) -> None:
+                super().__init__([], LensRunStatus.COMPLETED)
+                self.artifact_contradiction = artifact_contradiction
+
+            async def persist_terminal(
+                self, session: object, lens_run: LensRunModel, analysis: object
+            ) -> LensAnalysisResultModel:
+                lens_run.status = LensRunStatus.COMPLETED.value
+                persisted = _persisted(lens_run, analysis.terminal_result)
+                if self.artifact_contradiction == "lens_run_id":
+                    persisted.lens_run_id = uuid4()
+                elif self.artifact_contradiction == "type":
+                    persisted.result_type = LensType.ALERT.value
+                elif self.artifact_contradiction == "status":
+                    persisted.status = LensRunStatus.PARTIAL.value
+                else:
+                    persisted.payload["identity"]["lens_run_id"] = str(uuid4())
+                return persisted
+
+        factory = Factory(_session(lens_run, parent), [])
+        with pytest.raises(ValueError):
+            asyncio.run(
+                MetricLensExecutionAdapter(
+                    session_factory=factory,
+                    pipeline=CorruptReturningMetricPipeline(contradiction),
+                    repository=Repository(),  # type: ignore[arg-type]
+                ).execute(assignment, _policy())
+            )
+        assert factory.transactions[0].committed is False
 
 
 def test_metric_adapter_normalizes_unexpected_and_mismatched_analysis() -> None:
