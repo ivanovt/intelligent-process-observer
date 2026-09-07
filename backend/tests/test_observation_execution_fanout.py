@@ -222,6 +222,51 @@ def test_fan_out_uses_fixed_work_conserving_workers_and_canonical_result_order()
     assert all(transaction.committed for transaction in factory.transactions)
 
 
+def test_strict_join_does_not_continue_when_one_usable_lens_finishes_early() -> None:
+    first = _metric_assignment("first")
+    second_source = _metric_assignment("second")
+    second = LensExecutionAssignment(
+        observation_id=first.observation_id,
+        observation_run_id=first.observation_run_id,
+        lens_run_id=second_source.lens_run_id,
+        analysis_window=first.analysis_window,
+        lens=second_source.lens,
+    )
+    assignments = (first, second)
+    runs = {assignment.lens_run_id: _run(assignment) for assignment in assignments}
+    adapter = Adapter()
+    continuation_started = asyncio.Event()
+
+    async def join_then_continue() -> None:
+        outcomes = await fan_out_lens_runs(
+            session_factory=Factory(runs),
+            runtime_repository=Repository(),  # type: ignore[arg-type]
+            adapter=adapter,
+            assignments=assignments,
+            policy=ExecutionPolicy(max_parallel_lens_runs=2, lens_deadline_seconds=1),
+        )
+        partition = verify_and_partition_lens_outcomes(assignments, outcomes)
+        assert len(partition.usable) == 2
+        continuation_started.set()
+
+    async def exercise() -> None:
+        task = asyncio.create_task(join_then_continue())
+        for _ in range(100):
+            if len(adapter.started) == 2:
+                break
+            await asyncio.sleep(0)
+        assert len(adapter.started) == 2
+        adapter.release[first.lens_run_id].set()
+        for _ in range(10):
+            await asyncio.sleep(0)
+        assert not continuation_started.is_set()
+        adapter.release[second.lens_run_id].set()
+        await task
+
+    asyncio.run(exercise())
+    assert continuation_started.is_set()
+
+
 def test_fan_out_does_not_call_adapter_when_pending_admission_fails() -> None:
     assignment = _metric_assignment("only")
     run = _run(assignment)
