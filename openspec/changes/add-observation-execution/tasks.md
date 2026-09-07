@@ -37,9 +37,9 @@
 
 ## 6. Enforce Top-Level Failure, Cancellation, and Fresh-Run Boundaries
 
-- [ ] 6.1 Implement the outer non-persistence failure boundary that stops admission, settles owned child work, preserves terminal children, fails unfinished LensRuns with `execution_aborted/<stage>`, fails the parent with `execution_failed/<stage>`, and starts no later stage.
-- [ ] 6.2 Implement caller-cancellation handling that stops admission, cancels and settles active workers, performs non-detached shielded cancellation terminalization, preserves terminal children and committed artifacts, starts no later stage, and re-raises only after a definite commit or persistence failure.
-- [ ] 6.3 Ensure the public internal execution entry point always begins at preparation with fresh ObservationRun/LensRun identities and exposes no resume, stage replay, automatic retry, idempotency, artifact reuse, or overlap-policy path.
+- [x] 6.1 Implement the outer non-persistence failure boundary that stops admission, settles owned child work, preserves terminal children, fails unfinished LensRuns with `execution_aborted/<stage>`, fails the parent with `execution_failed/<stage>`, and starts no later stage.
+- [x] 6.2 Implement caller-cancellation handling that stops admission, cancels and settles active workers, performs non-detached shielded cancellation terminalization, preserves terminal children and committed artifacts, starts no later stage, and re-raises only after a definite commit or persistence failure.
+- [x] 6.3 Ensure the public internal execution entry point always begins at preparation with fresh ObservationRun/LensRun identities and exposes no resume, stage replay, automatic retry, idempotency, artifact reuse, or overlap-policy path.
 - [ ] 6.4 Add focused cancellation tests during pending/running fan-out, reasoning, reporting, and final-transaction races; verify terminal preservation, cancelled retrieval, downstream STOP, no fabricated artifacts, cleanup commit ordering, cleanup rollback visibility, and no detached tasks.
 - [ ] 6.5 Add tests for unexpected failures at each top-level stage, duplicate/contradictory completion attempts, persistence-error propagation without fabricated durability, and explicit re-runs creating new immutable runtime graphs after failed and cancelled runs.
 
