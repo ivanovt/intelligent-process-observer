@@ -1,0 +1,487 @@
+"""Immutable application contracts for one Observation execution."""
+
+from __future__ import annotations
+
+from collections.abc import Mapping
+from dataclasses import dataclass
+from datetime import UTC, datetime
+from typing import Literal, Protocol
+from uuid import UUID
+
+type PreparationRejectionCode = Literal[
+    "invalid_execution_request",
+    "observation_not_found",
+    "invalid_observation_definition",
+    "empty_lens_topology",
+    "unsupported_lens_type",
+]
+type LensTerminalStatus = Literal["completed", "partial", "failed"]
+
+
+@dataclass(frozen=True, slots=True)
+class ExecutionReason:
+    """Compact framework-neutral reason compatible with runtime lifecycle metadata."""
+
+    code: str
+    component: str | None = None
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.code, str) or not self.code.strip():
+            raise ValueError("execution reason code must be non-empty")
+        if self.component is not None and (
+            not isinstance(self.component, str) or not self.component.strip()
+        ):
+            raise ValueError("execution reason component must be non-empty when present")
+
+
+@dataclass(frozen=True, slots=True)
+class AnalysisWindow:
+    """Exact UTC interval used as the analysis scope for one execution."""
+
+    from_: datetime
+    to: datetime
+
+
+@dataclass(frozen=True, slots=True)
+class ObservationExecutionRequest:
+    """Minimal internal request to execute one predefined Observation."""
+
+    observation_id: UUID
+    analysis_window: AnalysisWindow
+
+
+@dataclass(frozen=True, slots=True)
+class ExecutionPolicy:
+    """Caller-supplied bounds for one Observation execution."""
+
+    max_parallel_lens_runs: int
+    lens_deadline_seconds: float
+
+
+@dataclass(frozen=True, slots=True)
+class MetricLensSnapshot:
+    """Detached Metric definition fields required by its execution pipeline."""
+
+    lens_id: str
+    name: str
+    description: str | None
+    metric_id: str
+    adapter_type: Literal["prometheus"]
+    source_id: str
+    query: str
+    unit: str
+    analysis_objectives: tuple[str, ...]
+    reference_periods: tuple[str, ...]
+    lens_type: Literal["metric"] = "metric"
+
+
+@dataclass(frozen=True, slots=True)
+class AlertLensSnapshot:
+    """Detached Alert definition fields required by its execution pipeline."""
+
+    lens_id: str
+    name: str
+    description: str | None
+    source: Literal["jira_track_and_release"]
+    selector_query: str
+    analysis_objectives: tuple[str, ...]
+    reference_periods: tuple[str, ...]
+    lens_type: Literal["alert"] = "alert"
+
+
+@dataclass(frozen=True, slots=True)
+class SemanticDescriptorSnapshot:
+    """Detached semantic relationship descriptor for one Metric participant."""
+
+    trend_direction: str | None
+    trend_rate: str | None
+    variability_state: str | None
+
+
+@dataclass(frozen=True, slots=True)
+class RelationshipSnapshot:
+    """Detached ordered Relationship definition for post-Lens evaluation."""
+
+    relationship_id: str
+    name: str
+    description: str | None
+    participants: tuple[str, ...]
+    conditions: tuple[tuple[str, SemanticDescriptorSnapshot], ...]
+    expected: tuple[tuple[str, SemanticDescriptorSnapshot], ...]
+
+
+@dataclass(frozen=True, slots=True)
+class ObservationExecutionSnapshot:
+    """Complete detached definition scope frozen for one future execution."""
+
+    observation_id: UUID
+    schema_version: int
+    analysis_window: AnalysisWindow
+    name: str
+    description: str | None
+    objective: str
+    metric_lenses: tuple[MetricLensSnapshot, ...]
+    alert_lenses: tuple[AlertLensSnapshot, ...]
+    relationships: tuple[RelationshipSnapshot, ...]
+
+
+@dataclass(frozen=True, slots=True)
+class LensExecutionAssignment:
+    """One initialized type-aware Lens runtime identity and its frozen definition."""
+
+    observation_id: UUID
+    observation_run_id: UUID
+    lens_run_id: UUID
+    analysis_window: AnalysisWindow
+    lens: MetricLensSnapshot | AlertLensSnapshot
+
+
+@dataclass(frozen=True, slots=True)
+class CollectedLensOutcome:
+    """Compact terminal Lens result collected after its durable terminal write."""
+
+    assignment: LensExecutionAssignment
+    status: LensTerminalStatus
+    reason: ExecutionReason | None = None
+
+    def __post_init__(self) -> None:
+        if self.status not in {"completed", "partial", "failed"}:
+            raise ValueError("collected Lens outcome must be terminal")
+        if self.status == "completed" and self.reason is not None:
+            raise ValueError("completed Lens outcome cannot carry a reason")
+        if self.status in {"partial", "failed"} and self.reason is None:
+            raise ValueError("partial and failed Lens outcomes require a reason")
+
+
+@dataclass(frozen=True, slots=True)
+class CompletedObservationExecutionOutcome:
+    """Successful terminal outcome for an initialized ObservationRun."""
+
+    observation_run_id: UUID
+    kind: Literal["completed"] = "completed"
+    status: Literal["completed"] = "completed"
+
+    def __post_init__(self) -> None:
+        if self.kind != "completed" or self.status != "completed":
+            raise ValueError("completed outcome has a fixed kind and status")
+
+
+@dataclass(frozen=True, slots=True)
+class FailedObservationExecutionOutcome:
+    """Failed terminal outcome for an initialized ObservationRun."""
+
+    observation_run_id: UUID
+    reason: ExecutionReason
+    kind: Literal["failed"] = "failed"
+    status: Literal["failed"] = "failed"
+
+    def __post_init__(self) -> None:
+        if self.kind != "failed" or self.status != "failed":
+            raise ValueError("failed outcome has a fixed kind and status")
+
+
+@dataclass(frozen=True, slots=True)
+class RejectedObservationExecutionOutcome:
+    """Controlled rejection produced before any ObservationRun is initialized."""
+
+    reason: ExecutionReason
+    kind: Literal["rejected"] = "rejected"
+
+    def __post_init__(self) -> None:
+        if self.kind != "rejected":
+            raise ValueError("rejected outcome has a fixed kind")
+        if self.reason.component != "execution_preparation" or self.reason.code not in {
+            "invalid_execution_request",
+            "observation_not_found",
+            "invalid_observation_definition",
+            "empty_lens_topology",
+            "unsupported_lens_type",
+        }:
+            raise ValueError("rejected outcome requires a controlled preparation reason")
+
+
+type ObservationExecutionOutcome = (
+    CompletedObservationExecutionOutcome
+    | FailedObservationExecutionOutcome
+    | RejectedObservationExecutionOutcome
+)
+type PreparationResult = ObservationExecutionSnapshot | RejectedObservationExecutionOutcome
+
+
+class ObservationDefinitionLoader(Protocol):
+    """Load one complete Observation definition aggregate exactly once."""
+
+    async def load(self, observation_id: UUID) -> object | None:
+        """Return the complete aggregate, or ``None`` when it is absent."""
+
+
+class LensExecutionAdapter(Protocol):
+    """Execute one admitted Lens assignment behind its type-specific boundary."""
+
+    async def execute(
+        self, assignment: LensExecutionAssignment, policy: ExecutionPolicy
+    ) -> CollectedLensOutcome:
+        """Return the durable terminal outcome for the supplied assignment."""
+
+
+def project_observation_execution(
+    request: object,
+    policy: object,
+    definition: object | None,
+) -> PreparationResult:
+    """Validate inputs and freeze one loaded aggregate into immutable execution values."""
+
+    if not _is_valid_request(request) or not _is_valid_policy(policy):
+        return _rejected("invalid_execution_request")
+    assert isinstance(request, ObservationExecutionRequest)
+    if definition is None:
+        return _rejected("observation_not_found")
+    try:
+        return _project_definition(request, definition)
+    except _EmptyTopology:
+        return _rejected("empty_lens_topology")
+    except _UnsupportedLens:
+        return _rejected("unsupported_lens_type")
+    except (AttributeError, TypeError, ValueError):
+        return _rejected("invalid_observation_definition")
+
+
+def _is_valid_request(request: object) -> bool:
+    if not isinstance(request, ObservationExecutionRequest):
+        return False
+    if not isinstance(request.observation_id, UUID) or not isinstance(
+        request.analysis_window, AnalysisWindow
+    ):
+        return False
+    return (
+        _is_utc(request.analysis_window.from_)
+        and _is_utc(request.analysis_window.to)
+        and (request.analysis_window.from_ < request.analysis_window.to)
+    )
+
+
+def _is_valid_policy(policy: object) -> bool:
+    if not isinstance(policy, ExecutionPolicy):
+        return False
+    if (
+        isinstance(policy.max_parallel_lens_runs, bool)
+        or not isinstance(policy.max_parallel_lens_runs, int)
+        or policy.max_parallel_lens_runs <= 0
+    ):
+        return False
+    if isinstance(policy.lens_deadline_seconds, bool) or not isinstance(
+        policy.lens_deadline_seconds, (int, float)
+    ):
+        return False
+    return policy.lens_deadline_seconds > 0 and policy.lens_deadline_seconds != float("inf")
+
+
+def _is_utc(value: object) -> bool:
+    return isinstance(value, datetime) and value.tzinfo is UTC
+
+
+def _project_definition(
+    request: ObservationExecutionRequest, definition: object
+) -> ObservationExecutionSnapshot:
+    observation_id = _required_uuid(definition, "id")
+    if observation_id != request.observation_id:
+        raise ValueError("loaded definition identity differs from request")
+    metric_models = _tuple_attribute(definition, "lenses")
+    alert_models = _tuple_attribute(definition, "alert_lenses")
+    relationship_models = _tuple_attribute(definition, "relationships")
+    _reject_unsupported_collections(definition)
+    if not metric_models and not alert_models:
+        raise _EmptyTopology()
+    metrics = tuple(_metric_snapshot(model) for model in metric_models)
+    alerts = tuple(_alert_snapshot(model) for model in alert_models)
+    _validate_lens_ids(metrics, alerts)
+    relationships = tuple(_relationship_snapshot(model) for model in relationship_models)
+    _validate_relationships(relationships, metrics)
+    return ObservationExecutionSnapshot(
+        observation_id=observation_id,
+        schema_version=_positive_int(definition, "schema_version"),
+        analysis_window=request.analysis_window,
+        name=_non_empty(definition, "name"),
+        description=_optional_text(definition, "description"),
+        objective=_non_empty(definition, "objective"),
+        metric_lenses=metrics,
+        alert_lenses=alerts,
+        relationships=relationships,
+    )
+
+
+def _reject_unsupported_collections(definition: object) -> None:
+    for name in ("log_lenses", "unsupported_lenses"):
+        lenses = getattr(definition, name, ())
+        if lenses:
+            raise _UnsupportedLens()
+
+
+def _metric_snapshot(model: object) -> MetricLensSnapshot:
+    lens_type = getattr(model, "lens_type", getattr(model, "type", "metric"))
+    if lens_type != "metric":
+        raise _UnsupportedLens()
+    adapter_type = _non_empty(model, "adapter_type")
+    if adapter_type != "prometheus":
+        raise ValueError("unsupported Metric adapter")
+    return MetricLensSnapshot(
+        lens_id=_non_empty(model, "lens_id"),
+        name=_non_empty(model, "name"),
+        description=_optional_text(model, "description"),
+        metric_id=_non_empty(model, "metric_id"),
+        adapter_type="prometheus",
+        source_id=_non_empty(model, "source_id"),
+        query=_non_empty(model, "query"),
+        unit=_non_empty(model, "unit"),
+        analysis_objectives=_string_tuple(model, "analysis_objectives"),
+        reference_periods=_string_tuple(model, "reference_periods"),
+    )
+
+
+def _alert_snapshot(model: object) -> AlertLensSnapshot:
+    lens_type = getattr(model, "lens_type", getattr(model, "type", "alert"))
+    if lens_type != "alert":
+        raise _UnsupportedLens()
+    source = _non_empty(model, "source")
+    if source != "jira_track_and_release":
+        raise ValueError("unsupported Alert source")
+    return AlertLensSnapshot(
+        lens_id=_non_empty(model, "lens_id"),
+        name=_non_empty(model, "name"),
+        description=_optional_text(model, "description"),
+        source="jira_track_and_release",
+        selector_query=_non_empty(model, "selector_query"),
+        analysis_objectives=_string_tuple(model, "analysis_objectives"),
+        reference_periods=_string_tuple(model, "reference_periods"),
+    )
+
+
+def _relationship_snapshot(model: object) -> RelationshipSnapshot:
+    participants = _string_tuple(model, "participants")
+    if len(participants) < 2 or len(set(participants)) != len(participants):
+        raise ValueError("invalid relationship participants")
+    conditions = _descriptor_items(model.conditions)
+    expected = _descriptor_items(model.expected)
+    if not expected:
+        raise ValueError("relationship needs expected semantics")
+    return RelationshipSnapshot(
+        relationship_id=_non_empty(model, "relationship_id"),
+        name=_non_empty(model, "name"),
+        description=_optional_text(model, "description"),
+        participants=participants,
+        conditions=conditions,
+        expected=expected,
+    )
+
+
+def _descriptor_items(value: object) -> tuple[tuple[str, SemanticDescriptorSnapshot], ...]:
+    if not isinstance(value, Mapping):
+        raise ValueError("relationship descriptors must be mappings")
+    return tuple((_non_empty_value(key), _descriptor_snapshot(item)) for key, item in value.items())
+
+
+def _descriptor_snapshot(value: object) -> SemanticDescriptorSnapshot:
+    if not isinstance(value, Mapping):
+        raise ValueError("relationship descriptor must be a mapping")
+    trend = value.get("trend")
+    variability = value.get("variability")
+    if trend is not None and not isinstance(trend, Mapping):
+        raise ValueError("relationship trend must be a mapping")
+    if variability is not None and not isinstance(variability, Mapping):
+        raise ValueError("relationship variability must be a mapping")
+    direction = _optional_mapping_text(trend, "direction")
+    rate = _optional_mapping_text(trend, "rate")
+    state = _optional_mapping_text(variability, "state")
+    if direction is None and rate is None and state is None:
+        raise ValueError("relationship descriptor must contain semantics")
+    return SemanticDescriptorSnapshot(direction, rate, state)
+
+
+def _validate_lens_ids(
+    metrics: tuple[MetricLensSnapshot, ...], alerts: tuple[AlertLensSnapshot, ...]
+) -> None:
+    if len({lens.lens_id for lens in metrics}) != len(metrics):
+        raise ValueError("duplicate Metric Lens identity")
+    if len({lens.lens_id for lens in alerts}) != len(alerts):
+        raise ValueError("duplicate Alert Lens identity")
+
+
+def _validate_relationships(
+    relationships: tuple[RelationshipSnapshot, ...], metrics: tuple[MetricLensSnapshot, ...]
+) -> None:
+    if len({relationship.relationship_id for relationship in relationships}) != len(relationships):
+        raise ValueError("duplicate Relationship identity")
+    metric_ids = {lens.lens_id for lens in metrics}
+    for relationship in relationships:
+        referenced = {key for key, _ in relationship.conditions} | {
+            key for key, _ in relationship.expected
+        }
+        participants = set(relationship.participants)
+        if not participants <= metric_ids or referenced != participants:
+            raise ValueError("invalid Relationship participant topology")
+
+
+def _tuple_attribute(value: object, name: str) -> tuple[object, ...]:
+    candidate = getattr(value, name)
+    if isinstance(candidate, (str, bytes)):
+        raise ValueError(f"{name} must be a collection")
+    return tuple(candidate)
+
+
+def _string_tuple(value: object, name: str) -> tuple[str, ...]:
+    items = _tuple_attribute(value, name)
+    normalized = tuple(_non_empty_value(item) for item in items)
+    if len(set(normalized)) != len(normalized):
+        raise ValueError(f"{name} contains duplicates")
+    return normalized
+
+
+def _required_uuid(value: object, name: str) -> UUID:
+    candidate = getattr(value, name)
+    if not isinstance(candidate, UUID):
+        raise ValueError(f"{name} must be a UUID")
+    return candidate
+
+
+def _positive_int(value: object, name: str) -> int:
+    candidate = getattr(value, name)
+    if isinstance(candidate, bool) or not isinstance(candidate, int) or candidate <= 0:
+        raise ValueError(f"{name} must be positive")
+    return candidate
+
+
+def _non_empty(value: object, name: str) -> str:
+    return _non_empty_value(getattr(value, name))
+
+
+def _non_empty_value(value: object) -> str:
+    if not isinstance(value, str) or not value.strip():
+        raise ValueError("text must be non-empty")
+    return value
+
+
+def _optional_text(value: object, name: str) -> str | None:
+    candidate = getattr(value, name)
+    if candidate is None:
+        return None
+    return _non_empty_value(candidate)
+
+
+def _optional_mapping_text(value: Mapping[object, object] | None, key: str) -> str | None:
+    if value is None or key not in value:
+        return None
+    return _non_empty_value(value[key])
+
+
+def _rejected(code: PreparationRejectionCode) -> RejectedObservationExecutionOutcome:
+    return RejectedObservationExecutionOutcome(
+        reason=ExecutionReason(code=code, component="execution_preparation")
+    )
+
+
+class _EmptyTopology(ValueError):
+    pass
+
+
+class _UnsupportedLens(ValueError):
+    pass
