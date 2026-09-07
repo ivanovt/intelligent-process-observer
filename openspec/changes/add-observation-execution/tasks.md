@@ -31,9 +31,9 @@
 
 - [x] 5.1 Invoke the existing Relationship Evaluator once after the gate with ordered frozen definitions and the complete admissible current-run artifact set; validate exact batch identity/cardinality/order and atomically persist all-or-none evaluations.
 - [x] 5.2 Build the exact accepted ObservationReasoningInput partition in canonical Lens order, preserving caller-unavailable reasons and the completed-insufficient Metric projection; invoke the existing executor and atomically persist only a valid correlated ObservationAnalysisResult.
-- [ ] 5.3 Build the exact minimal ReportGenerationRequest from the committed analysis and frozen semantic context; invoke the existing executor and atomically persist a correlated Markdown report together with the parent completed transition.
-- [ ] 5.4 Map Relationship, reasoning, and reporting failures to controlled parent reasons, preserving already committed artifacts and specifically retaining ObservationAnalysisResult with no report when report generation fails.
-- [ ] 5.5 Add focused tests for empty/non-empty ordered Relationships, missing participant evidence, malformed evaluation batches, exact reasoning partitions, raw/config exclusion, reasoning failure and identity mismatch, report input isolation, successful completion, report failure after analysis, and final report/completion rollback.
+- [x] 5.3 Build the exact minimal ReportGenerationRequest from the committed analysis and frozen semantic context; invoke the existing executor and atomically persist a correlated Markdown report together with the parent completed transition.
+- [x] 5.4 Map Relationship, reasoning, and reporting failures to controlled parent reasons, preserving already committed artifacts and specifically retaining ObservationAnalysisResult with no report when report generation fails.
+- [x] 5.5 Add focused tests for empty/non-empty ordered Relationships, missing participant evidence, malformed evaluation batches, exact reasoning partitions, raw/config exclusion, reasoning failure and identity mismatch, report input isolation, successful completion, report failure after analysis, and final report/completion rollback.
 
 ## 6. Enforce Top-Level Failure, Cancellation, and Fresh-Run Boundaries
 
