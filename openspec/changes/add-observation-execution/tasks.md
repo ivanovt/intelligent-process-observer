@@ -1,7 +1,7 @@
 ## 1. Extend Runtime Lifecycle Persistence
 
-- [ ] 1.1 Add `cancelled` to ObservationRun and LensRun status contracts, terminal/usability helpers, forward transition validation, required-reason validation, and public docstrings while preserving every existing lifecycle rule.
-- [ ] 1.2 Extend runtime persistence to reject artifacts for cancelled LensRuns and to preserve cancelled/terminal children and already committed Observation-level artifacts during retrieval.
+- [x] 1.1 Add `cancelled` to ObservationRun and LensRun status contracts, terminal/usability helpers, forward transition validation, required-reason validation, and public docstrings while preserving every existing lifecycle rule.
+- [x] 1.2 Extend runtime persistence to reject artifacts for cancelled LensRuns and to preserve cancelled/terminal children and already committed Observation-level artifacts during retrieval.
 - [ ] 1.3 Add a transaction-owned guarded cancellation operation that terminalizes only pending/running children plus the running parent, rejects contradictory concurrent terminalization, and leaves commit/rollback ownership with the caller.
 - [ ] 1.4 Add focused lifecycle/repository unit tests and PostgreSQL integration tests for pending/running cancellation, terminal preservation, artifact rejection, exact `execution_cancelled` reasons, duplicate transition races, retrieval, and all-or-nothing rollback without adding an Alembic migration.
 
