@@ -242,6 +242,14 @@ class CollectedLensOutcome:
         object.__setattr__(self, "artifact", artifact)
 
 
+@dataclass(frozen=True, slots=True)
+class LensOutcomePartition:
+    """Validated canonical partition of usable and unavailable Lens outcomes."""
+
+    usable: tuple[CollectedLensOutcome, ...]
+    unavailable: tuple[CollectedLensOutcome, ...]
+
+
 def _validate_collected_artifact(
     assignment: LensExecutionAssignment,
     status: LensTerminalStatus,

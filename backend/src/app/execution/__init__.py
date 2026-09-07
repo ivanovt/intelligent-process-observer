@@ -19,6 +19,7 @@ from app.execution.contracts import (
     FailedObservationExecutionOutcome,
     LensExecutionAdapter,
     LensExecutionAssignment,
+    LensOutcomePartition,
     MetricLensSnapshot,
     ObservationDefinitionLoader,
     ObservationExecutionOutcome,
@@ -28,6 +29,11 @@ from app.execution.contracts import (
     RelationshipSnapshot,
     SemanticDescriptorSnapshot,
     project_observation_execution,
+)
+from app.execution.fanout import (
+    AdmissionSessionFactory,
+    fan_out_lens_runs,
+    verify_and_partition_lens_outcomes,
 )
 from app.execution.initialization import (
     InitializedObservationExecution,
@@ -40,6 +46,7 @@ __all__ = [
     "AlertLensSnapshot",
     "AlertLensExecutionAdapter",
     "AlertProviderResolver",
+    "AdmissionSessionFactory",
     "AnalysisWindow",
     "CollectedLensArtifact",
     "CollectedLensOutcome",
@@ -50,6 +57,7 @@ __all__ = [
     "FailedObservationExecutionOutcome",
     "LensExecutionAdapter",
     "LensExecutionAssignment",
+    "LensOutcomePartition",
     "MetricLensSnapshot",
     "MetricLensExecutionAdapter",
     "ObservationExecutionRequest",
@@ -63,7 +71,9 @@ __all__ = [
     "TerminalSessionFactory",
     "alert_execution_context",
     "canonical_lens_order",
+    "fan_out_lens_runs",
     "initialize_observation_execution",
     "metric_execution_context",
     "project_observation_execution",
+    "verify_and_partition_lens_outcomes",
 ]
