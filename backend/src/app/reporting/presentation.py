@@ -6,6 +6,7 @@ import string
 import unicodedata
 from collections.abc import Hashable, Iterable
 from datetime import datetime, timedelta
+from json import dumps
 from uuid import UUID
 
 from app.reasoning.contracts import EvidenceReference, Hypothesis, Limitation
@@ -174,20 +175,24 @@ def _normalize_prose(value: str) -> str:
 
 
 def _markdown_opaque(value: UUID | str | int) -> str:
-    """Escape one source value without collapsing identity-significant content."""
-    encoded = "".join(
-        _visible_control(character)
-        if unicodedata.category(character) in {"Cc", "Cf"}
-        else character
-        for character in str(value)
-    )
-    return encoded.translate(_MARKDOWN_ESCAPE_TABLE)
+    """Render an opaque value as reversible typed JSON escaped for Markdown."""
+    if isinstance(value, UUID):
+        value_type = "uuid"
+        serialized_value: str | int = str(value)
+    elif type(value) is str:
+        value_type = "string"
+        serialized_value = value
+    elif type(value) is int:
+        value_type = "integer"
+        serialized_value = value
+    else:  # pragma: no cover - callers are constrained by domain contracts.
+        raise TypeError("unsupported opaque value type")
+    return _markdown_json({"type": value_type, "value": serialized_value})
 
 
-def _visible_control(character: str) -> str:
-    """Encode an invisible source character without losing its exact code point."""
-    width = 4 if ord(character) <= 0xFFFF else 8
-    return f"\\u{ord(character):0{width}x}"
+def _markdown_json(value: object) -> str:
+    """Render one deterministic JSON value as escaped Markdown plain content."""
+    return dumps(value, ensure_ascii=True, separators=(",", ":")).translate(_MARKDOWN_ESCAPE_TABLE)
 
 
 def _reference_lines(label: str, references: tuple[EvidenceReference, ...]) -> list[str]:
@@ -211,15 +216,20 @@ def _knowledge_reference_lines(hypothesis: Hypothesis) -> list[str]:
 
 
 def _inline_values(values: tuple[str, ...]) -> str:
-    """Render non-empty source identifiers in their preserved source order."""
-    return ", ".join(_markdown_opaque(value) for value in values)
+    """Render source identifiers as one boundary-preserving typed sequence."""
+    return _markdown_json([{"type": "string", "value": value} for value in values])
 
 
 def _locator_text(locator: tuple[str | int, ...]) -> str:
-    """Render locator boundaries and segment types without traceability collisions."""
-    return " / ".join(
-        f"{'index' if isinstance(segment, int) else 'key'}={_markdown_opaque(segment)}"
-        for segment in locator
+    """Render locator segments as a reversible typed JSON sequence."""
+    return _markdown_json(
+        [
+            {
+                "type": "index" if type(segment) is int else "key",
+                "value": segment,
+            }
+            for segment in locator
+        ]
     )
 
 

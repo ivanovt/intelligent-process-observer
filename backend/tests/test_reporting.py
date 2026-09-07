@@ -32,7 +32,13 @@ from app.reporting.contracts import (
 )
 from app.reporting.executor import ReportGenerationExecutor
 from app.reporting.input import validate_request
-from app.reporting.presentation import build_report, validate_presentation
+from app.reporting.presentation import (
+    _inline_values,
+    _locator_text,
+    _markdown_opaque,
+    build_report,
+    validate_presentation,
+)
 
 NOW = datetime(2026, 9, 7, 12, 0, tzinfo=UTC)
 
@@ -191,48 +197,90 @@ def test_renderer_restores_source_order_and_all_traceability_without_mutation() 
     assert report.observation_run_id == request.analysis_result.identity.observation_run_id
     assert report.generated_at is NOW
     assert "## Overall Assessment" in report.content
-    assert "finding\\-temperature" in report.content
-    assert "source type metric\\_result" in report.content
-    assert "Supported by findings: finding\\-temperature" in report.content
-    assert "source ID manual; reference section\\-4" in report.content
+    assert f"### Finding {_markdown_opaque('finding-temperature')}" in report.content
+    assert f"source type {_markdown_opaque('metric_result')}" in report.content
+    assert "Supported by findings: " + _inline_values(("finding-temperature",)) in report.content
+    assert (
+        f"source ID {_markdown_opaque('manual')}; "
+        f"reference {_markdown_opaque('section-4')}" in report.content
+    )
     assert "possible explanation, not a confirmed cause" in report.content
     assert "missing\\_lens\\_evidence" in report.content
 
 
-def test_renderer_preserves_opaque_identity_whitespace_and_locator_segment_types() -> None:
-    """Distinct source identities and locator segment types stay distinguishable."""
+def test_renderer_uses_injective_delimiter_safe_traceability_encoding() -> None:
+    """Opaque traceability preserves types, controls, escape text, and tuple boundaries."""
+    uuid_source_id = uuid4()
+    string_uuid_source_id = str(uuid_source_id)
     findings = (
         Finding(
-            id="finding one",
+            id="finding\\u000a",
             statement="First finding.",
             evidence_refs=(
                 EvidenceReference(
                     source_type="metric_result",
-                    source_id="metric one",
-                    locator=("items", 0),
+                    source_id="metric\nrun",
+                    locator=("items / key=other", 0),
+                ),
+                EvidenceReference(
+                    source_type="metric_result",
+                    source_id=uuid_source_id,
+                    locator=("source",),
+                ),
+                EvidenceReference(
+                    source_type="metric_result",
+                    source_id=string_uuid_source_id,
+                    locator=("source",),
                 ),
             ),
         ),
         Finding(
-            id="finding  one",
+            id="finding\n",
             statement="Second finding.",
             evidence_refs=(
                 EvidenceReference(
                     source_type="metric_result",
-                    source_id="metric  one",
-                    locator=("items", "0"),
+                    source_id="metric\\nrun",
+                    locator=("items", "other / key=0"),
                 ),
             ),
         ),
     )
-    request = _request(findings=findings, hypotheses=(), limitations=())
+    actual_control_reference = "guide\nsection"
+    literal_escape_reference = r"guide\nsection"
+    hypotheses = (
+        Hypothesis(
+            id="hypothesis-traceability",
+            statement="A possible explanation.",
+            supported_by=("finding\\u000a",),
+            knowledge_refs=(
+                KnowledgeReference(source_id="manual", reference=actual_control_reference),
+                KnowledgeReference(source_id="manual", reference=literal_escape_reference),
+            ),
+        ),
+    )
+    request = _request(findings=findings, hypotheses=hypotheses, limitations=())
 
     content = build_report(request, _draft(request), NOW).content
 
-    assert "### Finding finding one" in content
-    assert "### Finding finding  one" in content
-    assert "source ID metric one; locator key=items / index=0" in content
-    assert "source ID metric  one; locator key=items / key=0" in content
+    actual_control = "metric\nrun"
+    literal_escape = r"metric\nrun"
+    delimiter_bearing_locator = ("items / key=other", 0)
+    split_locator = ("items", "other / key=0")
+    assert _markdown_opaque(actual_control) != _markdown_opaque(literal_escape)
+    assert _markdown_opaque(uuid_source_id) != _markdown_opaque(string_uuid_source_id)
+    assert _markdown_opaque(actual_control_reference) != _markdown_opaque(literal_escape_reference)
+    assert _locator_text(delimiter_bearing_locator) != _locator_text(split_locator)
+    assert r"\"type\"" in _markdown_opaque(actual_control)
+    assert r"\"type\"" in _locator_text(delimiter_bearing_locator)
+    assert f"source ID {_markdown_opaque(actual_control)}" in content
+    assert f"source ID {_markdown_opaque(literal_escape)}" in content
+    assert f"source ID {_markdown_opaque(uuid_source_id)}" in content
+    assert f"source ID {_markdown_opaque(string_uuid_source_id)}" in content
+    assert f"reference {_markdown_opaque(actual_control_reference)}" in content
+    assert f"reference {_markdown_opaque(literal_escape_reference)}" in content
+    assert f"locator {_locator_text(delimiter_bearing_locator)}" in content
+    assert f"locator {_locator_text(split_locator)}" in content
 
 
 def test_renderer_honestly_represents_empty_analysis_collections() -> None:
@@ -334,11 +382,11 @@ def test_renderer_escapes_all_dynamic_markdown_punctuation_and_normalizes_lines(
         "# Observation Report",
         "## Overall Assessment",
         "## Findings",
-        "### Finding finding\\-temperature",
+        f"### Finding {_markdown_opaque('finding-temperature')}",
         "## Possible Explanations",
-        "### Possible explanation hypothesis\\-valve",
+        f"### Possible explanation {_markdown_opaque('hypothesis-valve')}",
         "## Analysis Limitations",
-        "### Limitation 1: missing\\_lens\\_evidence",
+        f"### Limitation 1: {_markdown_opaque('missing_lens_evidence')}",
     ]
 
 
