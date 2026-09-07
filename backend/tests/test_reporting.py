@@ -202,7 +202,7 @@ def test_renderer_restores_source_order_and_all_traceability_without_mutation() 
 def test_renderer_honestly_represents_empty_analysis_collections() -> None:
     """Empty findings, hypotheses, and limitations receive deterministic absence text."""
     request = _request(state="no_significant_findings", findings=(), hypotheses=(), limitations=())
-    report = build_report(_request_for_empty(request), _draft(request), NOW)
+    report = build_report(request, _draft(request), NOW)
     assert "No significant findings were identified" in report.content
     assert "No possible explanations were supplied" in report.content
     assert "No analysis limitations were supplied" in report.content
@@ -218,24 +218,24 @@ def test_empty_findings_do_not_contradict_a_non_empty_source_assessment(state: s
     assert f"Source overall state: `{state}`." in report.content
 
 
-def test_renderer_escapes_untrusted_source_context_text() -> None:
-    """Untrusted semantic context cannot create a Markdown section or list item."""
+def test_renderer_excludes_non_english_and_control_bearing_semantic_context() -> None:
+    """Raw context cannot make the English artifact non-English or alter its structure."""
     request = _request()
     context = request.context.model_copy(
-        update={"name": "# Recommendations\n- restart immediately"}
+        update={
+            "name": "# Препоръки",
+            "description": "Рестартирайте процеса.",
+            "analytical_objective": "Намерете основната причина.",
+        }
     )
     request = request.model_copy(update={"context": context})
     report = build_report(request, _draft(request), NOW)
-    assert "Observation: \\# Recommendations \\- restart immediately" in report.content
-    assert "\n## Recommendations\n" not in report.content
-
-
-def _request_for_empty(request: ReportGenerationRequest) -> ReportGenerationRequest:
-    """Give an empty result an assessment consistent with its source state."""
-    return request.model_copy(
-        update={
-            "context": request.context,
-        }
+    assert "Препоръки" not in report.content
+    assert "Рестартирайте" not in report.content
+    assert "основната причина" not in report.content
+    assert "Observation ID:" in report.content and "Observation Run ID:" in report.content
+    assert (
+        str(request.analysis_result.identity.observation_id).replace("-", "\\-") in report.content
     )
 
 
@@ -267,19 +267,43 @@ def test_presentation_validator_fails_closed_on_incomplete_or_expanded_membershi
 @pytest.mark.parametrize(
     "presentation",
     [
-        "A confirmed root cause was identified.",
-        "The recommendation is to restart the process.",
-        "Normal narrative.\n## Recommendations\n- Restart the process.",
+        "No recommendation is provided and no root cause is claimed.",
+        "No root cause could be established from the available evidence.",
+        "Literal source wording.\n## Not a renderer heading\n- Not a renderer list item.",
+        "Literal source wording.\nSetext marker\n================",
     ],
 )
-def test_presentation_validator_rejects_prohibited_content_and_markdown_controls(
+def test_presentation_validation_does_not_classify_semantics_or_markdown_keywords(
     presentation: str,
 ) -> None:
-    """Model prose cannot add analytical claims or report sections outside the draft contract."""
+    """Runtime validation treats non-blank source-keyed presentation as opaque text."""
     request = _request()
     draft = _draft(request).model_copy(update={"overall_assessment": presentation})
-    with pytest.raises(ValueError):
-        validate_presentation(request, draft)
+    assert validate_presentation(request, draft) is draft
+    content = build_report(request, draft, NOW).content
+    assert f"\n{presentation}\n" not in content
+    assert "\n## Not a renderer heading\n" not in content
+    assert "\n================\n" not in content
+
+
+def test_renderer_escapes_all_dynamic_markdown_punctuation_and_normalizes_lines() -> None:
+    """Only renderer constants retain Markdown meaning in the final document."""
+    request = _request()
+    presentation = "[label](https://example.invalid)\n# heading\n> quote\n~~~"
+    draft = _draft(request).model_copy(update={"overall_assessment": presentation})
+    report = build_report(request, draft, NOW)
+    assert r"\[label\]\(https\:\/\/example\.invalid\) \# heading \> quote \~\~\~" in report.content
+    headings = [line for line in report.content.splitlines() if line.startswith("#")]
+    assert headings == [
+        "# Observation Report",
+        "## Overall Assessment",
+        "## Findings",
+        "### Finding finding\\-temperature",
+        "## Possible Explanations",
+        "### Possible explanation hypothesis\\-valve",
+        "## Analysis Limitations",
+        "### Limitation 1: missing\\_lens\\_evidence",
+    ]
 
 
 def test_observation_report_normalizes_equivalent_utc_timezones() -> None:

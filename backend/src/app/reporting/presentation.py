@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-import re
+import string
 from collections.abc import Hashable, Iterable
 from datetime import datetime, timedelta
 
@@ -13,10 +13,8 @@ from app.reporting.contracts import (
     ReportPresentationDraft,
 )
 
-_PROHIBITED_PRESENTATION_TERMS = re.compile(
-    r"\b(?:recommendations?|recommended actions?|root causes?|confirmed causes?|"
-    r"definitive causes?)\b",
-    flags=re.IGNORECASE,
+_MARKDOWN_ESCAPE_TABLE = str.maketrans(
+    {character: f"\\{character}" for character in string.punctuation}
 )
 
 
@@ -64,14 +62,9 @@ def build_report(
     lines = [
         "# Observation Report",
         "",
-        f"Observation: {_markdown_text(request.context.name)}",
+        f"Observation ID: {_markdown_text(result.identity.observation_id)}",
+        f"Observation Run ID: {_markdown_text(result.identity.observation_run_id)}",
     ]
-    if request.context.description is not None:
-        lines.extend((f"Description: {_markdown_text(request.context.description)}",))
-    if request.context.analytical_objective is not None:
-        lines.extend(
-            (f"Analytical objective: {_markdown_text(request.context.analytical_objective)}",)
-        )
     lines.extend(
         (
             "",
@@ -141,20 +134,14 @@ def _validate_exact_keys(
 
 
 def _validate_presentation_text(value: str) -> None:
-    """Reject blank or control-bearing model prose before it can shape report structure."""
+    """Reject blank model prose without trying to classify its meaning."""
     if not value.strip():
         raise ValueError("presentation text must not be blank")
-    if _PROHIBITED_PRESENTATION_TERMS.search(value):
-        raise ValueError("presentation text contains prohibited analytical content")
-    if any(
-        line.lstrip().startswith(("#", ">", "- ", "* ", "+ ", "```")) for line in value.splitlines()
-    ):
-        raise ValueError("presentation text must not contain Markdown control syntax")
 
 
 def _presentation_lines(value: str) -> list[str]:
-    """Contain accepted model prose inside escaped Markdown blockquote lines."""
-    return [f"> {_markdown_text(line)}" for line in value.splitlines()]
+    """Contain normalized model prose inside one renderer-owned blockquote."""
+    return [f"> {_markdown_text(value)}"]
 
 
 def _empty_findings_text(overall_state: str) -> str:
@@ -167,7 +154,7 @@ def _empty_findings_text(overall_state: str) -> str:
 def _markdown_text(value: object) -> str:
     """Render untrusted source data as one escaped Markdown text fragment."""
     text = str(value).replace("\r\n", "\n").replace("\r", "\n").replace("\n", " ")
-    return re.sub(r"([\\`*_{}\[\]<>#+\-.!|])", r"\\\1", text)
+    return text.translate(_MARKDOWN_ESCAPE_TABLE)
 
 
 def _reference_lines(label: str, references: tuple[EvidenceReference, ...]) -> list[str]:
