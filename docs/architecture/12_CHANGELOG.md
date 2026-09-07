@@ -10,6 +10,10 @@
   cancellation запазва вече terminal LensRuns и артефакти, terminalize-ва само
   незавършените runs, спира downstream stages и се propagate-ва към caller-а;
 - external cancellation API/trigger остава Open; cancellation не стартира automatic retry.
+- added ADR-166, selecting the MVP frontend visual stack while keeping design tokens
+  and domain-semantic UI components project-owned;
+- established the frozen UI Direction v1.0 and `docs/ui/` as the frontend
+  presentation and implementation reference without redefining analytical contracts.
 
 ## 6.4 — 2026-08-31
 

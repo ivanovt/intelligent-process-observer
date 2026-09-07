@@ -3074,6 +3074,39 @@ ADR-164 и създава нов runtime aggregate.
 
 ---
 
+## ADR-166 — Frontend visual stack for MVP
+
+**Status:** Accepted
+
+**Context**
+UI Direction v1.0 is frozen and requires an implementation stack that
+preserves project-owned visual and domain semantics without imposing
+an external design language.
+
+**Decision**
+For the MVP frontend visual layer use:
+
+- React
+- Tailwind CSS 4
+- shadcn/ui
+- Base UI primitives
+- Lucide React
+- Recharts
+- TanStack Table only where advanced tabular behavior is required
+
+Design tokens and domain-semantic UI components remain project-owned.
+
+The detailed decision and implementation guidance live in
+`docs/ui/frontend_ui_stack_adr.md` and the supporting documents under `docs/ui/`.
+
+**Consequences**
+- third-party libraries provide primitives rather than product semantics;
+- analytical and execution states remain separate;
+- the frozen UI direction remains the visual source of truth;
+- future replacement of chart/table libraries does not redefine domain contracts.
+
+---
+
 # Open decisions
 
 Актуалният и нормативен backlog е в `10_open_decisions_and_backlog.md`. Отворените въпроси **не** са implicit requirements и трябва да получат нов ADR, когато бъдат решени.
