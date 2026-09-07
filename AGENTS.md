@@ -253,7 +253,156 @@ Do not add a UI library, Tailwind, a frontend test framework, a Python formatter
 
 The application is a modular monolith. Deterministic orchestration remains plain Python/`asyncio` unless a later explicitly approved decision changes that. PydanticAI is the approved MVP agent-framework integration mechanism (ADR-152); it must not replace framework-neutral domain contracts, deterministic orchestration, or domain-owned execution constraints. Add its production dependency only within the approved scope of the first production agent feature that requires it.
 
-## 13. Canonical local commands
+## 13. Frontend / UI implementation
+
+Before planning, implementing, or reviewing frontend/UI changes, read:
+
+1. `docs/ui/README.md`
+2. `docs/ui/frontend_ui_stack_adr.md`
+3. `docs/ui/ui_implementation_handoff_v1.md`
+4. relevant domain/runtime contracts under `docs/architecture/`
+
+### Frozen UI direction
+
+UI Direction v1.1 is frozen. The MagicPath project referenced from
+`docs/ui/README.md` is the visual/UX source of truth; accepted architecture/contracts
+remain authoritative for domain and API semantics.
+
+Do not silently change:
+
+- information architecture;
+- product terminology;
+- analytical-state semantics;
+- execution-state semantics;
+- finding vs hypothesis semantics;
+- evidence vs knowledge semantics;
+- Observation aggregate ownership;
+- Lens standalone-resource semantics;
+- Metric-only Relationship boundaries;
+- selector “which” vs runtime “when” semantics.
+
+Minor technical adjustments for accessibility, responsive fit, browser behavior,
+real data length, or actual API constraints are allowed when they preserve the accepted
+semantics.
+
+### Observation Management draft semantics
+
+Observation creation is aggregate-oriented. Nested Metric Lens, Alert Lens, and
+Relationship editors modify a client-side Observation draft.
+
+`Apply changes` in a nested editor means:
+
+```text
+validate nested editor state
+-> apply it to the Observation draft
+-> return to Create Observation
+```
+
+It does **not** mean standalone backend persistence of a Lens or Relationship.
+
+Only the final `Create Observation` action submits the validated Observation Definition
+through the supported aggregate API.
+
+Do not invent standalone Metric/Alert Lens CRUD endpoints or Observation update/delete
+capabilities to match the UI.
+
+### Configuration boundaries
+
+- One Metric Lens observes one metric.
+- Metric and Alert `analysis_objectives` are ordered, duplicate-free, non-empty free-text
+  intent strings and are edited inline; they are not tool selectors.
+- Reference periods and persisted Metric Lens history are separate concepts.
+- Alert `selector.query` is opaque provider-native input. The UI must not parse,
+  normalize, rewrite, or automatically add time/lifecycle-status predicates.
+- Alert selector defines **which** alerts; LensRun/runtime defines **when** they are
+  observed.
+- Alert Lens remains an owned child of Observation Definition; its editor does not imply
+  standalone resource lifecycle.
+- Relationships are Metric-only for MVP, use 2..N participants, and expose only accepted
+  current-state property vocabulary.
+- Do not build a generic free-form Relationship rule DSL.
+
+The current public Metric Lens API still restricts `analysis_objectives` to
+`spike | drift | oscillation`. Until that contract is explicitly changed, the Metric
+editor must not submit arbitrary objective strings; treat free-text support as a backend
+dependency. Alert Lens objectives already support opaque non-whitespace strings.
+
+### Scope guardrails for `add-observation-management-ui`
+
+The first UI feature may establish only the reusable frontend foundations required by
+Observation Management. Do not silently expand it to implement the full
+monitoring/run-analysis UI.
+
+Keep out of scope unless explicitly supported and requested:
+
+```text
+Observation update/delete UI
+standalone Lens CRUD
+Log Lens configuration
+runtime relationship discovery
+Alert visual query rewriting/builder semantics
+agent/model/prompt/tool-budget configuration
+new severity/confidence/recommendation semantics
+```
+
+When a frozen mock control is not supported by the current API contract, omit/disable it
+or report the backend dependency explicitly rather than inventing backend behavior.
+
+### Accepted frontend visual stack
+
+Use:
+
+- React
+- Tailwind CSS 4
+- shadcn/ui
+- Base UI primitives
+- Lucide React
+- Recharts
+- TanStack Table only when advanced table behavior is genuinely needed.
+
+Do not introduce an alternative visual/component framework without an explicit
+architecture/UI decision.
+
+### Styling rules
+
+- Treat `docs/ui/ui_implementation_handoff_v1.md` as the implementation reference.
+- Prefer project-owned semantic components over one-off Tailwind markup.
+- Use semantic design tokens for domain states instead of scattering raw colors.
+- Third-party UI primitives must adapt to the frozen design, not redefine it.
+- Keep generic primitives separate from ObserveAI domain components.
+
+Examples of project-owned semantic components include:
+`AnalyticalStateBadge`, `ExecutionStatusBadge`, `LensCard`, `FindingCard`,
+`HypothesisCard`, `EvidenceChip`, `RelationshipChip`, and `KnowledgeChip`.
+
+### Domain semantic guardrails
+
+Execution state and analytical state are independent.
+
+Do not map:
+`completed | partial | failed`
+to
+`no_significant_findings | uncertain | significant_findings_present`.
+
+A failed execution means unavailable analytical evidence; it does not mean that
+an anomaly or significant finding was detected.
+
+Do not introduce new severity, confidence, probability, root-cause, or
+recommendation semantics unless the relevant architecture contracts are changed first.
+
+Findings are observational-evidence grounded.
+Hypotheses are explanatory and may use knowledge references.
+Do not visually or structurally collapse those concepts.
+
+### Charts and tables
+
+- Use Recharts through project-owned chart components.
+- Do not expose chart-library details throughout feature code.
+- Use TanStack Table only for screens requiring capabilities such as sorting,
+  filtering, pagination, column visibility, or row selection.
+- Simple dashboard rows/lists should remain lightweight project components.
+
+## 14. Canonical local commands
 
 Use the root `Makefile` as the canonical command interface:
 
@@ -280,7 +429,7 @@ Before requesting a pull request, run `make check` and report any failures accur
 - frontend production build;
 - strict OpenSpec structural validation.
 
-## 14. Secrets and environment files
+## 15. Secrets and environment files
 
 - Root `.env` is local-only and must not be committed.
 - Root `.env.example` documents backend/PostgreSQL configuration.
@@ -288,7 +437,7 @@ Before requesting a pull request, run `make check` and report any failures accur
 - `frontend/.env.example` documents browser-visible `VITE_*` values.
 - Never put secrets in `VITE_*` variables or client-side source.
 
-## 15. Nested AGENTS.md maintenance
+## 16. Nested AGENTS.md maintenance
 
 Start with this root file only.
 
@@ -296,7 +445,7 @@ If stable, subsystem-specific instructions begin repeating across multiple chang
 
 Do not use nested agent instructions as a substitute for architecture documentation or feature specifications.
 
-## 16. Reusable review and validation skills
+## 17. Reusable review and validation skills
 
 Repository-owned reusable review skills live under `.agents/skills/ipo-*`. OpenSpec-generated skills remain under `.agents/skills/openspec-*` and may be regenerated by `openspec update`; do not edit generated OpenSpec skills to add project-specific behavior.
 

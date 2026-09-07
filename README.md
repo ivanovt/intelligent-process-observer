@@ -94,6 +94,17 @@ Use the following distinction consistently:
 
 Do not infer requirements from architecture items marked `Open` or `Deferred`.
 
+## UI implementation reference
+
+Frontend visual decisions and the frozen MVP UI handoff are maintained under:
+
+- `docs/ui/README.md`
+- `docs/ui/frontend_ui_stack_adr.md`
+- `docs/ui/ui_implementation_handoff_v1.md`
+
+These documents govern frontend presentation and implementation.
+They do not redefine the Observation/Lens/runtime analytical contracts.
+
 ## Documentation
 
 - Development workflow quick guide: [`docs/development-workflow.md`](docs/development-workflow.md)
