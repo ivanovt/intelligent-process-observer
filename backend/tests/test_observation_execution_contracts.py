@@ -96,6 +96,30 @@ def test_projection_requires_a_positive_finite_non_boolean_deadline(deadline: ob
     _assert_rejected(outcome, "invalid_execution_request")
 
 
+@pytest.mark.parametrize("max_parallel_lens_runs", (-1, 0, True, False))
+def test_projection_requires_a_positive_non_boolean_parallel_lens_run_limit(
+    max_parallel_lens_runs: object,
+) -> None:
+    definition = _definition()
+    policy = ExecutionPolicy(
+        max_parallel_lens_runs=max_parallel_lens_runs,  # type: ignore[arg-type]
+        lens_deadline_seconds=30,
+    )
+
+    outcome = project_observation_execution(_request(definition.id), policy, definition)
+
+    _assert_rejected(outcome, "invalid_execution_request")
+
+
+def test_projection_accepts_a_positive_parallel_lens_run_limit() -> None:
+    definition = _definition()
+    policy = ExecutionPolicy(max_parallel_lens_runs=1, lens_deadline_seconds=30)
+
+    outcome = project_observation_execution(_request(definition.id), policy, definition)
+
+    assert not isinstance(outcome, RejectedObservationExecutionOutcome)
+
+
 def test_projection_maps_empty_and_invalid_real_orm_aggregates_to_controlled_rejections() -> None:
     empty = ObservationModel(
         id=uuid4(),
@@ -152,6 +176,22 @@ def test_closed_outcome_variants_enforce_their_required_shape() -> None:
         FailedObservationExecutionOutcome(
             observation_run_id=run_id, reason=reason, kind="completed"
         )
+    with pytest.raises(ValueError):
+        CompletedObservationExecutionOutcome(observation_run_id="not-a-uuid")  # type: ignore[arg-type]
+    with pytest.raises(ValueError):
+        FailedObservationExecutionOutcome(
+            observation_run_id="not-a-uuid",
+            reason=reason,  # type: ignore[arg-type]
+        )
+    with pytest.raises(ValueError):
+        FailedObservationExecutionOutcome(
+            observation_run_id=run_id,
+            reason="not-a-reason",  # type: ignore[arg-type]
+        )
+    with pytest.raises(FrozenInstanceError):
+        completed.status = "failed"  # type: ignore[misc]
+    with pytest.raises(FrozenInstanceError):
+        failed.reason = ExecutionReason(code="changed")  # type: ignore[misc]
 
 
 def test_projection_rejects_log_or_other_unsupported_lenses() -> None:

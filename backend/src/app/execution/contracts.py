@@ -162,6 +162,8 @@ class CompletedObservationExecutionOutcome:
     status: Literal["completed"] = "completed"
 
     def __post_init__(self) -> None:
+        if not isinstance(self.observation_run_id, UUID):
+            raise ValueError("completed outcome requires a UUID observation run ID")
         if self.kind != "completed" or self.status != "completed":
             raise ValueError("completed outcome has a fixed kind and status")
 
@@ -176,6 +178,10 @@ class FailedObservationExecutionOutcome:
     status: Literal["failed"] = "failed"
 
     def __post_init__(self) -> None:
+        if not isinstance(self.observation_run_id, UUID):
+            raise ValueError("failed outcome requires a UUID observation run ID")
+        if not isinstance(self.reason, ExecutionReason):
+            raise ValueError("failed outcome requires an execution reason")
         if self.kind != "failed" or self.status != "failed":
             raise ValueError("failed outcome has a fixed kind and status")
 
