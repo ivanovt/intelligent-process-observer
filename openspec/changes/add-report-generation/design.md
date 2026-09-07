@@ -41,7 +41,9 @@ The PydanticAI adapter receives only the strict report request serialized as dat
 - one source-keyed presentation entry for each hypothesis;
 - one position-keyed presentation entry for each limitation.
 
-Each entry can contain only its source key and presentation text. The output has no fields for recommendations, conclusions, new references, confidence, severity, root cause, or arbitrary extra sections. A deterministic validator requires exact, duplicate-free membership against the source result and rejects missing, unknown, or duplicate source keys. It also rejects blank content and an overall-state discriminator that differs from the source. Evidence, finding, and knowledge references are never authored by the model; the renderer restores source ordering independently of draft ordering.
+Each entry can contain only its source key and plain English presentation text. The presentation text is data, not Markdown, and cannot own headings, lists, links, blockquotes, code blocks, or arbitrary document sections. The output has no fields for recommendations, conclusions, new references, confidence, severity, root cause, or arbitrary extra sections. A deterministic validator requires exact, duplicate-free membership against the source result and rejects missing, unknown, or duplicate source keys. It also rejects blank content and an overall-state discriminator that differs from the source. Evidence, finding, and knowledge references are never authored by the model; the renderer restores source ordering independently of draft ordering.
+
+Deterministic validation does not attempt to classify arbitrary prose meaning with a keyword blacklist, language detector, or second model. Presentation-only semantics, English output, meaning preservation, and certainty preservation remain strict agent-instruction and evaluation obligations. This is an explicit boundary of what the one-request structured contract can prove: exact membership and shape are mechanically enforceable, while semantic equivalence of free prose is not.
 
 Alternative considered: let the model return final Markdown. Rejected because deterministic code could not reliably prove that all source items and their traceability survived a free-form response.
 
@@ -49,7 +51,7 @@ Alternative considered: render every source statement verbatim without a model. 
 
 ### 3. Render the report deterministically from validated presentation plus source data
 
-After draft validation, a pure renderer builds Markdown. It chooses one internal default layout but does not expose headings as a public schema invariant. It uses the validated English presentation text for assessment and item narratives, then appends deterministic source identifiers and canonical references directly from `ObservationAnalysisResult`:
+After draft validation, a pure renderer builds Markdown. It chooses one internal default layout but does not expose headings as a public schema invariant. Only the renderer emits Markdown syntax. It normalizes line breaks and escapes Markdown control characters in every model-authored or source-authored string before inserting that string as plain content. It uses the validated English presentation text for assessment and item narratives, then appends deterministic source identifiers and canonical references directly from `ObservationAnalysisResult`:
 
 - findings retain their IDs and `evidence_refs`;
 - hypotheses retain their IDs, `supported_by`, and `knowledge_refs` and are labeled as possible explanations;
@@ -57,9 +59,15 @@ After draft validation, a pure renderer builds Markdown. It chooses one internal
 
 Empty collections receive restrained absence text derived from the source state, never model-authored filler. The renderer builds the final immutable envelope with identity copied from the result and time supplied by an injected UTC clock. A final strict validation rejects blank content or a non-UTC time.
 
-This split makes membership and traceability mechanically verifiable. Like any single-model paraphrase, preserving meaning inside English prose remains an agent instruction and testable behavioral obligation rather than something a lexical validator can prove for every possible sentence.
+The final report presents the correlated `observation_id` and `observation_run_id` under deterministic English labels. The raw Observation name, description, and analytical objective remain agent input but are not copied directly into Markdown, because the source values may be non-English or contain document-control syntax. Adding separately declared English presentations for those context fields is outside this correction and would require a future contract decision.
+
+This split makes membership, structure, and traceability mechanically verifiable. Like any single-model paraphrase, preserving meaning inside English prose remains an agent instruction and testable behavioral obligation rather than something a lexical validator can prove for every possible sentence.
 
 Alternative considered: embed references in model-authored Markdown. Rejected because references are structured source-of-truth data and should not be copied or reformatted by a probabilistic component.
+
+Alternative considered: reject semantic drift through a deterministic keyword blacklist. Rejected because paraphrases can express the same prohibited meaning without the listed words, while valid uncertainty-preserving statements can contain those words in a negated form. Such a blacklist creates both false acceptance and false rejection without proving semantic safety.
+
+Alternative considered: invoke a second model as a semantic judge. Rejected because it adds a model request, latency, cost, and another probabilistic failure point while contradicting the one-request execution bound.
 
 ### 4. Use one isolated PydanticAI request with no tools and no retry
 
@@ -85,8 +93,9 @@ Alternative considered: persist automatically on generation success. Rejected be
 
 ## Risks / Trade-offs
 
-- **[A model can introduce subtle meaning drift inside an otherwise valid source-keyed paraphrase]** → Keep one narrow presentation field per source item, preserve identifiers and references deterministically, strongly instruct against new claims or certainty, and cover representative certainty/grounding violations with scripted adapter and integration tests.
-- **[English-only output may require translating future non-English source statements]** → Treat translation as presentation, retain source IDs and references, and require meaning/certainty preservation; localization remains deferred.
+- **[A model can introduce subtle meaning drift inside an otherwise valid source-keyed paraphrase]** → Keep one narrow presentation field per source item, preserve identifiers and references deterministically, strongly instruct against new claims or certainty, and cover representative certainty/grounding violations at the agent evaluation boundary. Do not claim lexical runtime proof of semantic equivalence.
+- **[English-only output may require translating future non-English source statements]** → Treat source statements as agent input for English presentation, retain source IDs and references, and render correlated Observation/run IDs instead of copying untranslated semantic-context prose; localization remains deferred.
+- **[Untrusted text can contain Markdown control syntax]** → Treat all dynamic strings as plain content, normalize line breaks, escape Markdown controls, and let deterministic renderer-owned constants provide the entire document structure.
 - **[A default Markdown layout may become mistaken for a permanent contract]** → Test semantic sections and source coverage rather than exact full-document snapshots or fixed heading order.
 - **[Model output length grows with large analysis results]** → Keep a configurable output-token ceiling and fail closed on truncation/invalid typed output; pagination and report splitting are outside MVP scope.
 - **[New report-specific settings enlarge configuration slightly]** → Reuse all shared OpenRouter routing and timeout settings and add only `observation_report_model="openai/gpt-5.6-terra"` and `observation_report_max_output_tokens=8_192` defaults.

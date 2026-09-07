@@ -6,8 +6,9 @@ The MVP can now produce a validated `ObservationAnalysisResult`, but it cannot y
 
 - Add an English-language Report Generation capability that converts one validated `ObservationAnalysisResult` plus minimal Observation semantic context into one Markdown `ObservationReport`.
 - Add a strict framework-neutral report request, output envelope, agent port, and typed execution outcome around the existing analysis-result contract.
-- Use a bounded PydanticAI presentation adapter with no tools or retrieval capability and validate its Markdown output before constructing the report artifact.
+- Use a bounded PydanticAI presentation adapter with no tools or retrieval capability, validate its source-keyed structured output, and construct all Markdown structure deterministically.
 - Preserve observation and run identity, represent every input finding, hypothesis, limitation, and available traceability reference without adding analysis, recommendations, or certainty.
+- Treat model-authored and source-authored text as plain untrusted content: deterministic code enforces structure, membership, identity, and traceability, while English semantic faithfulness remains an agent-instruction and evaluation obligation rather than a lexical runtime classifier.
 - Keep exact Markdown headings and engineer/operator template variants outside the public contract; require readable English organization and semantic completeness instead.
 - Keep persistence, ObservationRun lifecycle, top-level Observation execution, rendering, notification, localization, and public API behavior outside this change.
 
@@ -25,7 +26,7 @@ None.
 
 - Adds a focused backend report-generation package and a PydanticAI infrastructure adapter following existing agent integration patterns.
 - Reuses the existing reasoning contracts, PydanticAI dependency, OpenRouter configuration/composition conventions, and persistence-compatible report envelope; no dependency or database migration is required.
-- Adds unit, adapter, failure-boundary, and in-memory integration tests.
+- Adds unit, adapter, failure-boundary, adversarial presentation-evaluation, and in-memory integration tests.
 - Does not add or change HTTP endpoints, persistence repository behavior, frontend behavior, or runtime lifecycle semantics.
 
 ## Architecture References

@@ -9,7 +9,7 @@
 - [x] 2.1 Implement exact source-membership validation for the structured presentation draft: unchanged overall state, non-blank presentation fields, and duplicate-free exact finding IDs, hypothesis IDs, and positional limitation keys, independent of model-returned ordering; keep English-language behavior at the agent contract and evaluation boundary rather than adding a heuristic language detector.
 - [x] 2.2 Implement the pure Markdown renderer and report builder that restore source ordering, copy identity and injected UTC time, render readable assessment/findings/possible explanations/limitations, attach evidence/finding/knowledge references deterministically from `ObservationAnalysisResult`, and use deterministic absence text for empty collections.
 - [x] 2.3 Add validator and renderer tests covering populated and empty collections, `uncertain` with findings, all three traceability relations, reordered valid draft entries, presentation-level English translation, flexible headings, and exact source-item coverage without mutating the input.
-- [x] 2.4 Add negative tests for missing, unknown, and duplicate source keys; altered overall state; blank presentation; undeclared recommendation/root-cause sections; invented references or analytical items; invalid/non-UTC clock values; and partial output rejection.
+- [x] 2.4 Add negative tests for missing, unknown, and duplicate source keys; altered overall state; blank presentation; undeclared structured recommendation/root-cause fields or sections; invented references or analytical items; invalid/non-UTC clock values; and partial output rejection.
 
 ## 3. Bounded Report Execution
 
@@ -29,3 +29,10 @@
 - [x] 5.1 Add one representative in-memory integration test from correlated semantic context and a populated `ObservationAnalysisResult` through a scripted presentation completion to strict English Markdown, including uncertainty, findings, possible hypotheses, limitations, and deterministic evidence/finding/knowledge references.
 - [x] 5.2 Add integration coverage for `no_significant_findings` with empty findings/hypotheses; verify exact projection of report time, format, and content into the existing `ObservationReportInput` while retaining Observation/run identity for the repository's separate correlation boundary, without calling persistence or changing runtime lifecycle.
 - [x] 5.3 Run focused backend reporting tests and Ruff checks, then run `make check`; report failures accurately and leave archive, Observation execution integration, and pull-request actions for their separately approved workflow steps.
+
+## 6. Presentation-Boundary Correction
+
+- [ ] 6.1 Remove lexical semantic and partial Markdown-syntax blacklists from runtime validation; retain strict non-blank and exact source-membership validation, and make the deterministic renderer normalize line breaks and escape every model-authored or source-authored value so only renderer constants can create Markdown structure.
+- [ ] 6.2 Render the correlated Observation and run identifiers with deterministic English labels, and stop copying raw Observation name, description, or analytical-objective text into the final Markdown when no declared English context-presentation field exists.
+- [ ] 6.3 Replace blacklist-oriented tests with focused coverage for escaped Markdown/control input, harmless negated boundary language, structurally undeclared fields and items, non-English semantic context exclusion, renderer-owned headings, and agent-instruction/evaluation examples for recommendations, causal overstatement, certainty preservation, and English presentation.
+- [ ] 6.4 Run focused reporting tests and Ruff checks, run `make check`, and re-run bounded finding verification plus the repository implementation review before archive consideration.

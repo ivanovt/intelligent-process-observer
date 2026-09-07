@@ -28,7 +28,7 @@ The capability SHALL accept one strict `ObservationAnalysisResult` and minimal O
 
 ### Requirement: Produce the minimal Markdown ObservationReport envelope
 
-On success, the capability SHALL produce exactly one immutable `ObservationReport` containing the source `observation_id`, source `observation_run_id`, an injected UTC `generated_at`, `format="markdown"`, and non-blank Markdown `content`. The report SHALL have no domain schema version. Generation SHALL NOT mutate the source analysis result.
+On success, the capability SHALL produce exactly one immutable `ObservationReport` containing the source `observation_id`, source `observation_run_id`, an injected UTC `generated_at`, `format="markdown"`, and non-blank Markdown `content`. The report SHALL have no domain schema version. Generation SHALL NOT mutate the source analysis result. Only deterministic rendering code SHALL author Markdown structure; model-authored and source-authored strings SHALL be rendered as plain escaped content.
 
 #### Scenario: Build a correlated report
 
@@ -48,7 +48,7 @@ On success, the capability SHALL produce exactly one immutable `ObservationRepor
 
 ### Requirement: Present the complete analysis faithfully in English
 
-The Markdown report SHALL be written in English and SHALL clearly present the Observation identity or name, the source `overall_state`, every finding, every hypothesis, every limitation, and all traceability information available on those items. Findings SHALL remain grounded in their source `evidence_refs`. Hypotheses SHALL remain possible explanations, preserve their `supported_by` and `knowledge_refs`, and SHALL NOT be worded as confirmed causes. Empty findings, hypotheses, or limitations SHALL be represented honestly rather than filled with fabricated content. Reordering and presentation-level paraphrasing or translation are permitted only when meaning and certainty are preserved.
+The Markdown report SHALL be written in English and SHALL clearly present the Observation identity or an English-presented name, the source `overall_state`, every finding, every hypothesis, every limitation, and all traceability information available on those items. Findings SHALL remain grounded in their source `evidence_refs`. Hypotheses SHALL remain possible explanations, preserve their `supported_by` and `knowledge_refs`, and SHALL NOT be worded as confirmed causes. Empty findings, hypotheses, or limitations SHALL be represented honestly rather than filled with fabricated content. Reordering and presentation-level paraphrasing or translation are permitted only when meaning and certainty are preserved. Raw Observation name, description, or objective text SHALL NOT be copied directly into the final Markdown; the deterministic renderer SHALL use the correlated Observation and run identifiers unless an English presentation of that context is supplied through an explicitly declared presentation field.
 
 #### Scenario: Present a populated result
 
@@ -79,21 +79,35 @@ The Markdown report SHALL be written in English and SHALL clearly present the Ob
 - **WHEN** report generation succeeds
 - **THEN** the report does not invent an analytical limitation
 
+#### Scenario: Keep non-English semantic context out of the English artifact
+
+- **GIVEN** the Observation name, description, or analytical objective contains non-English text
+- **WHEN** report generation succeeds without a declared English presentation of those fields
+- **THEN** the Markdown presents the correlated Observation and run identifiers using deterministic English labels
+- **AND** it does not copy the non-English context text into the report
+
 ### Requirement: Keep report generation presentation-only
 
-The capability SHALL NOT create a new finding or hypothesis, alter `overall_state`, increase or add certainty, infer root cause, perform Lens or Relationship analysis, add a recommendation, expand the observed data scope, or use external/internal model knowledge as report evidence. The capability SHALL have no retrieval or other analytical tool capability.
+The capability SHALL NOT create a new finding or hypothesis, alter `overall_state`, increase or add certainty, infer root cause, perform Lens or Relationship analysis, add a recommendation, expand the observed data scope, or use external/internal model knowledge as report evidence. The capability SHALL have no retrieval or other analytical tool capability. Deterministic validation SHALL enforce the representable structural guarantees: exact source membership and item types, unchanged identity and `overall_state`, absence of undeclared fields or sections, source-owned references, and renderer-owned Markdown structure. Meaning and certainty preservation inside permitted English presentation prose SHALL be enforced by the agent instruction and adversarial evaluation boundary; runtime validation SHALL NOT use keyword blacklists, heuristic language detection, or another model invocation to claim proof of arbitrary prose equivalence.
 
-#### Scenario: Prevent analytical additions
+#### Scenario: Reject structurally representable analytical additions
 
-- **GIVEN** presentation output introduces an item not traceable to a supplied finding, hypothesis, limitation, or semantic-context field
+- **GIVEN** structured presentation output introduces an unknown item, source key, field, reference, or arbitrary section not declared by the report presentation contract
 - **WHEN** the output is validated
 - **THEN** generation fails and no `ObservationReport` is produced
 
 #### Scenario: Reject a recommendation section
 
-- **GIVEN** structured presentation output adds a recommendation, prescribed action, newly inferred root cause, or another undeclared analytical section
+- **GIVEN** structured presentation output adds a recommendation, prescribed action, newly inferred root cause, or another undeclared analytical field or section
 - **WHEN** the output is validated
 - **THEN** generation fails and no `ObservationReport` is produced
+
+#### Scenario: Evaluate semantic faithfulness without lexical classification
+
+- **GIVEN** the model supplies source-keyed English presentation prose for an admitted analytical item
+- **WHEN** report-generation behavior is evaluated
+- **THEN** representative adversarial cases verify that the agent preserves meaning and certainty and does not add recommendations or causal claims
+- **AND** runtime validation does not reject or accept the prose solely because it contains a keyword such as `recommendation` or `root cause`
 
 #### Scenario: Reject tool use
 
@@ -104,7 +118,7 @@ The capability SHALL NOT create a new finding or hypothesis, alter `overall_stat
 
 ### Requirement: Bound and isolate the presentation invocation
 
-One report-generation execution SHALL make at most one model request, SHALL disable retries, and SHALL expose no tools. Supplied analysis statements and references SHALL be treated as untrusted data rather than instructions. Provider or model state from other agents or report executions SHALL NOT become report input.
+One report-generation execution SHALL make at most one model request, SHALL disable retries, and SHALL expose no tools. Supplied analysis statements and references SHALL be treated as untrusted data rather than instructions. Provider or model state from other agents or report executions SHALL NOT become report input. Model-authored and source-authored strings SHALL NOT control Markdown headings, lists, blockquotes, links, code blocks, or other document structure.
 
 #### Scenario: Generate within the fixed request bound
 
@@ -119,6 +133,7 @@ One report-generation execution SHALL make at most one model request, SHALL disa
 - **WHEN** generation executes
 - **THEN** that text is treated only as reportable source data
 - **AND** it cannot enable a tool, alter the output contract, or disclose hidden execution context
+- **AND** it cannot create Markdown structure outside the deterministic renderer
 
 ### Requirement: Fail closed with a safe typed outcome
 
