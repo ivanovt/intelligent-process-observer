@@ -306,6 +306,35 @@ def test_renderer_escapes_all_dynamic_markdown_punctuation_and_normalizes_lines(
     ]
 
 
+@pytest.mark.parametrize(
+    ("presentation", "normalized"),
+    [
+        ("    indented code", "indented code"),
+        ("\tindented with a tab", "indented with a tab"),
+        ("line one  \nline two", "line one line two"),
+        ("line one\r\n\tline two", "line one line two"),
+    ],
+)
+def test_renderer_normalizes_structure_significant_whitespace(
+    presentation: str, normalized: str
+) -> None:
+    """Dynamic whitespace cannot create code blocks or hard line breaks."""
+    request = _request()
+    draft = _draft(request).model_copy(update={"overall_assessment": presentation})
+    report = build_report(request, draft, NOW)
+    assert f"> {normalized}" in report.content
+    assert ">     " not in report.content and "  \n" not in report.content
+
+
+@pytest.mark.parametrize("control", ["\x00", "\x01", "\x7f"])
+def test_report_builder_rejects_postgresql_incompatible_control_text(control: str) -> None:
+    """A successful report cannot contain non-renderable database text controls."""
+    request = _request()
+    draft = _draft(request).model_copy(update={"overall_assessment": f"assessment{control}content"})
+    with pytest.raises(ValueError, match="control character"):
+        build_report(request, draft, NOW)
+
+
 def test_observation_report_normalizes_equivalent_utc_timezones() -> None:
     """UTC-offset-zero injected clocks are accepted and normalized to canonical UTC."""
     request = _request()

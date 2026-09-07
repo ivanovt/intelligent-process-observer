@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import string
+import unicodedata
 from collections.abc import Hashable, Iterable
 from datetime import datetime, timedelta
 
@@ -137,6 +138,7 @@ def _validate_presentation_text(value: str) -> None:
     """Reject blank model prose without trying to classify its meaning."""
     if not value.strip():
         raise ValueError("presentation text must not be blank")
+    _normalize_plain_text(value)
 
 
 def _presentation_lines(value: str) -> list[str]:
@@ -153,8 +155,16 @@ def _empty_findings_text(overall_state: str) -> str:
 
 def _markdown_text(value: object) -> str:
     """Render untrusted source data as one escaped Markdown text fragment."""
-    text = str(value).replace("\r\n", "\n").replace("\r", "\n").replace("\n", " ")
-    return text.translate(_MARKDOWN_ESCAPE_TABLE)
+    return _normalize_plain_text(str(value)).translate(_MARKDOWN_ESCAPE_TABLE)
+
+
+def _normalize_plain_text(value: str) -> str:
+    """Collapse structural whitespace and reject non-renderable control characters."""
+    if any(
+        unicodedata.category(character) == "Cc" and not character.isspace() for character in value
+    ):
+        raise ValueError("report text contains a non-renderable control character")
+    return " ".join(value.split())
 
 
 def _reference_lines(label: str, references: tuple[EvidenceReference, ...]) -> list[str]:

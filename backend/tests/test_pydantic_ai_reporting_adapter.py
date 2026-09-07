@@ -9,7 +9,7 @@ import httpx
 import pytest
 from openai import APITimeoutError
 from pydantic_ai.exceptions import ModelAPIError, UnexpectedModelBehavior
-from pydantic_ai.messages import ModelResponse, ToolCallPart
+from pydantic_ai.messages import ModelResponse, NativeToolCallPart, ToolCallPart
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 
 from app.infrastructure.agents.pydantic_ai_reporting import PydanticAIReportGenerationAgent
@@ -20,6 +20,7 @@ from app.reporting.contracts import (
     ReportPresentationDraft,
     ReportSemanticContext,
 )
+from app.reporting.executor import ReportGenerationExecutor
 
 
 def _run(coroutine):
@@ -92,6 +93,8 @@ def test_adapter_uses_one_typed_tool_free_request_with_bounded_settings() -> Non
         if part.part_kind == "system-prompt"
     ).lower()
     assert "english" in system and "untrusted data" in system
+    assert "faithfully translate or paraphrase" in system and "without omission" in system
+    assert "modality" in system and "uncertainty" in system
     assert "recommendations" in system and "root causes" in system and "certainty" in system
     assert "possible explanations" in system and "confirmed causes" in system
 
@@ -132,6 +135,16 @@ def test_adapter_rejects_non_output_tools_and_propagates_timeout_and_cancellatio
     )
     with pytest.raises(ReportPolicyViolation):
         _run(PydanticAIReportGenerationAgent(model).complete_presentation(request))
+
+    native_model, _ = _scripted_model(
+        [lambda _: ModelResponse(parts=[NativeToolCallPart("tool_search", {"query": "x"})])]
+    )
+    native_outcome = _run(
+        ReportGenerationExecutor(PydanticAIReportGenerationAgent(native_model)).execute(request)
+    )
+    assert native_outcome.outcome == "failure"
+    assert native_outcome.code == "report_policy_violated"
+    assert native_outcome.component == "report_generation"
 
     undeclared = _draft(request).model_dump(mode="json") | {"root_cause": "invented"}
     model, _ = _scripted_model([_output(undeclared)])
