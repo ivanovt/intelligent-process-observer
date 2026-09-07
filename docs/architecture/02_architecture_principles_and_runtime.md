@@ -125,6 +125,10 @@ completed | partial | failed
 
 Не се използва правило „достатъчно резултати“. Timeout трябва да доведе съответния LensRun до terminal failure state.
 
+`cancelled` също е terminal lifecycle status, но използва отделен abort path: вече
+terminal LensRuns се запазват, незавършените LensRuns и ObservationRun се terminalize-ват
+като `cancelled`, и post-JOIN stages не стартират (ADR-165).
+
 ### 6.3. Degraded continuation
 
 ```text
@@ -391,6 +395,7 @@ Stage A -> versioned structured artifact -> Stage B
 - `partial` остава usable;
 - failed Lens -> unavailable evidence, не normal state;
 - all Lens unusable -> Observation failed / STOP;
+- top-level cancellation -> preserve terminal LensRuns, cancel unfinished LensRuns and ObservationRun, then STOP;
 - Relationship missing condition evidence -> `applicability=unknown`;
 - applicable Relationship с missing expected evidence -> `state=uncertain`;
 - Reasoning може да върне `overall_state=uncertain` дори при един или повече валидни findings;

@@ -6,7 +6,7 @@ import json
 from datetime import UTC, datetime
 from uuid import UUID
 
-from sqlalchemy import DateTime, String, cast, select
+from sqlalchemy import DateTime, String, cast, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
@@ -261,17 +261,38 @@ class RuntimePersistenceRepository:
     ) -> ObservationRunModel:
         """Advance one ObservationRun through its approved lifecycle and record its reason."""
 
-        validate_observation_run_transition(
-            ObservationRunStatus(observation_run.status), target, reason
+        current = ObservationRunStatus(observation_run.status)
+        validate_observation_run_transition(current, target, reason)
+        timestamp = now or datetime.now(UTC)
+        values: dict[str, object] = {
+            "status": target.value,
+            "reason": self._reason_payload(reason),
+        }
+        if target is ObservationRunStatus.RUNNING:
+            values["started_at"] = timestamp
+        else:
+            values["finished_at"] = timestamp
+        result = await session.execute(
+            update(ObservationRunModel)
+            .where(
+                ObservationRunModel.id == observation_run.id,
+                ObservationRunModel.status == current.value,
+            )
+            .values(**values)
+            .execution_options(synchronize_session=False)
         )
+        if result.rowcount != 1:
+            raise ValueError("ObservationRun persisted lifecycle state changed before transition")
+        # Keep lifecycle writes at an explicit caller-transaction-owned flush boundary.
+        # Do not mutate the loaded model until the guarded UPDATE is durable in the
+        # current transaction; a failed flush must leave the in-memory state truthful.
+        await session.flush()
         observation_run.status = target.value
         observation_run.reason = self._reason_payload(reason)
-        timestamp = now or datetime.now(UTC)
         if target is ObservationRunStatus.RUNNING:
             observation_run.started_at = timestamp
         else:
             observation_run.finished_at = timestamp
-        await session.flush()
         return observation_run
 
     async def advance_lens_run(
@@ -283,18 +304,91 @@ class RuntimePersistenceRepository:
         reason: StructuredReason | None = None,
         now: datetime | None = None,
     ) -> LensRunModel:
-        """Advance one LensRun and preserve required partial or failure reason metadata."""
+        """Advance one LensRun and preserve required terminal reason metadata."""
 
-        validate_lens_run_transition(LensRunStatus(lens_run.status), target, reason)
+        current = LensRunStatus(lens_run.status)
+        validate_lens_run_transition(current, target, reason)
+        timestamp = now or datetime.now(UTC)
+        values: dict[str, object] = {
+            "status": target.value,
+            "reason": self._reason_payload(reason),
+        }
+        if target is LensRunStatus.RUNNING:
+            values["started_at"] = timestamp
+        else:
+            values["finished_at"] = timestamp
+        result = await session.execute(
+            update(LensRunModel)
+            .where(
+                LensRunModel.id == lens_run.id,
+                LensRunModel.status == current.value,
+            )
+            .values(**values)
+            .execution_options(synchronize_session=False)
+        )
+        if result.rowcount != 1:
+            raise ValueError("LensRun persisted lifecycle state changed before transition")
+        # Keep lifecycle writes at an explicit caller-transaction-owned flush boundary.
+        # Do not mutate the loaded model until the guarded UPDATE is durable in the
+        # current transaction; a failed flush must leave the in-memory state truthful.
+        await session.flush()
         lens_run.status = target.value
         lens_run.reason = self._reason_payload(reason)
-        timestamp = now or datetime.now(UTC)
         if target is LensRunStatus.RUNNING:
             lens_run.started_at = timestamp
         else:
             lens_run.finished_at = timestamp
-        await session.flush()
         return lens_run
+
+    async def cancel_observation_execution(
+        self,
+        session: AsyncSession,
+        observation_run: ObservationRunModel,
+        *,
+        now: datetime | None = None,
+    ) -> ObservationRunModel:
+        """Terminalize one running aggregate without rewriting completed child work.
+
+        The caller owns the surrounding transaction and must roll it back when this
+        guarded operation rejects a contradictory parent terminalization.
+        """
+
+        timestamp = now or datetime.now(UTC)
+        reason = StructuredReason(code="execution_cancelled")
+        reason_payload = self._reason_payload(reason)
+        parent_result = await session.execute(
+            update(ObservationRunModel)
+            .where(
+                ObservationRunModel.id == observation_run.id,
+                ObservationRunModel.status == ObservationRunStatus.RUNNING.value,
+            )
+            .values(
+                status=ObservationRunStatus.CANCELLED.value,
+                reason=reason_payload,
+                finished_at=timestamp,
+            )
+            .execution_options(synchronize_session=False)
+        )
+        if parent_result.rowcount != 1:
+            raise ValueError("ObservationRun persisted lifecycle state changed before cancellation")
+
+        await session.execute(
+            update(LensRunModel)
+            .where(
+                LensRunModel.observation_run_id == observation_run.id,
+                LensRunModel.status.in_((LensRunStatus.PENDING.value, LensRunStatus.RUNNING.value)),
+            )
+            .values(
+                status=LensRunStatus.CANCELLED.value,
+                reason=reason_payload,
+                finished_at=timestamp,
+            )
+            .execution_options(synchronize_session=False)
+        )
+        observation_run.status = ObservationRunStatus.CANCELLED.value
+        observation_run.reason = reason_payload
+        observation_run.finished_at = timestamp
+        return observation_run
 
     async def persist_lens_analysis_result(
         self,
@@ -305,7 +399,8 @@ class RuntimePersistenceRepository:
         """Persist one eligible Lens artifact after validating its aggregate correlation.
 
         Failed Alert and Log runs are rejected because their absence is meaningful; a
-        failed Metric artifact remains storable as non-usable traceability data.
+        failed Metric artifact remains storable as non-usable traceability data. A
+        cancelled LensRun cannot receive an artifact.
         """
 
         # Avoid implicit lazy I/O when callers pass a LensRun loaded without its parent.
@@ -316,6 +411,11 @@ class RuntimePersistenceRepository:
                     ObservationRunModel.id == lens_run.observation_run_id
                 )
             )
+        await session.refresh(
+            lens_run,
+            attribute_names=["status", "reason"],
+            with_for_update=True,
+        )
         self._validate_lens_result(lens_run, observation_run, result)
         existing_result = await session.scalar(
             select(LensAnalysisResultModel.id).where(
@@ -425,7 +525,8 @@ class RuntimePersistenceRepository:
         """Load a runtime aggregate with every available artifact in eager async-safe form.
 
         Missing results remain absent rather than becoming empty placeholders, preserving
-        the failed Alert/Log distinction and early-failed ObservationRun semantics.
+        the failed Alert/Log distinction, cancelled LensRuns, and terminal ObservationRun
+        semantics. Previously committed child and Observation-level artifacts remain loaded.
         """
 
         result = await session.scalars(
@@ -463,6 +564,8 @@ class RuntimePersistenceRepository:
         cannot be attached to a contradictory runtime aggregate.
         """
 
+        if lens_run.status == LensRunStatus.CANCELLED.value:
+            raise ValueError("Cancelled LensRun cannot have an analysis result")
         if result.result_type.value != lens_run.lens_type:
             raise ValueError("Lens analysis result type does not match LensRun type")
         if result.status.value != lens_run.status:

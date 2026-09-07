@@ -1,5 +1,16 @@
 # Changelog
 
+## 6.5 — 2026-09-07
+
+- добавен ADR-164: всеки retry, restart или re-run създава нов `ObservationRun` с
+  нови `LensRun` identities;
+- съществуващи runtime runs не се възобновяват и не преминават повторно към `running`;
+- automatic-retry trigger policy, overlap, idempotency, replay и artifact reuse остават Open;
+- добавен ADR-165: `cancelled` е terminal ObservationRun/LensRun status; top-level
+  cancellation запазва вече terminal LensRuns и артефакти, terminalize-ва само
+  незавършените runs, спира downstream stages и се propagate-ва към caller-а;
+- external cancellation API/trigger остава Open; cancellation не стартира automatic retry.
+
 ## 6.4 — 2026-08-31
 
 Фиксиран exact Alert Lens definition/API/persistence contract преди `add-alert-lens-definition`:

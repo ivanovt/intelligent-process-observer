@@ -25,6 +25,8 @@ from app.infrastructure.persistence.runtime_contracts import (
     ObservationRunStatus,
     RelationshipEvaluationInput,
     StructuredReason,
+    is_terminal_lens_run,
+    is_terminal_observation_run,
     is_usable_lens_result,
     validate_lens_run_transition,
     validate_observation_run_transition,
@@ -32,8 +34,10 @@ from app.infrastructure.persistence.runtime_contracts import (
 
 
 class RecordingSession:
-    def __init__(self) -> None:
+    def __init__(self, *, update_rowcount: int = 1) -> None:
         self.added: list[object] = []
+        self.update_rowcount = update_rowcount
+        self.statements: list[object] = []
 
     def add(self, value: object) -> None:
         self.added.append(value)
@@ -41,8 +45,15 @@ class RecordingSession:
     async def flush(self) -> None:
         return None
 
+    async def refresh(self, _instance, **_kwargs) -> None:
+        return None
+
     async def scalar(self, _statement) -> None:
         return None
+
+    async def execute(self, statement):
+        self.statements.append(statement)
+        return type("UpdateResult", (), {"rowcount": self.update_rowcount})()
 
 
 class ReturningScalarResult:
@@ -138,7 +149,17 @@ def test_observation_and_lens_lifecycle_transitions() -> None:
         ObservationRunStatus.FAILED,
         StructuredReason(code="analysis_failed"),
     )
+    validate_observation_run_transition(
+        ObservationRunStatus.RUNNING,
+        ObservationRunStatus.CANCELLED,
+        StructuredReason(code="execution_cancelled"),
+    )
     validate_lens_run_transition(LensRunStatus.PENDING, LensRunStatus.RUNNING)
+    validate_lens_run_transition(
+        LensRunStatus.PENDING,
+        LensRunStatus.FAILED,
+        StructuredReason(code="execution_aborted", component="fanout"),
+    )
     for terminal_status in (LensRunStatus.COMPLETED,):
         validate_lens_run_transition(LensRunStatus.RUNNING, terminal_status)
     for terminal_status in (LensRunStatus.PARTIAL, LensRunStatus.FAILED):
@@ -147,6 +168,16 @@ def test_observation_and_lens_lifecycle_transitions() -> None:
             terminal_status,
             StructuredReason(code="analysis_failed"),
         )
+    for current in (LensRunStatus.PENDING, LensRunStatus.RUNNING):
+        validate_lens_run_transition(
+            current,
+            LensRunStatus.CANCELLED,
+            StructuredReason(code="execution_cancelled"),
+        )
+
+    assert is_terminal_observation_run(ObservationRunStatus.CANCELLED) is True
+    assert is_terminal_lens_run(LensRunStatus.CANCELLED) is True
+    assert is_usable_lens_result(LensRunStatus.CANCELLED) is False
 
     with pytest.raises(ValueError):
         validate_observation_run_transition(
@@ -154,12 +185,45 @@ def test_observation_and_lens_lifecycle_transitions() -> None:
         )
     with pytest.raises(ValueError):
         validate_lens_run_transition(LensRunStatus.RUNNING, LensRunStatus.RUNNING)
+    for reason in (
+        None,
+        StructuredReason(code="analysis_failed", component="fanout"),
+        StructuredReason(code="execution_aborted"),
+    ):
+        with pytest.raises(ValueError):
+            validate_lens_run_transition(
+                LensRunStatus.PENDING,
+                LensRunStatus.FAILED,
+                reason,
+            )
     with pytest.raises(ValueError, match="structured reason"):
         validate_observation_run_transition(
             ObservationRunStatus.RUNNING, ObservationRunStatus.FAILED
         )
     with pytest.raises(ValueError, match="structured reason"):
         validate_lens_run_transition(LensRunStatus.RUNNING, LensRunStatus.PARTIAL)
+    with pytest.raises(ValueError, match="execution_cancelled"):
+        validate_lens_run_transition(
+            LensRunStatus.RUNNING,
+            LensRunStatus.CANCELLED,
+            StructuredReason(code="analysis_failed"),
+        )
+    for transition in (validate_observation_run_transition, validate_lens_run_transition):
+        with pytest.raises(ValueError, match="cannot include a component"):
+            transition(
+                ObservationRunStatus.RUNNING
+                if transition is validate_observation_run_transition
+                else LensRunStatus.RUNNING,
+                ObservationRunStatus.CANCELLED
+                if transition is validate_observation_run_transition
+                else LensRunStatus.CANCELLED,
+                StructuredReason(code="execution_cancelled", component="orchestrator"),
+            )
+    with pytest.raises(ValueError):
+        validate_lens_run_transition(
+            LensRunStatus.CANCELLED,
+            LensRunStatus.COMPLETED,
+        )
     with pytest.raises(ValidationError):
         StructuredReason(code="failure", message="diagnostic text")
 
@@ -393,6 +457,46 @@ def test_failed_alert_and_log_runs_reject_result_attachment() -> None:
             )
 
 
+def test_cancelled_lens_run_rejects_result_attachment() -> None:
+    repository = RuntimePersistenceRepository()
+    observation_run = pending_observation_run()
+    lens_run = pending_lens_run(observation_run, LensType.METRIC)
+    lens_run.status = LensRunStatus.CANCELLED.value
+    lens_run.reason = {"code": "execution_cancelled", "component": None}
+
+    with pytest.raises(ValueError, match="Cancelled LensRun"):
+        run(
+            repository.persist_lens_analysis_result(
+                RecordingSession(), lens_run, result_input(lens_run, LensRunStatus.COMPLETED)
+            )
+        )
+
+
+def test_result_attachment_refreshes_the_durable_lens_lifecycle_state() -> None:
+    class CancellationRefreshingSession(RecordingSession):
+        async def refresh(self, instance, **kwargs) -> None:
+            assert kwargs == {
+                "attribute_names": ["status", "reason"],
+                "with_for_update": True,
+            }
+            instance.status = LensRunStatus.CANCELLED.value
+            instance.reason = {"code": "execution_cancelled", "component": None}
+
+    repository = RuntimePersistenceRepository()
+    observation_run = pending_observation_run()
+    lens_run = pending_lens_run(observation_run, LensType.METRIC)
+    lens_run.status = LensRunStatus.COMPLETED.value
+
+    with pytest.raises(ValueError, match="Cancelled LensRun"):
+        run(
+            repository.persist_lens_analysis_result(
+                CancellationRefreshingSession(),
+                lens_run,
+                result_input(lens_run, LensRunStatus.COMPLETED),
+            )
+        )
+
+
 def test_terminal_lifecycle_operations_persist_structured_reasons() -> None:
     repository = RuntimePersistenceRepository()
     session = RecordingSession()
@@ -419,6 +523,83 @@ def test_terminal_lifecycle_operations_persist_structured_reasons() -> None:
         )
     )
     assert lens_run.reason == {"code": "optional_analysis_failed", "component": None}
+
+    cancelled_observation_run = pending_observation_run()
+    run(
+        repository.advance_observation_run(
+            session, cancelled_observation_run, ObservationRunStatus.RUNNING
+        )
+    )
+    run(
+        repository.advance_observation_run(
+            session,
+            cancelled_observation_run,
+            ObservationRunStatus.CANCELLED,
+            reason=StructuredReason(code="execution_cancelled"),
+        )
+    )
+    assert cancelled_observation_run.reason == {"code": "execution_cancelled", "component": None}
+
+    cancelled_lens_run = pending_lens_run(pending_observation_run(), LensType.METRIC)
+    run(
+        repository.advance_lens_run(
+            session,
+            cancelled_lens_run,
+            LensRunStatus.CANCELLED,
+            reason=StructuredReason(code="execution_cancelled"),
+        )
+    )
+    assert cancelled_lens_run.reason == {"code": "execution_cancelled", "component": None}
+
+
+@pytest.mark.parametrize(
+    ("run_factory", "advance", "target"),
+    (
+        (pending_observation_run, "advance_observation_run", ObservationRunStatus.RUNNING),
+        (
+            lambda: pending_lens_run(pending_observation_run(), LensType.METRIC),
+            "advance_lens_run",
+            LensRunStatus.RUNNING,
+        ),
+    ),
+)
+def test_lifecycle_transition_rejects_a_stale_persisted_state(
+    run_factory, advance: str, target: ObservationRunStatus | LensRunStatus
+) -> None:
+    repository = RuntimePersistenceRepository()
+    session = RecordingSession(update_rowcount=0)
+    runtime_run = run_factory()
+
+    with pytest.raises(ValueError, match="persisted lifecycle state changed"):
+        run(getattr(repository, advance)(session, runtime_run, target))
+
+    assert runtime_run.status == "pending"
+    assert runtime_run.reason is None
+    assert len(session.statements) == 1
+
+
+def test_cancellation_terminalization_is_guarded_and_transaction_owned() -> None:
+    repository = RuntimePersistenceRepository()
+    session = RecordingSession()
+    observation_run = pending_observation_run()
+    observation_run.status = ObservationRunStatus.RUNNING.value
+    timestamp = datetime(2026, 9, 7, 12, tzinfo=UTC)
+
+    result = run(repository.cancel_observation_execution(session, observation_run, now=timestamp))
+
+    assert result is observation_run
+    assert observation_run.status == ObservationRunStatus.CANCELLED.value
+    assert observation_run.reason == {"code": "execution_cancelled", "component": None}
+    assert observation_run.finished_at == timestamp
+    assert len(session.statements) == 2
+
+    stale_session = RecordingSession(update_rowcount=0)
+    stale_run = pending_observation_run()
+    stale_run.status = ObservationRunStatus.RUNNING.value
+    with pytest.raises(ValueError, match="before cancellation"):
+        run(repository.cancel_observation_execution(stale_session, stale_run, now=timestamp))
+    assert stale_run.status == ObservationRunStatus.RUNNING.value
+    assert len(stale_session.statements) == 1
 
 
 def test_missing_artifact_is_distinct_from_valid_empty_optional_sections() -> None:

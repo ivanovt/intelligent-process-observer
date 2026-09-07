@@ -411,6 +411,382 @@ async def _seed_observation(session: AsyncSession) -> ObservationModel:
     return observation
 
 
+def test_lifecycle_transition_rejects_stale_persisted_runtime_state(
+    session_factory: async_sessionmaker[AsyncSession],
+) -> None:
+    """A stale session cannot overwrite a terminal run committed by another session."""
+
+    async def scenario() -> None:
+        repository = RuntimePersistenceRepository()
+        async with session_factory() as session:
+            observation = await _seed_observation(session)
+            observation_run = await repository.create_observation_run(
+                session, ObservationRunInput(observation_id=observation.id)
+            )
+            await repository.advance_observation_run(
+                session, observation_run, ObservationRunStatus.RUNNING
+            )
+            lens_run = await repository.create_lens_run(
+                session,
+                observation_run,
+                LensRunInput(lens_id=f"stale-{uuid4()}", lens_type=LensType.METRIC),
+            )
+            await repository.advance_lens_run(session, lens_run, LensRunStatus.RUNNING)
+            observation_run_id, lens_run_id = observation_run.id, lens_run.id
+            await session.commit()
+
+        async with session_factory() as stale_session:
+            stale_observation_run = await stale_session.get(ObservationRunModel, observation_run_id)
+            stale_lens_run = await stale_session.get(LensRunModel, lens_run_id)
+            assert stale_observation_run is not None and stale_lens_run is not None
+            async with session_factory() as terminal_session:
+                terminal_observation_run = await terminal_session.get(
+                    ObservationRunModel, observation_run_id
+                )
+                terminal_lens_run = await terminal_session.get(LensRunModel, lens_run_id)
+                assert terminal_observation_run is not None and terminal_lens_run is not None
+                await repository.advance_observation_run(
+                    terminal_session,
+                    terminal_observation_run,
+                    ObservationRunStatus.FAILED,
+                    reason=StructuredReason(code="execution_failed"),
+                )
+                await repository.advance_lens_run(
+                    terminal_session,
+                    terminal_lens_run,
+                    LensRunStatus.FAILED,
+                    reason=StructuredReason(code="execution_aborted"),
+                )
+                await terminal_session.commit()
+            with pytest.raises(ValueError, match="persisted lifecycle state changed"):
+                await repository.advance_observation_run(
+                    stale_session,
+                    stale_observation_run,
+                    ObservationRunStatus.CANCELLED,
+                    reason=StructuredReason(code="execution_cancelled"),
+                )
+            with pytest.raises(ValueError, match="persisted lifecycle state changed"):
+                await repository.advance_lens_run(
+                    stale_session,
+                    stale_lens_run,
+                    LensRunStatus.CANCELLED,
+                    reason=StructuredReason(code="execution_cancelled"),
+                )
+            await stale_session.rollback()
+
+        async with session_factory() as session:
+            persisted_observation_run = await session.get(ObservationRunModel, observation_run_id)
+            persisted_lens_run = await session.get(LensRunModel, lens_run_id)
+            assert persisted_observation_run is not None and persisted_lens_run is not None
+            assert persisted_observation_run.status == ObservationRunStatus.FAILED.value
+            assert persisted_observation_run.reason == {
+                "code": "execution_failed",
+                "component": None,
+            }
+            assert persisted_lens_run.status == LensRunStatus.FAILED.value
+            assert persisted_lens_run.reason == {
+                "code": "execution_aborted",
+                "component": None,
+            }
+
+    asyncio.run(scenario())
+
+
+def test_cancellation_terminalization_preserves_terminal_artifacts_and_retrieval(
+    session_factory: async_sessionmaker[AsyncSession],
+) -> None:
+    async def scenario() -> None:
+        repository = RuntimePersistenceRepository()
+        timestamp = datetime(2026, 9, 7, 12, tzinfo=UTC)
+        async with session_factory() as session:
+            observation = await _seed_observation(session)
+            observation_run = await repository.create_observation_run(
+                session, ObservationRunInput(observation_id=observation.id)
+            )
+            await repository.advance_observation_run(
+                session, observation_run, ObservationRunStatus.RUNNING
+            )
+            pending = await repository.create_lens_run(
+                session,
+                observation_run,
+                LensRunInput(lens_id=f"pending-{uuid4()}", lens_type=LensType.METRIC),
+            )
+            running = await repository.create_lens_run(
+                session,
+                observation_run,
+                LensRunInput(lens_id=f"running-{uuid4()}", lens_type=LensType.ALERT),
+            )
+            completed = await repository.create_lens_run(
+                session,
+                observation_run,
+                LensRunInput(lens_id=f"completed-{uuid4()}", lens_type=LensType.METRIC),
+            )
+            partial = await repository.create_lens_run(
+                session,
+                observation_run,
+                LensRunInput(lens_id=f"partial-{uuid4()}", lens_type=LensType.METRIC),
+            )
+            failed = await repository.create_lens_run(
+                session,
+                observation_run,
+                LensRunInput(lens_id=f"failed-{uuid4()}", lens_type=LensType.ALERT),
+            )
+            already_cancelled = await repository.create_lens_run(
+                session,
+                observation_run,
+                LensRunInput(lens_id=f"cancelled-{uuid4()}", lens_type=LensType.LOG),
+            )
+            await repository.advance_lens_run(session, running, LensRunStatus.RUNNING)
+            await repository.advance_lens_run(session, completed, LensRunStatus.RUNNING)
+            await repository.advance_lens_run(session, completed, LensRunStatus.COMPLETED)
+            await repository.persist_lens_analysis_result(
+                session,
+                completed,
+                _result_input(
+                    completed.id,
+                    observation.id,
+                    observation_run.id,
+                    completed.lens_id,
+                    LensType.METRIC,
+                    LensRunStatus.COMPLETED,
+                ),
+            )
+            partial_reason = StructuredReason(code="optional_analysis_failed")
+            await repository.advance_lens_run(session, partial, LensRunStatus.RUNNING)
+            await repository.advance_lens_run(
+                session, partial, LensRunStatus.PARTIAL, reason=partial_reason
+            )
+            await repository.persist_lens_analysis_result(
+                session,
+                partial,
+                _result_input(
+                    partial.id,
+                    observation.id,
+                    observation_run.id,
+                    partial.lens_id,
+                    LensType.METRIC,
+                    LensRunStatus.PARTIAL,
+                    partial_reason,
+                ),
+            )
+            await repository.advance_lens_run(session, failed, LensRunStatus.RUNNING)
+            await repository.advance_lens_run(
+                session,
+                failed,
+                LensRunStatus.FAILED,
+                reason=StructuredReason(code="analysis_failed"),
+            )
+            await repository.advance_lens_run(
+                session,
+                already_cancelled,
+                LensRunStatus.CANCELLED,
+                reason=StructuredReason(code="execution_cancelled"),
+            )
+            observation_run_id = observation_run.id
+            pending_id, running_id = pending.id, running.id
+            preserved_ids = {
+                completed.id: (LensRunStatus.COMPLETED.value, None, True),
+                partial.id: (
+                    LensRunStatus.PARTIAL.value,
+                    {"code": "optional_analysis_failed", "component": None},
+                    True,
+                ),
+                failed.id: (
+                    LensRunStatus.FAILED.value,
+                    {"code": "analysis_failed", "component": None},
+                    False,
+                ),
+                already_cancelled.id: (
+                    LensRunStatus.CANCELLED.value,
+                    {"code": "execution_cancelled", "component": None},
+                    False,
+                ),
+            }
+            await session.commit()
+
+        async with session_factory() as session:
+            observation_run = await session.get(ObservationRunModel, observation_run_id)
+            assert observation_run is not None
+            await repository.cancel_observation_execution(session, observation_run, now=timestamp)
+            await session.commit()
+
+        async with session_factory() as session:
+            restored = await repository.get_observation_run(session, observation_run_id)
+            assert restored is not None
+            assert restored.status == ObservationRunStatus.CANCELLED.value
+            assert restored.reason == {"code": "execution_cancelled", "component": None}
+            assert restored.finished_at == timestamp
+            by_id = {lens_run.id: lens_run for lens_run in restored.lens_runs}
+            for lens_run_id in (pending_id, running_id):
+                cancelled = by_id[lens_run_id]
+                assert cancelled.status == LensRunStatus.CANCELLED.value
+                assert cancelled.reason == {"code": "execution_cancelled", "component": None}
+                assert cancelled.finished_at == timestamp
+                assert cancelled.analysis_result is None
+            for lens_run_id, (status, reason, has_artifact) in preserved_ids.items():
+                preserved = by_id[lens_run_id]
+                assert preserved.status == status
+                assert preserved.reason == reason
+                assert (preserved.analysis_result is not None) is has_artifact
+
+            cancelled_lens_run = by_id[pending_id]
+            with pytest.raises(ValueError, match="Cancelled LensRun"):
+                await repository.persist_lens_analysis_result(
+                    session,
+                    cancelled_lens_run,
+                    _result_input(
+                        cancelled_lens_run.id,
+                        restored.observation_id,
+                        restored.id,
+                        cancelled_lens_run.lens_id,
+                        LensType.METRIC,
+                        LensRunStatus.COMPLETED,
+                    ),
+                )
+            await session.rollback()
+
+    asyncio.run(scenario())
+
+
+def test_cancellation_terminalization_rolls_back_as_a_unit_and_rejects_stale_parent(
+    session_factory: async_sessionmaker[AsyncSession],
+) -> None:
+    async def scenario() -> None:
+        repository = RuntimePersistenceRepository()
+        async with session_factory() as session:
+            observation = await _seed_observation(session)
+            observation_run = await repository.create_observation_run(
+                session, ObservationRunInput(observation_id=observation.id)
+            )
+            await repository.advance_observation_run(
+                session, observation_run, ObservationRunStatus.RUNNING
+            )
+            pending = await repository.create_lens_run(
+                session,
+                observation_run,
+                LensRunInput(lens_id=f"rollback-pending-{uuid4()}", lens_type=LensType.METRIC),
+            )
+            running = await repository.create_lens_run(
+                session,
+                observation_run,
+                LensRunInput(lens_id=f"rollback-running-{uuid4()}", lens_type=LensType.ALERT),
+            )
+            await repository.advance_lens_run(session, running, LensRunStatus.RUNNING)
+            observation_run_id, pending_id, running_id = observation_run.id, pending.id, running.id
+            await session.commit()
+
+        async with session_factory() as session:
+            observation_run = await session.get(ObservationRunModel, observation_run_id)
+            assert observation_run is not None
+            await repository.cancel_observation_execution(session, observation_run)
+            await session.rollback()
+
+        async with session_factory() as session:
+            restored = await repository.get_observation_run(session, observation_run_id)
+            assert restored is not None
+            assert restored.status == ObservationRunStatus.RUNNING.value
+            by_id = {lens_run.id: lens_run for lens_run in restored.lens_runs}
+            assert by_id[pending_id].status == LensRunStatus.PENDING.value
+            assert by_id[running_id].status == LensRunStatus.RUNNING.value
+
+        async with session_factory() as stale_session:
+            stale_parent = await stale_session.get(ObservationRunModel, observation_run_id)
+            assert stale_parent is not None
+            async with session_factory() as session:
+                observation_run = await session.get(ObservationRunModel, observation_run_id)
+                assert observation_run is not None
+                await repository.cancel_observation_execution(session, observation_run)
+                await session.commit()
+            with pytest.raises(ValueError, match="before cancellation"):
+                await repository.cancel_observation_execution(stale_session, stale_parent)
+            await stale_session.rollback()
+
+        async with session_factory() as session:
+            restored = await repository.get_observation_run(session, observation_run_id)
+            assert restored is not None
+            assert restored.status == ObservationRunStatus.CANCELLED.value
+            by_id = {lens_run.id: lens_run for lens_run in restored.lens_runs}
+            assert by_id[pending_id].status == LensRunStatus.CANCELLED.value
+            assert by_id[running_id].status == LensRunStatus.CANCELLED.value
+
+    asyncio.run(scenario())
+
+
+def test_cancellation_rejects_artifact_from_an_already_loaded_child(
+    session_factory: async_sessionmaker[AsyncSession],
+) -> None:
+    """A stale LensRun cannot attach an artifact after aggregate cancellation commits."""
+
+    async def scenario() -> None:
+        repository = RuntimePersistenceRepository()
+        async with session_factory() as session:
+            observation = await _seed_observation(session)
+            observation_run = await repository.create_observation_run(
+                session, ObservationRunInput(observation_id=observation.id)
+            )
+            await repository.advance_observation_run(
+                session, observation_run, ObservationRunStatus.RUNNING
+            )
+            lens_run = await repository.create_lens_run(
+                session,
+                observation_run,
+                LensRunInput(lens_id=f"stale-artifact-{uuid4()}", lens_type=LensType.METRIC),
+            )
+            await repository.advance_lens_run(session, lens_run, LensRunStatus.RUNNING)
+            observation_id, observation_run_id, lens_run_id, lens_id = (
+                observation.id,
+                observation_run.id,
+                lens_run.id,
+                lens_run.lens_id,
+            )
+            await session.commit()
+
+        async with session_factory() as stale_session:
+            stale_lens_run = await stale_session.scalar(
+                select(LensRunModel)
+                .where(LensRunModel.id == lens_run_id)
+                .options(selectinload(LensRunModel.observation_run))
+            )
+            assert stale_lens_run is not None
+            async with session_factory() as cancellation_session:
+                running_observation_run = await cancellation_session.get(
+                    ObservationRunModel, observation_run_id
+                )
+                assert running_observation_run is not None
+                await repository.cancel_observation_execution(
+                    cancellation_session, running_observation_run
+                )
+                await cancellation_session.commit()
+
+            # This matches the candidate artifact locally.  Without the durable
+            # refresh/lock, the former implementation would validate and insert it.
+            stale_lens_run.status = LensRunStatus.COMPLETED.value
+            with stale_session.no_autoflush:
+                with pytest.raises(ValueError, match="Cancelled LensRun"):
+                    await repository.persist_lens_analysis_result(
+                        stale_session,
+                        stale_lens_run,
+                        _result_input(
+                            lens_run_id,
+                            observation_id,
+                            observation_run_id,
+                            lens_id,
+                            LensType.METRIC,
+                            LensRunStatus.COMPLETED,
+                        ),
+                    )
+            await stale_session.rollback()
+
+        async with session_factory() as session:
+            restored = await repository.get_observation_run(session, observation_run_id)
+            assert restored is not None
+            persisted_lens_run = next(item for item in restored.lens_runs if item.id == lens_run_id)
+            assert persisted_lens_run.status == LensRunStatus.CANCELLED.value
+            assert persisted_lens_run.analysis_result is None
+
+    asyncio.run(scenario())
+
+
 def test_alert_zero_record_walking_skeleton_persists_completed_result(
     session_factory: async_sessionmaker[AsyncSession],
 ) -> None:

@@ -26,11 +26,12 @@ provenance
 ## 2. Lens status и usability
 
 ```text
-terminal = completed | partial | failed
+terminal = completed | partial | failed | cancelled
 usable   = completed | partial, subject to type/data-quality rules
 ```
 
 `partial` означава usable mandatory result + failed/missing optional sub-analysis. `failed` означава липса на usable analytical result.
+`cancelled` означава, че top-level cancellation е прекъснала незавършен LensRun; то не е usable analytical result.
 
 За Metric history eligibility:
 
@@ -50,6 +51,9 @@ ALL LensRuns of current ObservationRun are terminal
 ```
 
 Не се използва early continuation. Timeout трябва да доведе LensRun до terminal failure.
+При top-level cancellation normal JOIN continuation се прекратява: terminal LensRuns се
+запазват, `pending|running` LensRuns и ObservationRun преминават към `cancelled`, след
+което cancellation се propagate-ва (ADR-165).
 
 ## 4. Post-JOIN gate
 
@@ -340,6 +344,11 @@ Log optional analytical tool / knowledge retrieval failed/timeout
 
 all Lens unusable
 -> Observation failed / STOP
+
+top-level cancellation
+-> preserve terminal LensRuns and committed artifacts
+-> pending/running LensRuns cancelled
+-> ObservationRun cancelled / STOP / propagate cancellation
 
 relationship condition evidence missing
 -> applicability unknown

@@ -15,18 +15,24 @@ from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 
 class ObservationRunStatus(StrEnum):
+    """Lifecycle states supported by a durable Observation execution."""
+
     PENDING = "pending"
     RUNNING = "running"
     COMPLETED = "completed"
     FAILED = "failed"
+    CANCELLED = "cancelled"
 
 
 class LensRunStatus(StrEnum):
+    """Lifecycle states supported by one durable Lens execution."""
+
     PENDING = "pending"
     RUNNING = "running"
     COMPLETED = "completed"
     PARTIAL = "partial"
     FAILED = "failed"
+    CANCELLED = "cancelled"
 
 
 class LensType(StrEnum):
@@ -40,7 +46,7 @@ class PersistenceModel(BaseModel):
 
 
 class StructuredReason(PersistenceModel):
-    """Compact, machine-readable primary reason for partial or failed runtime work."""
+    """Compact, machine-readable primary reason for partial, failed, or cancelled work."""
 
     code: str = Field(min_length=1)
     component: str | None = None
@@ -225,14 +231,23 @@ class ObservationReportInput(PersistenceModel):
 
 
 def is_terminal_observation_run(status: ObservationRunStatus) -> bool:
-    return status in {ObservationRunStatus.COMPLETED, ObservationRunStatus.FAILED}
+    """Return whether an ObservationRun status cannot accept another transition."""
+
+    return status in {
+        ObservationRunStatus.COMPLETED,
+        ObservationRunStatus.FAILED,
+        ObservationRunStatus.CANCELLED,
+    }
 
 
 def is_terminal_lens_run(status: LensRunStatus) -> bool:
+    """Return whether a LensRun status cannot accept another transition."""
+
     return status in {
         LensRunStatus.COMPLETED,
         LensRunStatus.PARTIAL,
         LensRunStatus.FAILED,
+        LensRunStatus.CANCELLED,
     }
 
 
@@ -247,7 +262,7 @@ def validate_observation_run_transition(
     target: ObservationRunStatus,
     reason: StructuredReason | None = None,
 ) -> None:
-    """Enforce the ObservationRun state direction and its required failure reason."""
+    """Enforce forward ObservationRun transitions and required terminal reasons."""
 
     if current is ObservationRunStatus.PENDING and target is ObservationRunStatus.RUNNING:
         _validate_transition_reason(target, reason, requires_reason=False)
@@ -255,9 +270,12 @@ def validate_observation_run_transition(
     if current is ObservationRunStatus.RUNNING and target in {
         ObservationRunStatus.COMPLETED,
         ObservationRunStatus.FAILED,
+        ObservationRunStatus.CANCELLED,
     }:
         _validate_transition_reason(
-            target, reason, requires_reason=target is ObservationRunStatus.FAILED
+            target,
+            reason,
+            requires_reason=target in {ObservationRunStatus.FAILED, ObservationRunStatus.CANCELLED},
         )
         return
     raise ValueError(f"Invalid ObservationRun lifecycle transition: {current} -> {target}")
@@ -268,10 +286,22 @@ def validate_lens_run_transition(
     target: LensRunStatus,
     reason: StructuredReason | None = None,
 ) -> None:
-    """Enforce LensRun lifecycle direction and primary reasons for partial or failed work."""
+    """Enforce forward LensRun transitions and required terminal reasons."""
 
     if current is LensRunStatus.PENDING and target is LensRunStatus.RUNNING:
         _validate_transition_reason(target, reason, requires_reason=False)
+        return
+    if current is LensRunStatus.PENDING and target is LensRunStatus.FAILED:
+        if reason is None or reason.code != "execution_aborted" or not reason.component:
+            raise ValueError(
+                "pending failed LensRun transition requires execution_aborted with a component"
+            )
+        return
+    if (
+        current in {LensRunStatus.PENDING, LensRunStatus.RUNNING}
+        and target is LensRunStatus.CANCELLED
+    ):
+        _validate_transition_reason(target, reason, requires_reason=True)
         return
     if current is LensRunStatus.RUNNING and target in {
         LensRunStatus.COMPLETED,
@@ -299,3 +329,10 @@ def _validate_transition_reason(
         raise ValueError(f"{target.value} lifecycle transition requires a structured reason")
     if not requires_reason and reason is not None:
         raise ValueError(f"{target.value} lifecycle transition cannot include a structured reason")
+    if target.value == "cancelled" and reason is not None:
+        if reason.code != "execution_cancelled":
+            raise ValueError(
+                "cancelled lifecycle transition requires reason code execution_cancelled"
+            )
+        if reason.component is not None:
+            raise ValueError("cancelled lifecycle transition cannot include a component")
