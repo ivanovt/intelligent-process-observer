@@ -97,6 +97,9 @@ def test_adapter_uses_one_typed_tool_free_request_with_bounded_settings() -> Non
     assert "modality" in system and "uncertainty" in system
     assert "recommendations" in system and "root causes" in system and "certainty" in system
     assert "possible explanations" in system and "confirmed causes" in system
+    assert "do not present, translate, quote, repeat, paraphrase, summarize" in system
+    assert "raw observation name, description, or analytical objective" in system
+    assert "not reportable source material" in system
 
 
 def test_instruction_like_context_remains_user_data_under_the_agent_policy() -> None:
@@ -125,6 +128,49 @@ def test_instruction_like_context_remains_user_data_under_the_agent_policy() -> 
     assert instruction in user_prompt
     assert instruction not in system_prompt
     assert "untrusted data" in system_prompt
+
+
+def test_raw_semantic_context_canaries_remain_user_data_under_the_agent_policy() -> None:
+    """Raw Observation context stays untrusted input and is never part of the instruction."""
+    request = _request()
+    name_canary = "name-canary-67c5f2"
+    description_canary = "description-canary-1b8a3d"
+    objective_canary = "objective-canary-94e0a6"
+    request = request.model_copy(
+        update={
+            "context": request.context.model_copy(
+                update={
+                    "name": name_canary,
+                    "description": description_canary,
+                    "analytical_objective": objective_canary,
+                }
+            )
+        }
+    )
+    model, calls = _scripted_model([_output(_draft(request).model_dump(mode="json"))])
+    output = _run(PydanticAIReportGenerationAgent(model).complete_presentation(request))
+    assert output == _draft(request) and len(calls) == 1
+    messages, _ = calls[0]
+    user_prompt = next(
+        part.content
+        for message in messages
+        for part in message.parts
+        if part.part_kind == "user-prompt"
+    )
+    system_prompt = " ".join(
+        part.content
+        for message in messages
+        for part in message.parts
+        if part.part_kind == "system-prompt"
+    )
+    assert name_canary in user_prompt
+    assert description_canary in user_prompt
+    assert objective_canary in user_prompt
+    assert name_canary not in system_prompt
+    assert description_canary not in system_prompt
+    assert objective_canary not in system_prompt
+    assert "untrusted data" in system_prompt
+    assert "not reportable source material" in system_prompt
 
 
 def test_adapter_rejects_non_output_tools_and_propagates_timeout_and_cancellation() -> None:
