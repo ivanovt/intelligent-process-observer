@@ -12,6 +12,7 @@ from app.execution.contracts import (
     LensOutcomePartition,
     ObservationExecutionSnapshot,
 )
+from app.execution.fanout import verify_and_partition_lens_outcomes
 from app.execution.projectors import (
     admissible_artifacts,
     build_observation_reasoning_input,
@@ -55,32 +56,37 @@ async def evaluate_and_persist_relationships(
     """Evaluate once outside a transaction, then atomically persist the validated batch."""
     run_id = _run_id(outcomes)
     try:
+        # The evaluator must only see the exact initialized, canonical JOIN.
+        verify_and_partition_lens_outcomes(assignments, outcomes)
         definitions = relationship_definitions(snapshot)
-        evaluations = evaluator.evaluate(definitions, admissible_artifacts(outcomes))
+        evaluations = evaluator.evaluate(definitions, admissible_artifacts(outcomes, snapshot))
         validate_relationship_batch(
             snapshot,
             evaluations,
             observation_id=snapshot.observation_id,
             observation_run_id=run_id,
         )
-        async with session_factory.begin() as session:
-            run = await _current_run(session, run_id, snapshot.observation_id)
-            for evaluation in evaluations:
-                payload = evaluation.model_dump(mode="json")
-                await runtime_repository.persist_relationship_evaluation(
-                    session,
-                    run,
-                    RelationshipEvaluationInput(
-                        relationship_id=evaluation.relationship_id,
-                        payload=payload,
-                    ),
-                )
-        return tuple(evaluations)
-    except Exception:
+        persistence_inputs = tuple(
+            RelationshipEvaluationInput(
+                relationship_id=evaluation.relationship_id,
+                payload=evaluation.model_dump(mode="json"),
+            )
+            for evaluation in evaluations
+        )
+    except (AttributeError, TypeError, ValueError):
         return FailedObservationExecutionOutcome(
             observation_run_id=run_id,
             reason=ExecutionReason("relationship_evaluation_failed", "relationship_evaluator"),
         )
+    async with session_factory.begin() as session:
+        run = await _current_run(session, run_id, snapshot.observation_id)
+        for persistence_input in persistence_inputs:
+            await runtime_repository.persist_relationship_evaluation(
+                session,
+                run,
+                persistence_input,
+            )
+    return tuple(evaluations)
 
 
 async def invoke_and_persist_reasoning(
@@ -93,10 +99,10 @@ async def invoke_and_persist_reasoning(
     evaluations: tuple[object, ...],
 ) -> ReasoningSuccess | ReasoningFailure:
     """Invoke reasoning once outside a transaction and atomically persist valid success."""
-    run_id = _run_id((*partition.usable, *partition.unavailable))
     try:
+        run_id = _run_id((*partition.usable, *partition.unavailable))
         value = build_observation_reasoning_input(snapshot, partition, evaluations)
-    except Exception:
+    except (AttributeError, TypeError, ValueError):
         return ReasoningFailure(code="reasoning_result_invalid", component="result_builder")
     outcome = await executor.execute(value)
     if isinstance(outcome, ReasoningFailure):
@@ -109,20 +115,20 @@ async def invoke_and_persist_reasoning(
             observation_id=snapshot.observation_id,
             observation_run_id=run_id,
         )
-        async with session_factory.begin() as session:
-            run = await _current_run(session, run_id, snapshot.observation_id)
-            await runtime_repository.persist_observation_analysis_result(
-                session,
-                run,
-                ObservationAnalysisResultInput(
-                    schema_version=result.schema_version,
-                    identity=result.identity,
-                    payload=result.model_dump(mode="json"),
-                ),
-            )
-        return ReasoningSuccess(result=result)
-    except Exception:
+    except (TypeError, ValueError):
         return ReasoningFailure(code="reasoning_result_invalid", component="result_builder")
+    async with session_factory.begin() as session:
+        run = await _current_run(session, run_id, snapshot.observation_id)
+        await runtime_repository.persist_observation_analysis_result(
+            session,
+            run,
+            ObservationAnalysisResultInput(
+                schema_version=result.schema_version,
+                identity=result.identity,
+                payload=result.model_dump(mode="json"),
+            ),
+        )
+    return ReasoningSuccess(result=result)
 
 
 async def _current_run(session, run_id, observation_id):

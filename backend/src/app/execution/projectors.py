@@ -14,6 +14,7 @@ from app.execution.contracts import (
     MetricLensSnapshot,
     ObservationExecutionSnapshot,
 )
+from app.execution.ordering import canonical_lens_order
 from app.infrastructure.persistence.runtime_contracts import LensAnalysisResultInput
 from app.observations.contracts import (
     RelationshipCreate,
@@ -29,7 +30,7 @@ from app.reasoning.contracts import (
     ReasoningLens,
     UnavailableLens,
 )
-from app.reasoning.input import insufficient_metric_as_unavailable
+from app.reasoning.input import insufficient_metric_as_unavailable, validate_input
 
 
 def relationship_definitions(
@@ -51,13 +52,21 @@ def relationship_definitions(
 
 def admissible_artifacts(
     outcomes: Sequence[CollectedLensOutcome],
+    snapshot: ObservationExecutionSnapshot | None = None,
 ) -> tuple[LensAnalysisResultInput, ...]:
     """Return every admissible current-run artifact, omitting failed Alerts only."""
     artifacts: list[LensAnalysisResultInput] = []
-    ordered = sorted(
-        outcomes,
-        key=lambda item: (item.assignment.lens.lens_type, item.assignment.lens.lens_id),
-    )
+    if snapshot is None:
+        ordered = tuple(outcomes)
+    else:
+        order = {
+            (lens.lens_type, lens.lens_id): index
+            for index, lens in enumerate(canonical_lens_order(snapshot))
+        }
+        ordered = sorted(
+            outcomes,
+            key=lambda item: order[(item.assignment.lens.lens_type, item.assignment.lens.lens_id)],
+        )
     for outcome in ordered:
         if outcome.artifact is None:
             continue
@@ -102,21 +111,27 @@ def build_observation_reasoning_input(
         analytical_objective=snapshot.objective,
         lenses=tuple(_reasoning_lens(item) for item in _canonical_lenses(snapshot)),
     )
+    order = {
+        (lens.lens_type, lens.lens_id): index
+        for index, lens in enumerate(canonical_lens_order(snapshot))
+    }
     ordered_usable = sorted(
         partition.usable,
-        key=lambda item: (item.assignment.lens.lens_type, item.assignment.lens.lens_id),
+        key=lambda item: order[(item.assignment.lens.lens_type, item.assignment.lens.lens_id)],
     )
     ordered_unavailable = sorted(
         partition.unavailable,
-        key=lambda item: (item.assignment.lens.lens_type, item.assignment.lens.lens_id),
+        key=lambda item: order[(item.assignment.lens.lens_type, item.assignment.lens.lens_id)],
     )
     usable = tuple(_usable_result(outcome) for outcome in ordered_usable)
     unavailable = tuple(_unavailable_result(outcome) for outcome in ordered_unavailable)
-    return ObservationReasoningInput(
-        context=context,
-        usable_results=usable,
-        unavailable_lenses=unavailable,
-        relationships=tuple(evaluations),
+    return validate_input(
+        ObservationReasoningInput(
+            context=context,
+            usable_results=usable,
+            unavailable_lenses=unavailable,
+            relationships=tuple(evaluations),
+        )
     )
 
 
