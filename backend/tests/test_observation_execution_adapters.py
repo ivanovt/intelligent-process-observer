@@ -4,9 +4,13 @@ import asyncio
 from contextlib import AbstractAsyncContextManager
 from datetime import UTC, datetime
 from types import SimpleNamespace
+from unittest.mock import patch
 from uuid import uuid4
 
-from app.alerts.contracts import AlertProviderFailure, AlertRecordsAvailable
+from app.alerts.contracts import (
+    AlertProviderFailure,
+    AlertRecordsAvailable,
+)
 from app.execution import (
     AlertLensExecutionAdapter,
     AlertLensSnapshot,
@@ -81,6 +85,9 @@ class MetricPipeline:
 
 
 class Repository:
+    def __init__(self) -> None:
+        self.artifacts: list[object] = []
+
     async def advance_lens_run(
         self,
         session: object,
@@ -96,6 +103,7 @@ class Repository:
     async def persist_lens_analysis_result(
         self, session: object, lens_run: LensRunModel, result: object
     ) -> object:
+        self.artifacts.append(result)
         return object()
 
 
@@ -129,9 +137,11 @@ def test_metric_adapter_projects_context_and_excludes_terminal_work_from_deadlin
     pipeline = MetricPipeline(phases, LensRunStatus.COMPLETED)
 
     outcome = asyncio.run(
-        MetricLensExecutionAdapter(session_factory=factory, pipeline=pipeline).execute(
-            assignment, _policy()
-        )
+        MetricLensExecutionAdapter(
+            session_factory=factory,
+            pipeline=pipeline,
+            repository=Repository(),  # type: ignore[arg-type]
+        ).execute(assignment, _policy())
     )
 
     assert outcome.status == "completed"
@@ -155,6 +165,7 @@ def test_metric_adapter_collects_normal_partial_and_failed_pipeline_outcomes() -
             MetricLensExecutionAdapter(
                 session_factory=Factory(_session(lens_run, parent), phases),
                 pipeline=MetricPipeline(phases, target),
+                repository=Repository(),  # type: ignore[arg-type]
             ).execute(assignment, _policy())
         )
         assert outcome.status == target.value
@@ -217,6 +228,191 @@ def test_alert_adapter_persists_normal_partial_outcome() -> None:
     assert outcome.status == "partial"
     assert outcome.reason is not None
     assert outcome.reason.code == "reference_unavailable"
+
+
+def test_metric_adapter_normalizes_timeout_with_wrapper_reason_and_assigned_artifact() -> None:
+    assignment, lens_run, parent = _metric_assignment()
+    repository = Repository()
+
+    class SlowMetricPipeline(MetricPipeline):
+        async def analyze(self, context: object) -> object:
+            await asyncio.sleep(0.02)
+            return await super().analyze(context)
+
+    outcome = asyncio.run(
+        MetricLensExecutionAdapter(
+            session_factory=Factory(_session(lens_run, parent), []),
+            pipeline=SlowMetricPipeline([], LensRunStatus.COMPLETED),
+            repository=repository,  # type: ignore[arg-type]
+        ).execute(
+            assignment, ExecutionPolicy(max_parallel_lens_runs=1, lens_deadline_seconds=0.001)
+        )
+    )
+
+    assert outcome.status == "failed"
+    assert outcome.reason is not None
+    assert (outcome.reason.code, outcome.reason.component) == ("timeout", "metric")
+    artifact = repository.artifacts[0]
+    assert artifact.status is LensRunStatus.FAILED
+    assert artifact.identity.observation_run_id == assignment.observation_run_id
+    assert artifact.identity.lens_run_id == assignment.lens_run_id
+    assert artifact.payload["status"]["error"] == {
+        "code": "mandatory_metric_analysis_failed",
+        "message": "Mandatory metric analysis failed.",
+    }
+    assert artifact.payload["analysis_window"] == {
+        "from": "2026-09-01T00:00:00Z",
+        "to": "2026-09-01T01:00:00Z",
+    }
+    assert artifact.provenance["source"] == "prometheus"
+
+
+def test_metric_adapter_normalizes_unexpected_and_mismatched_analysis() -> None:
+    for behavior, expected in (("raise", "analysis_failed"), ("mismatch", "identity_mismatch")):
+        assignment, lens_run, parent = _metric_assignment()
+        repository = Repository()
+
+        class FailingMetricPipeline(MetricPipeline):
+            def __init__(self, mode: str) -> None:
+                super().__init__([], LensRunStatus.COMPLETED)
+                self.mode = mode
+
+            async def analyze(self, context: object) -> object:
+                if self.mode == "raise":
+                    raise RuntimeError("provider credentials: secret")
+                return SimpleNamespace(context=object())
+
+        outcome = asyncio.run(
+            MetricLensExecutionAdapter(
+                session_factory=Factory(_session(lens_run, parent), []),
+                pipeline=FailingMetricPipeline(behavior),
+                repository=repository,  # type: ignore[arg-type]
+            ).execute(assignment, _policy())
+        )
+        assert outcome.status == "failed"
+        assert outcome.reason is not None
+        assert (outcome.reason.code, outcome.reason.component) == (expected, "metric")
+        assert repository.artifacts[0].payload["status"]["error"]["code"] == (
+            "mandatory_metric_analysis_failed"
+        )
+
+
+def test_alert_adapter_normalizes_invalid_producer_outcome_without_artifact() -> None:
+    assignment, lens_run, parent = _alert_assignment()
+    repository = Repository()
+
+    # Provider resolution is part of the adapter-owned pre-terminalization boundary.
+    class BrokenResolver:
+        def resolve(self, scope: object) -> object:
+            raise RuntimeError("sensitive provider response")
+
+    outcome = asyncio.run(
+        AlertLensExecutionAdapter(
+            session_factory=Factory(_session(lens_run, parent), []),
+            repository=repository,  # type: ignore[arg-type]
+            provider_resolver=BrokenResolver(),  # type: ignore[arg-type]
+            agent=Agent(),  # type: ignore[arg-type]
+        ).execute(assignment, _policy())
+    )
+    assert outcome.status == "failed"
+    assert outcome.reason is not None
+    assert (outcome.reason.code, outcome.reason.component) == ("analysis_failed", "alert")
+    assert repository.artifacts == []
+
+
+def test_alert_adapter_normalizes_timeout_and_rejected_producer_outcome() -> None:
+    assignment, lens_run, parent = _alert_assignment()
+    repository = Repository()
+
+    class SlowProvider:
+        async def acquire(self, scope: object, window: object) -> object:
+            await asyncio.sleep(0.02)
+            return AlertRecordsAvailable(source="jira_track_and_release", records=())
+
+    class SlowResolver:
+        def resolve(self, scope: object) -> SlowProvider:
+            return SlowProvider()
+
+    timeout = asyncio.run(
+        AlertLensExecutionAdapter(
+            session_factory=Factory(_session(lens_run, parent), []),
+            repository=repository,  # type: ignore[arg-type]
+            provider_resolver=SlowResolver(),  # type: ignore[arg-type]
+            agent=Agent(),  # type: ignore[arg-type]
+        ).execute(
+            assignment, ExecutionPolicy(max_parallel_lens_runs=1, lens_deadline_seconds=0.001)
+        )
+    )
+    assert timeout.reason is not None
+    assert (timeout.reason.code, timeout.reason.component) == ("timeout", "alert")
+    assert repository.artifacts == []
+
+    assignment, lens_run, parent = _alert_assignment()
+    repository = Repository()
+
+    class RejectedPipeline:
+        def __init__(self, **kwargs: object) -> None:
+            pass
+
+        async def analyze(self, context: object) -> object:
+            return object()
+
+    with patch("app.execution.adapters.AlertAnalysisPipeline", RejectedPipeline):
+        outcome = asyncio.run(
+            AlertLensExecutionAdapter(
+                session_factory=Factory(_session(lens_run, parent), []),
+                repository=repository,  # type: ignore[arg-type]
+                provider_resolver=Resolver(
+                    AlertRecordsAvailable(source="jira_track_and_release", records=())
+                ),
+                agent=Agent(),  # type: ignore[arg-type]
+            ).execute(assignment, _policy())
+        )
+    assert outcome.reason is not None
+    assert (outcome.reason.code, outcome.reason.component) == ("identity_mismatch", "alert")
+    assert repository.artifacts == []
+
+
+def test_metric_terminal_failure_and_cancellation_propagate_without_normalization() -> None:
+    assignment, lens_run, parent = _metric_assignment()
+
+    class FailingTerminalMetricPipeline(MetricPipeline):
+        async def persist_terminal(
+            self, session: object, lens_run: LensRunModel, analysis: object
+        ) -> None:
+            raise RuntimeError("database write failed")
+
+    factory = Factory(_session(lens_run, parent), [])
+    try:
+        asyncio.run(
+            MetricLensExecutionAdapter(
+                session_factory=factory,
+                pipeline=FailingTerminalMetricPipeline([], LensRunStatus.COMPLETED),
+                repository=Repository(),  # type: ignore[arg-type]
+            ).execute(assignment, _policy())
+        )
+    except RuntimeError as error:
+        assert str(error) == "database write failed"
+    else:
+        raise AssertionError("terminal write failure must propagate")
+    assert factory.transactions[0].committed is False
+
+    class CancelledMetricPipeline(MetricPipeline):
+        async def analyze(self, context: object) -> object:
+            raise asyncio.CancelledError()
+
+    try:
+        asyncio.run(
+            MetricLensExecutionAdapter(
+                session_factory=Factory(_session(lens_run, parent), []),
+                pipeline=CancelledMetricPipeline([], LensRunStatus.COMPLETED),
+                repository=Repository(),  # type: ignore[arg-type]
+            ).execute(assignment, _policy())
+        )
+    except asyncio.CancelledError:
+        pass
+    else:
+        raise AssertionError("cancellation must propagate")
 
 
 def _metric_assignment() -> tuple[LensExecutionAssignment, LensRunModel, ObservationRunModel]:

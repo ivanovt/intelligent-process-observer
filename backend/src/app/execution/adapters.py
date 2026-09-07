@@ -11,6 +11,7 @@ from app.alerts.contracts import (
     AlertIdentity,
     AlertLensExecutionContext,
     AlertProviderScope,
+    AlertTerminalOutcome,
 )
 from app.alerts.pipeline import AlertAnalysisPipeline
 from app.alerts.ports import AlertAnalysisAgent, AlertProvider
@@ -25,15 +26,21 @@ from app.execution.contracts import (
 from app.infrastructure.persistence.alert_runtime import persist_alert_terminal
 from app.infrastructure.persistence.models import LensRunModel, ObservationRunModel
 from app.infrastructure.persistence.repository import RuntimePersistenceRepository
-from app.infrastructure.persistence.runtime_contracts import LensRunStatus
+from app.infrastructure.persistence.runtime_contracts import (
+    LensRunStatus,
+    LensType,
+    StructuredReason,
+)
 from app.metrics.contracts import (
     MetricAnalysisWindow,
     MetricHistoryPolicy,
     MetricIdentity,
     MetricLensExecutionContext,
+    MetricMandatoryAnalysisFailure,
     MetricProviderScope,
 )
 from app.metrics.pipeline import MetricAnalysisPipeline, MetricPreTransactionAnalysis
+from app.metrics.result_builder import MetricResultBuilder
 
 
 class TerminalSessionFactory(Protocol):
@@ -58,9 +65,11 @@ class MetricLensExecutionAdapter:
         *,
         session_factory: TerminalSessionFactory,
         pipeline: MetricAnalysisPipeline,
+        repository: RuntimePersistenceRepository,
     ) -> None:
         self._session_factory = session_factory
         self._pipeline = pipeline
+        self._repository = repository
 
     async def execute(
         self, assignment: LensExecutionAssignment, policy: ExecutionPolicy
@@ -68,12 +77,47 @@ class MetricLensExecutionAdapter:
         """Analyze under the Lens deadline, then terminalize Metric work outside it."""
 
         context = metric_execution_context(assignment)
-        async with asyncio.timeout(policy.lens_deadline_seconds):
-            analysis = await self._pipeline.analyze(context)
-        _validate_metric_analysis(analysis, context)
+        deadline = asyncio.timeout(policy.lens_deadline_seconds)
+        try:
+            async with deadline:
+                analysis = await self._pipeline.analyze(context)
+        except TimeoutError:
+            return await self._persist_wrapper_failure(
+                assignment, context, "timeout" if deadline.expired() else "analysis_failed"
+            )
+        except Exception:
+            return await self._persist_wrapper_failure(assignment, context, "analysis_failed")
+        try:
+            _validate_metric_analysis(analysis, context)
+        except Exception:
+            return await self._persist_wrapper_failure(assignment, context, "identity_mismatch")
         async with self._session_factory.begin() as session:
             lens_run = await _load_assigned_running_lens(session, assignment)
             await self._pipeline.persist_terminal(cast(object, session), lens_run, analysis)
+            return _collected_outcome(assignment, lens_run)
+
+    async def _persist_wrapper_failure(
+        self,
+        assignment: LensExecutionAssignment,
+        context: MetricLensExecutionContext,
+        code: str,
+    ) -> CollectedLensOutcome:
+        """Persist one adapter-owned Metric failure without exposing diagnostics."""
+
+        _, artifact = MetricResultBuilder().failed(
+            context, MetricMandatoryAnalysisFailure(diagnostic="adapter normalization")
+        )
+        async with self._session_factory.begin() as session:
+            lens_run = await _load_assigned_running_lens(session, assignment)
+            await self._repository.advance_lens_run(
+                cast(object, session),
+                lens_run,
+                LensRunStatus.FAILED,
+                reason=StructuredReason(code=code, component="metric"),
+            )
+            await self._repository.persist_lens_analysis_result(
+                cast(object, session), lens_run, artifact
+            )
             return _collected_outcome(assignment, lens_run)
 
 
@@ -99,11 +143,36 @@ class AlertLensExecutionAdapter:
         """Analyze under the Lens deadline, then terminalize Alert work outside it."""
 
         context = alert_execution_context(assignment)
-        provider = self._provider_resolver.resolve(context.provider_scope)
-        pipeline = AlertAnalysisPipeline(provider=provider, agent=self._agent)
-        async with asyncio.timeout(policy.lens_deadline_seconds):
-            outcome = await pipeline.analyze(context)
-        _validate_alert_outcome(outcome, context)
+        deadline = asyncio.timeout(policy.lens_deadline_seconds)
+        try:
+            async with deadline:
+                provider = self._provider_resolver.resolve(context.provider_scope)
+                pipeline = AlertAnalysisPipeline(provider=provider, agent=self._agent)
+                outcome = await pipeline.analyze(context)
+        except TimeoutError:
+            return await self._persist_wrapper_failure(
+                assignment, "timeout" if deadline.expired() else "analysis_failed"
+            )
+        except Exception:
+            return await self._persist_wrapper_failure(assignment, "analysis_failed")
+        try:
+            _validate_alert_outcome(outcome, context)
+        except Exception:
+            return await self._persist_wrapper_failure(assignment, "identity_mismatch")
+        async with self._session_factory.begin() as session:
+            lens_run = await _load_assigned_running_lens(session, assignment)
+            await persist_alert_terminal(cast(object, session), lens_run, outcome, self._repository)
+            return _collected_outcome(assignment, lens_run)
+
+    async def _persist_wrapper_failure(
+        self, assignment: LensExecutionAssignment, code: str
+    ) -> CollectedLensOutcome:
+        """Persist one artifact-free adapter-owned Alert failure."""
+
+        outcome = AlertTerminalOutcome(
+            status=LensRunStatus.FAILED,
+            reason=StructuredReason(code=code, component="alert"),
+        )
         async with self._session_factory.begin() as session:
             lens_run = await _load_assigned_running_lens(session, assignment)
             await persist_alert_terminal(cast(object, session), lens_run, outcome, self._repository)
@@ -167,16 +236,29 @@ def _validate_metric_analysis(
 ) -> None:
     if analysis.context != context:
         raise ValueError("Metric pipeline analysis identity differs from its assignment")
+    artifact = getattr(analysis, "terminal_result", None)
+    if artifact is not None and (
+        artifact.result_type is not LensType.METRIC
+        or artifact.identity.observation_id != context.identity.observation_id
+        or artifact.identity.observation_run_id != context.identity.observation_run_id
+        or artifact.identity.lens_id != context.identity.lens_id
+        or artifact.identity.lens_run_id != context.identity.lens_run_id
+    ):
+        raise ValueError("Metric pipeline artifact identity differs from its assignment")
 
 
 def _validate_alert_outcome(outcome: object, context: AlertLensExecutionContext) -> None:
+    if not isinstance(outcome, AlertTerminalOutcome):
+        raise ValueError("Alert pipeline returned an invalid terminal outcome")
     artifact = getattr(outcome, "artifact", None)
     if artifact is None:
         return
     identity = artifact.identity
     expected = context.identity
     if (
-        identity.observation_id != expected.observation_id
+        artifact.result_type is not LensType.ALERT
+        or artifact.status is not outcome.status
+        or identity.observation_id != expected.observation_id
         or identity.observation_run_id != expected.observation_run_id
         or identity.lens_id != expected.lens_id
         or identity.lens_run_id != expected.lens_run_id
