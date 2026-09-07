@@ -329,6 +329,70 @@ def test_metric_adapter_normalizes_timeout_with_wrapper_reason_and_assigned_arti
     assert outcome.artifact.to_persistence_envelope().payload == artifact.payload
 
 
+def test_metric_adapter_queue_delay_does_not_consume_its_analysis_deadline() -> None:
+    """The caller can wait longer than the policy before adapter timing begins."""
+
+    assignment, lens_run, parent = _metric_assignment()
+    queue_entered = asyncio.Event()
+    release_queue = asyncio.Event()
+
+    async def execute_after_queue_delay() -> object:
+        queue_entered.set()
+        await release_queue.wait()
+        return await MetricLensExecutionAdapter(
+            session_factory=Factory(_session(lens_run, parent), []),
+            pipeline=MetricPipeline([], LensRunStatus.COMPLETED),
+            repository=Repository(),  # type: ignore[arg-type]
+        ).execute(
+            assignment, ExecutionPolicy(max_parallel_lens_runs=1, lens_deadline_seconds=0.001)
+        )
+
+    async def exercise() -> object:
+        task = asyncio.create_task(execute_after_queue_delay())
+        await queue_entered.wait()
+        await asyncio.sleep(0.02)
+        release_queue.set()
+        return await task
+
+    outcome = asyncio.run(exercise())
+
+    assert outcome.status == "completed"
+
+
+def test_metric_history_and_terminal_work_beyond_deadline_are_not_normalized() -> None:
+    assignment, lens_run, parent = _metric_assignment()
+    history_started = asyncio.Event()
+    release_history = asyncio.Event()
+
+    class DelayedHistoryMetricPipeline(MetricPipeline):
+        async def persist_terminal(
+            self, session: object, terminal_lens_run: LensRunModel, analysis: object
+        ) -> LensAnalysisResultModel:
+            history_started.set()
+            await release_history.wait()
+            return await super().persist_terminal(session, terminal_lens_run, analysis)
+
+    async def exercise() -> object:
+        task = asyncio.create_task(
+            MetricLensExecutionAdapter(
+                session_factory=Factory(_session(lens_run, parent), []),
+                pipeline=DelayedHistoryMetricPipeline([], LensRunStatus.COMPLETED),
+                repository=Repository(),  # type: ignore[arg-type]
+            ).execute(
+                assignment, ExecutionPolicy(max_parallel_lens_runs=1, lens_deadline_seconds=0.001)
+            )
+        )
+        await history_started.wait()
+        await asyncio.sleep(0.02)
+        release_history.set()
+        return await task
+
+    outcome = asyncio.run(exercise())
+
+    assert outcome.status == "completed"
+    assert outcome.reason is None
+
+
 def test_metric_adapter_collects_history_replacement_returned_by_terminal_persistence() -> None:
     assignment, lens_run, parent = _metric_assignment()
     phases: list[str] = []

@@ -35,7 +35,7 @@ from app.execution.fanout import (
     fan_out_lens_runs,
     verify_and_partition_lens_outcomes,
 )
-from app.execution.gates import enforce_usable_results_gate
+from app.execution.gates import UsableResultsGateSessionFactory, enforce_usable_results_gate
 from app.execution.initialization import (
     InitializedObservationExecution,
     TransactionSessionFactory,
@@ -70,6 +70,7 @@ __all__ = [
     "SemanticDescriptorSnapshot",
     "TransactionSessionFactory",
     "TerminalSessionFactory",
+    "UsableResultsGateSessionFactory",
     "alert_execution_context",
     "canonical_lens_order",
     "fan_out_lens_runs",

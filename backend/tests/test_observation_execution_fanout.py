@@ -181,6 +181,22 @@ class InfrastructureFailingAdapter(Adapter):
         raise self.error
 
 
+class NormalFailureAdapter(Adapter):
+    """Return one ordinary failed Lens outcome while other workers keep executing."""
+
+    def __init__(self, failing_lens_run_id: object) -> None:
+        super().__init__()
+        self.failing_lens_run_id = failing_lens_run_id
+
+    async def execute(
+        self, assignment: LensExecutionAssignment, policy: ExecutionPolicy
+    ) -> CollectedLensOutcome:
+        if assignment.lens_run_id != self.failing_lens_run_id:
+            return await super().execute(assignment, policy)
+        self.started.append(assignment.lens_run_id)
+        return _metric_outcome(assignment, "failed", None)
+
+
 def test_fan_out_uses_fixed_work_conserving_workers_and_canonical_result_order() -> None:
     assignments = tuple(_metric_assignment(str(index)) for index in range(3))
     runs = {assignment.lens_run_id: _run(assignment) for assignment in assignments}
@@ -265,6 +281,49 @@ def test_strict_join_does_not_continue_when_one_usable_lens_finishes_early() -> 
 
     asyncio.run(exercise())
     assert continuation_started.is_set()
+
+
+def test_normal_failed_lens_does_not_stop_peers_or_queued_work_before_terminal_join() -> None:
+    first = _metric_assignment("failed")
+    assignments = (first,) + tuple(
+        LensExecutionAssignment(
+            observation_id=first.observation_id,
+            observation_run_id=first.observation_run_id,
+            lens_run_id=source.lens_run_id,
+            analysis_window=first.analysis_window,
+            lens=source.lens,
+        )
+        for source in (_metric_assignment("peer"), _metric_assignment("queued"))
+    )
+    runs = {assignment.lens_run_id: _run(assignment) for assignment in assignments}
+    adapter = NormalFailureAdapter(assignments[0].lens_run_id)
+
+    async def exercise() -> tuple[CollectedLensOutcome, ...]:
+        task = asyncio.create_task(
+            fan_out_lens_runs(
+                session_factory=Factory(runs),
+                runtime_repository=Repository(),  # type: ignore[arg-type]
+                adapter=adapter,
+                assignments=assignments,
+                policy=ExecutionPolicy(max_parallel_lens_runs=2, lens_deadline_seconds=1),
+            )
+        )
+        for _ in range(100):
+            if len(adapter.started) == 3:
+                break
+            await asyncio.sleep(0)
+        assert set(adapter.started) == {assignment.lens_run_id for assignment in assignments}
+        for lens_run_id, release in adapter.release.items():
+            assert lens_run_id != assignments[0].lens_run_id
+            release.set()
+        return await task
+
+    outcomes = asyncio.run(exercise())
+    partition = verify_and_partition_lens_outcomes(assignments, outcomes)
+
+    assert outcomes[0].status == "failed"
+    assert partition.usable == outcomes[1:]
+    assert partition.unavailable == (outcomes[0],)
 
 
 def test_fan_out_does_not_call_adapter_when_pending_admission_fails() -> None:

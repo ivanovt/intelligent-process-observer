@@ -2,55 +2,82 @@
 
 from __future__ import annotations
 
+from contextlib import AbstractAsyncContextManager
+from typing import Protocol
 from uuid import UUID
 
 from app.execution.contracts import (
+    CollectedLensOutcome,
     ExecutionReason,
     FailedObservationExecutionOutcome,
+    LensExecutionAssignment,
     LensOutcomePartition,
 )
+from app.execution.fanout import verify_and_partition_lens_outcomes
 from app.infrastructure.persistence.models import ObservationRunModel
 from app.infrastructure.persistence.repository import RuntimePersistenceRepository
 from app.infrastructure.persistence.runtime_contracts import ObservationRunStatus, StructuredReason
 
 
+class UsableResultsGateSessionFactory(Protocol):
+    """Open the short transaction used only for a zero-usable parent transition."""
+
+    def begin(self) -> AbstractAsyncContextManager[object]:
+        """Return the context manager for one parent terminalization transaction."""
+
+
 async def enforce_usable_results_gate(
-    session: object,
-    runtime_repository: RuntimePersistenceRepository,
     *,
-    observation_id: UUID,
-    observation_run_id: UUID,
-    partition: LensOutcomePartition,
-) -> FailedObservationExecutionOutcome | None:
-    """Fail a verified running parent when its complete JOIN has no usable results.
+    session_factory: UsableResultsGateSessionFactory,
+    runtime_repository: RuntimePersistenceRepository,
+    assignments: tuple[LensExecutionAssignment, ...],
+    outcomes: tuple[CollectedLensOutcome, ...],
+) -> LensOutcomePartition | FailedObservationExecutionOutcome:
+    """Verify JOIN outcomes, then stop only a zero-usable initialized ObservationRun."""
 
-    The caller owns the short transaction containing this guarded parent transition.
-    A non-empty usable partition passes without a parent write.
-    """
-
-    if not isinstance(partition, LensOutcomePartition):
-        raise ValueError("usable-results gate requires a verified Lens outcome partition")
+    observation_id, observation_run_id = _initialized_parent_identity(assignments)
+    partition = verify_and_partition_lens_outcomes(assignments, outcomes)
     if partition.usable:
-        return None
-    observation_run = await session.get(ObservationRunModel, observation_run_id)  # type: ignore[attr-defined]
-    if (
-        observation_run is None
-        or observation_run.id != observation_run_id
-        or observation_run.observation_id != observation_id
-        or observation_run.status != ObservationRunStatus.RUNNING.value
-    ):
-        raise ValueError("usable-results gate parent is not the expected running ObservationRun")
+        return partition
     reason = ExecutionReason(
         code="no_usable_lens_results",
         component="usable_results_gate",
     )
-    await runtime_repository.advance_observation_run(
-        session,  # type: ignore[arg-type]
-        observation_run,
-        ObservationRunStatus.FAILED,
-        reason=StructuredReason(code=reason.code, component=reason.component),
-    )
+    async with session_factory.begin() as session:
+        observation_run = await session.get(ObservationRunModel, observation_run_id)  # type: ignore[attr-defined]
+        if (
+            observation_run is None
+            or observation_run.id != observation_run_id
+            or observation_run.observation_id != observation_id
+            or observation_run.status != ObservationRunStatus.RUNNING.value
+        ):
+            raise ValueError(
+                "usable-results gate parent is not the expected running ObservationRun"
+            )
+        await runtime_repository.advance_observation_run(
+            session,  # type: ignore[arg-type]
+            observation_run,
+            ObservationRunStatus.FAILED,
+            reason=StructuredReason(code=reason.code, component=reason.component),
+        )
     return FailedObservationExecutionOutcome(
         observation_run_id=observation_run_id,
         reason=reason,
     )
+
+
+def _initialized_parent_identity(
+    assignments: tuple[LensExecutionAssignment, ...],
+) -> tuple[UUID, UUID]:
+    """Require one non-empty initialized topology for exactly one parent runtime graph."""
+
+    if not assignments:
+        raise ValueError("usable-results gate requires a non-empty initialized topology")
+    first = assignments[0]
+    if not all(
+        assignment.observation_id == first.observation_id
+        and assignment.observation_run_id == first.observation_run_id
+        for assignment in assignments
+    ):
+        raise ValueError("usable-results gate topology spans multiple ObservationRuns")
+    return first.observation_id, first.observation_run_id
