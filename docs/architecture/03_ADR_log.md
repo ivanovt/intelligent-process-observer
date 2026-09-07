@@ -3005,6 +3005,75 @@ Alert Lens definitions се persist-ват като owned children на Observat
 
 ---
 
+## ADR-164 — Retry, restart и re-run създават нов ObservationRun
+
+**Status:** Accepted
+
+**Context**
+`ObservationRun` и `LensRun` имат forward-only lifecycle и persist-натите runtime
+артефакти трябва да останат непротиворечиви и проследими. Необходимо е да се фиксира
+дали повторно изпълнение възобновява съществуващ runtime aggregate или създава нов.
+
+**Decision**
+Всеки retry, restart или re-run на Observation execution създава нов `ObservationRun`
+с нови `LensRun` identities. Съществуващ `ObservationRun` никога не се възобновява и
+не преминава повторно към `running`, независимо дали е terminal или е останал
+non-terminal след прекъсване.
+
+Това решение фиксира само identity/lifecycle границата. То не въвежда automatic retry,
+restart trigger, scheduling, overlap policy, idempotency key, replay protocol или reuse
+на междинни артефакти.
+
+**Consequences**
+- forward-only lifecycle остава непроменен;
+- всеки execution attempt има отделна и проследима runtime identity;
+- предходните runs и техните артефакти остават immutable historical records;
+- policy за това кога/дали се стартира нов attempt остава отделно решение;
+- cancellation terminalization се фиксира от ADR-165; overlap, idempotency, replay и
+  artifact-reuse semantics остават Open.
+
+---
+
+## ADR-165 — Cancellation terminalize-ва само незавършените runtime записи
+
+**Status:** Accepted
+
+**Context**
+Caller cancellation се propagate-ва от bounded analytical и presentation capabilities,
+но top-level Observation lifecycle трябва да остане durable и еднозначен. Част от
+LensRuns може вече да са terminal и да имат persist-нати артефакти, когато cancellation
+достигне orchestrator-а.
+
+**Decision**
+`cancelled` е terminal status за `ObservationRun` и `LensRun`.
+
+Когато top-level Observation execution бъде отменено:
+
+- всеки `pending` или `running` LensRun преминава към `cancelled` със structured reason
+  `execution_cancelled`;
+- LensRun, който вече е `completed`, `partial`, `failed` или `cancelled`, не се променя и
+  запазва всеки вече persist-нат артефакт;
+- running ObservationRun преминава към `cancelled` със structured reason
+  `execution_cancelled`;
+- post-JOIN gate, Relationship Evaluation, Observation Reasoning и Report Generation не
+  стартират след наблюдавана cancellation;
+- ако cancellation бъде наблюдавана в по-късен stage, вече commit-натите artifacts се
+  запазват, но не се създава следващ artifact;
+- след durable terminalization cancellation се propagate-ва към caller-а.
+
+Cancellation не стартира automatic retry. Всяко последващо retry/restart/re-run следва
+ADR-164 и създава нов runtime aggregate.
+
+**Consequences**
+- durable retrieval не оставя отменено execution като привидно active;
+- завършената работа не се пренаписва retroactively;
+- `cancelled` не е usable Lens outcome и не се интерпретира като normal evidence;
+- normal strict-JOIN continuation използва pipeline terminal outcomes
+  `completed|partial|failed`; cancellation използва отделен abort path;
+- exact external cancellation API/trigger и overlap/idempotency policy остават Open.
+
+---
+
 # Open decisions
 
 Актуалният и нормативен backlog е в `10_open_decisions_and_backlog.md`. Отворените въпроси **не** са implicit requirements и трябва да получат нов ADR, когато бъдат решени.

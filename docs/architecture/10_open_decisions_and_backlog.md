@@ -89,7 +89,9 @@
 - Periodic vs on-demand vs event-driven trigger policies/defaults.
 - Scheduling technology.
 - Overlap policy, ако нов trigger пристигне при running ObservationRun.
-- Cancellation/retry/idempotency/replay semantics.
+- External cancellation API/trigger, automatic-retry trigger policy, idempotency, replay
+  и artifact-reuse semantics. ADR-164 фиксира fresh-run retry/restart/re-run behavior, а
+  ADR-165 фиксира terminalization при вече наблюдавана top-level cancellation.
 
 ## 8. Persistence and infrastructure
 
