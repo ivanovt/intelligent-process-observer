@@ -534,6 +534,30 @@ def test_lifecycle_transition_rejects_a_stale_persisted_state(
     assert len(session.statements) == 1
 
 
+def test_cancellation_terminalization_is_guarded_and_transaction_owned() -> None:
+    repository = RuntimePersistenceRepository()
+    session = RecordingSession()
+    observation_run = pending_observation_run()
+    observation_run.status = ObservationRunStatus.RUNNING.value
+    timestamp = datetime(2026, 9, 7, 12, tzinfo=UTC)
+
+    result = run(repository.cancel_observation_execution(session, observation_run, now=timestamp))
+
+    assert result is observation_run
+    assert observation_run.status == ObservationRunStatus.CANCELLED.value
+    assert observation_run.reason == {"code": "execution_cancelled", "component": None}
+    assert observation_run.finished_at == timestamp
+    assert len(session.statements) == 2
+
+    stale_session = RecordingSession(update_rowcount=0)
+    stale_run = pending_observation_run()
+    stale_run.status = ObservationRunStatus.RUNNING.value
+    with pytest.raises(ValueError, match="before cancellation"):
+        run(repository.cancel_observation_execution(stale_session, stale_run, now=timestamp))
+    assert stale_run.status == ObservationRunStatus.RUNNING.value
+    assert len(stale_session.statements) == 1
+
+
 def test_missing_artifact_is_distinct_from_valid_empty_optional_sections() -> None:
     repository = RuntimePersistenceRepository()
     observation_run = pending_observation_run()

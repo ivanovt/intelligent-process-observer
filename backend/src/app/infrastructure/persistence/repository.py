@@ -332,6 +332,56 @@ class RuntimePersistenceRepository:
             lens_run.finished_at = timestamp
         return lens_run
 
+    async def cancel_observation_execution(
+        self,
+        session: AsyncSession,
+        observation_run: ObservationRunModel,
+        *,
+        now: datetime | None = None,
+    ) -> ObservationRunModel:
+        """Terminalize one running aggregate without rewriting completed child work.
+
+        The caller owns the surrounding transaction and must roll it back when this
+        guarded operation rejects a contradictory parent terminalization.
+        """
+
+        timestamp = now or datetime.now(UTC)
+        reason = StructuredReason(code="execution_cancelled")
+        reason_payload = self._reason_payload(reason)
+        parent_result = await session.execute(
+            update(ObservationRunModel)
+            .where(
+                ObservationRunModel.id == observation_run.id,
+                ObservationRunModel.status == ObservationRunStatus.RUNNING.value,
+            )
+            .values(
+                status=ObservationRunStatus.CANCELLED.value,
+                reason=reason_payload,
+                finished_at=timestamp,
+            )
+            .execution_options(synchronize_session=False)
+        )
+        if parent_result.rowcount != 1:
+            raise ValueError("ObservationRun persisted lifecycle state changed before cancellation")
+
+        await session.execute(
+            update(LensRunModel)
+            .where(
+                LensRunModel.observation_run_id == observation_run.id,
+                LensRunModel.status.in_((LensRunStatus.PENDING.value, LensRunStatus.RUNNING.value)),
+            )
+            .values(
+                status=LensRunStatus.CANCELLED.value,
+                reason=reason_payload,
+                finished_at=timestamp,
+            )
+            .execution_options(synchronize_session=False)
+        )
+        observation_run.status = ObservationRunStatus.CANCELLED.value
+        observation_run.reason = reason_payload
+        observation_run.finished_at = timestamp
+        return observation_run
+
     async def persist_lens_analysis_result(
         self,
         session: AsyncSession,
