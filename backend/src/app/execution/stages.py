@@ -38,7 +38,7 @@ from app.infrastructure.persistence.runtime_contracts import (
     RelationshipEvaluationInput,
     StructuredReason,
 )
-from app.reasoning.contracts import ReasoningFailure, ReasoningSuccess
+from app.reasoning.contracts import ObservationAnalysisResult, ReasoningFailure, ReasoningSuccess
 from app.reporting.contracts import ObservationReport, ReportFailure, ReportSuccess
 
 
@@ -64,9 +64,10 @@ async def evaluate_and_persist_relationships(
     snapshot: ObservationExecutionSnapshot,
     outcomes: tuple[CollectedLensOutcome, ...],
     assignments,
+    observation_run_id,
 ) -> tuple[object, ...] | FailedObservationExecutionOutcome:
     """Evaluate once outside a transaction, then atomically persist the validated batch."""
-    run_id = _run_id(outcomes)
+    run_id = observation_run_id
     try:
         _validate_assignments(snapshot, assignments, outcomes, run_id)
         verify_and_partition_lens_outcomes(assignments, outcomes)
@@ -140,6 +141,20 @@ def _validate_assignments(snapshot, assignments, outcomes, run_id) -> None:
         or len(lens_run_ids) != len(actual)
     ):
         raise ValueError("initialized assignment topology is invalid")
+    if len(outcomes) != len(assignments):
+        raise ValueError("initialized outcome topology is invalid")
+    for outcome, assignment in zip(outcomes, assignments, strict=True):
+        if not isinstance(outcome, CollectedLensOutcome) or outcome.assignment != assignment:
+            raise ValueError("initialized outcome topology is invalid")
+
+
+def _validate_partition(snapshot, partition, run_id) -> None:
+    """Require a non-contradictory current-run reasoning partition."""
+    all_outcomes = (*partition.usable, *partition.unavailable)
+    if not all_outcomes:
+        raise ValueError("reasoning partition cannot be empty")
+    assignments = tuple(item.assignment for item in all_outcomes)
+    _validate_assignments(snapshot, assignments, all_outcomes, run_id)
 
 
 async def invoke_and_persist_reasoning(
@@ -150,9 +165,10 @@ async def invoke_and_persist_reasoning(
     snapshot: ObservationExecutionSnapshot,
     partition: LensOutcomePartition,
     evaluations: tuple[object, ...],
+    observation_run_id,
 ) -> ReasoningSuccess | ReasoningFailure:
     """Invoke reasoning once outside a transaction and atomically persist valid success."""
-    run_id = _run_id((*partition.usable, *partition.unavailable))
+    run_id = observation_run_id
     try:
         validated_evaluations = validate_relationship_batch(
             snapshot,
@@ -160,7 +176,10 @@ async def invoke_and_persist_reasoning(
             observation_id=snapshot.observation_id,
             observation_run_id=run_id,
         )
-        value = build_observation_reasoning_input(snapshot, partition, validated_evaluations)
+        _validate_partition(snapshot, partition, run_id)
+        value = build_observation_reasoning_input(
+            snapshot, partition, validated_evaluations, observation_run_id=run_id
+        )
     except (AttributeError, TypeError, ValueError):
         failure = ReasoningFailure(code="reasoning_result_invalid", component="result_builder")
         await fail_observation_execution(
@@ -197,7 +216,7 @@ async def invoke_and_persist_reasoning(
             observation_id=snapshot.observation_id,
             observation_run_id=run_id,
         )
-    except (TypeError, ValueError):
+    except (AttributeError, TypeError, ValueError):
         failure = ReasoningFailure(code="reasoning_result_invalid", component="result_builder")
         await fail_observation_execution(
             session_factory=session_factory,
@@ -228,11 +247,16 @@ async def generate_and_persist_report(
     executor,
     snapshot: ObservationExecutionSnapshot,
     analysis_result,
+    observation_run_id,
 ) -> CompletedObservationExecutionOutcome | FailedObservationExecutionOutcome:
     """Generate one report, then atomically persist it with parent completion."""
-    run_id = analysis_result.identity.observation_run_id
+    run_id = observation_run_id
     try:
-        if analysis_result.identity.observation_id != snapshot.observation_id:
+        if (
+            not isinstance(analysis_result, ObservationAnalysisResult)
+            or analysis_result.identity.observation_id != snapshot.observation_id
+            or analysis_result.identity.observation_run_id != run_id
+        ):
             raise ValueError("analysis result observation identity does not match snapshot")
         request = report_generation_request(snapshot, analysis_result)
     except (AttributeError, TypeError, ValueError):
@@ -331,12 +355,3 @@ async def _current_run(session, run_id, observation_id):
     ):
         raise ValueError("stage parent does not match current ObservationRun")
     return run
-
-
-def _run_id(outcomes):
-    if not outcomes:
-        raise ValueError("post-JOIN stage requires a non-empty outcome set")
-    run_id = outcomes[0].assignment.observation_run_id
-    if any(item.assignment.observation_run_id != run_id for item in outcomes):
-        raise ValueError("outcomes span multiple ObservationRuns")
-    return run_id

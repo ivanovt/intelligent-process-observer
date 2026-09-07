@@ -106,12 +106,14 @@ def build_observation_reasoning_input(
     snapshot: ObservationExecutionSnapshot,
     partition: LensOutcomePartition,
     evaluations: Sequence[object],
+    *,
+    observation_run_id: UUID,
 ) -> ObservationReasoningInput:
     """Build the exact canonical-order reasoning partition from a completed JOIN."""
     context = ObservationSemanticContext(
         identity=ObservationIdentity(
             observation_id=snapshot.observation_id,
-            observation_run_id=_run_id(partition),
+            observation_run_id=observation_run_id,
         ),
         name=snapshot.name,
         description=snapshot.description,
@@ -196,16 +198,6 @@ def _reasoning_lens(lens: MetricLensSnapshot | AlertLensSnapshot) -> ReasoningLe
         description=lens.description,
         analysis_objectives=lens.analysis_objectives,
     )
-
-
-def _run_id(partition: LensOutcomePartition) -> UUID:
-    all_outcomes = (*partition.usable, *partition.unavailable)
-    if not all_outcomes:
-        raise ValueError("reasoning partition cannot be empty")
-    run_id = all_outcomes[0].assignment.observation_run_id
-    if any(item.assignment.observation_run_id != run_id for item in all_outcomes):
-        raise ValueError("reasoning partition spans multiple runs")
-    return run_id
 
 
 def _usable_result(outcome: CollectedLensOutcome):

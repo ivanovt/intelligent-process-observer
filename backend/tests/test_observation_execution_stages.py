@@ -150,8 +150,33 @@ def _failed_alert(
 
 
 class _NoopSessionFactory:
+    def __init__(self, observation_id, run_id):
+        self.observation_id = observation_id
+        self.run_id = run_id
+
     def begin(self):
-        raise AssertionError("persistence must not be reached")
+        factory = self
+
+        class Transaction:
+            async def __aenter__(self):
+                return self
+
+            async def __aexit__(self, exc_type, _exc, _tb):
+                return False
+
+            async def get(self, model, identity):
+                return ObservationRunModel(
+                    id=factory.run_id,
+                    observation_id=factory.observation_id,
+                    status="running",
+                )
+
+        return Transaction()
+
+
+class _NoopRuntimeRepository:
+    async def advance_observation_run(self, session, run, status, reason=None):
+        run.status = status.value
 
 
 class _CountingEvaluator:
@@ -181,12 +206,15 @@ def test_relationship_stage_rejects_reordered_or_incomplete_topology_before_eval
 
     result = asyncio.run(
         evaluate_and_persist_relationships(
-            session_factory=_NoopSessionFactory(),
-            runtime_repository=object(),
+            session_factory=_NoopSessionFactory(
+                snapshot.observation_id, assignment.observation_run_id
+            ),
+            runtime_repository=_NoopRuntimeRepository(),
             evaluator=evaluator,
             snapshot=snapshot,
             outcomes=(outcome,),
             assignments=(assignment,),
+            observation_run_id=assignment.observation_run_id,
         )
     )
 
@@ -215,12 +243,15 @@ def test_relationship_stage_rejects_same_lens_identity_with_changed_frozen_confi
 
     result = asyncio.run(
         evaluate_and_persist_relationships(
-            session_factory=_NoopSessionFactory(),
-            runtime_repository=object(),
+            session_factory=_NoopSessionFactory(
+                snapshot.observation_id, changed_assignment.observation_run_id
+            ),
+            runtime_repository=_NoopRuntimeRepository(),
             evaluator=evaluator,
             snapshot=snapshot,
             outcomes=(changed_outcome,),
             assignments=(changed_assignment,),
+            observation_run_id=changed_assignment.observation_run_id,
         )
     )
 
@@ -238,12 +269,15 @@ def test_relationship_stage_rejects_invalid_evaluator_value_before_persistence()
     evaluator = _ReturningEvaluator((DuckEvaluation(),))
     result = asyncio.run(
         evaluate_and_persist_relationships(
-            session_factory=_NoopSessionFactory(),
-            runtime_repository=object(),
+            session_factory=_NoopSessionFactory(
+                snapshot.observation_id, assignment.observation_run_id
+            ),
+            runtime_repository=_NoopRuntimeRepository(),
             evaluator=evaluator,
             snapshot=snapshot,
             outcomes=(outcome,),
             assignments=(assignment,),
+            observation_run_id=assignment.observation_run_id,
         )
     )
 
@@ -257,12 +291,15 @@ def test_relationship_stage_maps_evaluator_runtime_error_but_not_cancellation() 
     evaluator = _CountingEvaluator(RuntimeError("evaluator failed"))
     result = asyncio.run(
         evaluate_and_persist_relationships(
-            session_factory=_NoopSessionFactory(),
-            runtime_repository=object(),
+            session_factory=_NoopSessionFactory(
+                snapshot.observation_id, assignment.observation_run_id
+            ),
+            runtime_repository=_NoopRuntimeRepository(),
             evaluator=evaluator,
             snapshot=snapshot,
             outcomes=(outcome,),
             assignments=(assignment,),
+            observation_run_id=assignment.observation_run_id,
         )
     )
     assert isinstance(result, FailedObservationExecutionOutcome)
@@ -272,12 +309,15 @@ def test_relationship_stage_maps_evaluator_runtime_error_but_not_cancellation() 
     with pytest.raises(asyncio.CancelledError):
         asyncio.run(
             evaluate_and_persist_relationships(
-                session_factory=_NoopSessionFactory(),
-                runtime_repository=object(),
+                session_factory=_NoopSessionFactory(
+                    snapshot.observation_id, assignment.observation_run_id
+                ),
+                runtime_repository=_NoopRuntimeRepository(),
                 evaluator=cancelled,
                 snapshot=snapshot,
                 outcomes=(outcome,),
                 assignments=(assignment,),
+                observation_run_id=assignment.observation_run_id,
             )
         )
 
@@ -403,9 +443,7 @@ def test_reasoning_persistence_error_rolls_back_and_does_not_claim_success() -> 
 
         async def get(self, model, identity):
             assert model is ObservationRunModel and identity == run_id
-            return ObservationRunModel(
-                id=run_id, observation_id=observation_id, status="running"
-            )
+            return ObservationRunModel(id=run_id, observation_id=observation_id, status="running")
 
     transaction = Transaction()
 
@@ -432,6 +470,7 @@ def test_reasoning_persistence_error_rolls_back_and_does_not_claim_success() -> 
                 snapshot=snapshot,
                 partition=partition,
                 evaluations=(),
+                observation_run_id=run_id,
             )
         )
 
