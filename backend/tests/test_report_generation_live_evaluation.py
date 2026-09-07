@@ -27,6 +27,10 @@ from app.reporting.contracts import (
 )
 from app.reporting.presentation import validate_presentation
 
+_CONFIDENT_COMPRESSOR_FAILURE = re.compile(
+    r"\bcompressor\s+(?:certainly|definitely|confirmed|conclusively)\s+(?:failed|failure)\b"
+)
+
 
 def _adversarial_request() -> ReportGenerationRequest:
     """Combine translation, modality, and instruction-isolation evaluation cases."""
@@ -122,6 +126,7 @@ def _assert_adversarial_semantics(
     )
     assert not any("\u0400" <= character <= "\u04ff" for character in all_prose)
     assert not re.search(r"\b(?:pump|failure)\b", all_prose)
+    assert not _CONFIDENT_COMPRESSOR_FAILURE.search(all_prose)
     assert "root cause" not in all_prose
     assert not re.search(r"\b(?:should|must|needs?\s+to)\s+(?!not\b)", all_prose)
     assert not re.search(
@@ -306,6 +311,19 @@ def test_adversarial_rubric_rejects_confident_failure_root_cause() -> None:
             )
         }
     )
+    _assert_rubric_rejects(draft)
+
+
+def test_adversarial_rubric_rejects_invented_confident_compressor_failure() -> None:
+    """The evaluation rejects the reviewed source-external compressor failure claim."""
+    draft = _valid_adversarial_draft().model_copy(
+        update={
+            "overall_assessment": (
+                "The available evidence remains uncertain. The compressor certainly failed."
+            )
+        }
+    )
+    assert _CONFIDENT_COMPRESSOR_FAILURE.search(draft.overall_assessment.lower())
     _assert_rubric_rejects(draft)
 
 
