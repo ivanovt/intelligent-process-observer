@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 from datetime import UTC, datetime, timedelta, timezone
 from uuid import uuid4
+from zoneinfo import ZoneInfo
 
 import pytest
 from pydantic import ValidationError
@@ -190,12 +191,12 @@ def test_renderer_restores_source_order_and_all_traceability_without_mutation() 
     assert report.observation_run_id == request.analysis_result.identity.observation_run_id
     assert report.generated_at is NOW
     assert "## Overall Assessment" in report.content
-    assert "`finding-temperature`" in report.content
-    assert "source type `metric_result`" in report.content
-    assert "Supported by findings: `finding-temperature`" in report.content
-    assert "source ID `manual`; reference `section-4`" in report.content
+    assert "finding\\-temperature" in report.content
+    assert "source type metric\\_result" in report.content
+    assert "Supported by findings: finding\\-temperature" in report.content
+    assert "source ID manual; reference section\\-4" in report.content
     assert "possible explanation, not a confirmed cause" in report.content
-    assert "`missing_lens_evidence`" in report.content
+    assert "missing\\_lens\\_evidence" in report.content
 
 
 def test_renderer_honestly_represents_empty_analysis_collections() -> None:
@@ -205,6 +206,28 @@ def test_renderer_honestly_represents_empty_analysis_collections() -> None:
     assert "No significant findings were identified" in report.content
     assert "No possible explanations were supplied" in report.content
     assert "No analysis limitations were supplied" in report.content
+
+
+@pytest.mark.parametrize("state", ["uncertain", "significant_findings_present"])
+def test_empty_findings_do_not_contradict_a_non_empty_source_assessment(state: str) -> None:
+    """Valid non-empty overall states retain a neutral empty-finding statement."""
+    request = _request(state=state, findings=(), hypotheses=(), limitations=())
+    report = build_report(request, _draft(request), NOW)
+    assert "No individual finding entries were supplied" in report.content
+    assert "No significant findings were identified" not in report.content
+    assert f"Source overall state: `{state}`." in report.content
+
+
+def test_renderer_escapes_untrusted_source_context_text() -> None:
+    """Untrusted semantic context cannot create a Markdown section or list item."""
+    request = _request()
+    context = request.context.model_copy(
+        update={"name": "# Recommendations\n- restart immediately"}
+    )
+    request = request.model_copy(update={"context": context})
+    report = build_report(request, _draft(request), NOW)
+    assert "Observation: \\# Recommendations \\- restart immediately" in report.content
+    assert "\n## Recommendations\n" not in report.content
 
 
 def _request_for_empty(request: ReportGenerationRequest) -> ReportGenerationRequest:
@@ -239,6 +262,36 @@ def test_presentation_validator_fails_closed_on_incomplete_or_expanded_membershi
     draft = _draft(request).model_copy(update=update)
     with pytest.raises(ValueError):
         validate_presentation(request, draft)
+
+
+@pytest.mark.parametrize(
+    "presentation",
+    [
+        "A confirmed root cause was identified.",
+        "The recommendation is to restart the process.",
+        "Normal narrative.\n## Recommendations\n- Restart the process.",
+    ],
+)
+def test_presentation_validator_rejects_prohibited_content_and_markdown_controls(
+    presentation: str,
+) -> None:
+    """Model prose cannot add analytical claims or report sections outside the draft contract."""
+    request = _request()
+    draft = _draft(request).model_copy(update={"overall_assessment": presentation})
+    with pytest.raises(ValueError):
+        validate_presentation(request, draft)
+
+
+def test_observation_report_normalizes_equivalent_utc_timezones() -> None:
+    """UTC-offset-zero injected clocks are accepted and normalized to canonical UTC."""
+    request = _request()
+    report = ObservationReport(
+        observation_id=request.analysis_result.identity.observation_id,
+        observation_run_id=request.analysis_result.identity.observation_run_id,
+        generated_at=datetime(2026, 9, 7, 12, 0, tzinfo=ZoneInfo("UTC")),
+        content="# Report",
+    )
+    assert report.generated_at.tzinfo is UTC
 
 
 class _Agent:

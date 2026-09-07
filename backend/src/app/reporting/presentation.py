@@ -2,14 +2,21 @@
 
 from __future__ import annotations
 
+import re
 from collections.abc import Hashable, Iterable
-from datetime import UTC, datetime
+from datetime import datetime, timedelta
 
 from app.reasoning.contracts import EvidenceReference, Hypothesis, Limitation
 from app.reporting.contracts import (
     ObservationReport,
     ReportGenerationRequest,
     ReportPresentationDraft,
+)
+
+_PROHIBITED_PRESENTATION_TERMS = re.compile(
+    r"\b(?:recommendations?|recommended actions?|root causes?|confirmed causes?|"
+    r"definitive causes?)\b",
+    flags=re.IGNORECASE,
 )
 
 
@@ -22,8 +29,7 @@ def validate_presentation(
     source = request.analysis_result
     if draft.overall_state != source.overall_state:
         raise ValueError("presentation overall state must match the analysis result")
-    if not draft.overall_assessment.strip():
-        raise ValueError("overall assessment must not be blank")
+    _validate_presentation_text(draft.overall_assessment)
     _validate_exact_keys(
         "finding IDs",
         (item.id for item in source.findings),
@@ -40,8 +46,7 @@ def validate_presentation(
         (item.limitation_index for item in draft.limitations),
     )
     for item in (*draft.findings, *draft.hypotheses, *draft.limitations):
-        if not item.presentation.strip():
-            raise ValueError("presentation text must not be blank")
+        _validate_presentation_text(item.presentation)
     return draft
 
 
@@ -50,7 +55,7 @@ def build_report(
 ) -> ObservationReport:
     """Build one immutable Markdown report from validated source-keyed presentation."""
     validated = validate_presentation(request, draft)
-    if generated_at.tzinfo is not UTC:
+    if generated_at.tzinfo is None or generated_at.utcoffset() != timedelta(0):
         raise ValueError("generated_at must be UTC")
     result = request.analysis_result
     finding_text = {item.finding_id: item.presentation for item in validated.findings}
@@ -59,17 +64,19 @@ def build_report(
     lines = [
         "# Observation Report",
         "",
-        f"Observation: {request.context.name}",
+        f"Observation: {_markdown_text(request.context.name)}",
     ]
     if request.context.description is not None:
-        lines.extend((f"Description: {request.context.description}",))
+        lines.extend((f"Description: {_markdown_text(request.context.description)}",))
     if request.context.analytical_objective is not None:
-        lines.extend((f"Analytical objective: {request.context.analytical_objective}",))
+        lines.extend(
+            (f"Analytical objective: {_markdown_text(request.context.analytical_objective)}",)
+        )
     lines.extend(
         (
             "",
             "## Overall Assessment",
-            validated.overall_assessment,
+            *_presentation_lines(validated.overall_assessment),
             "",
             f"Source overall state: `{result.overall_state}`.",
             "",
@@ -77,9 +84,15 @@ def build_report(
         )
     )
     if not result.findings:
-        lines.append("No significant findings were identified in the available analysis result.")
+        lines.append(_empty_findings_text(result.overall_state))
     for finding in result.findings:
-        lines.extend(("", f"### Finding `{finding.id}`", finding_text[finding.id]))
+        lines.extend(
+            (
+                "",
+                f"### Finding {_markdown_text(finding.id)}",
+                *_presentation_lines(finding_text[finding.id]),
+            )
+        )
         lines.extend(_reference_lines("Evidence references", finding.evidence_refs))
     lines.extend(("", "## Possible Explanations"))
     if not result.hypotheses:
@@ -88,8 +101,8 @@ def build_report(
         lines.extend(
             (
                 "",
-                f"### Possible explanation `{hypothesis.id}`",
-                hypothesis_text[hypothesis.id],
+                f"### Possible explanation {_markdown_text(hypothesis.id)}",
+                *_presentation_lines(hypothesis_text[hypothesis.id]),
                 "This is a possible explanation, not a confirmed cause.",
                 "Supported by findings: " + _inline_values(hypothesis.supported_by),
             )
@@ -102,8 +115,8 @@ def build_report(
         lines.extend(
             (
                 "",
-                f"### Limitation {index + 1}: `{limitation.code}`",
-                limitation_text[index],
+                f"### Limitation {index + 1}: {_markdown_text(limitation.code)}",
+                *_presentation_lines(limitation_text[index]),
                 _limitation_details(limitation),
             )
         )
@@ -127,12 +140,43 @@ def _validate_exact_keys(
         raise ValueError(f"presentation must contain exact unique {label}")
 
 
+def _validate_presentation_text(value: str) -> None:
+    """Reject blank or control-bearing model prose before it can shape report structure."""
+    if not value.strip():
+        raise ValueError("presentation text must not be blank")
+    if _PROHIBITED_PRESENTATION_TERMS.search(value):
+        raise ValueError("presentation text contains prohibited analytical content")
+    if any(
+        line.lstrip().startswith(("#", ">", "- ", "* ", "+ ", "```")) for line in value.splitlines()
+    ):
+        raise ValueError("presentation text must not contain Markdown control syntax")
+
+
+def _presentation_lines(value: str) -> list[str]:
+    """Contain accepted model prose inside escaped Markdown blockquote lines."""
+    return [f"> {_markdown_text(line)}" for line in value.splitlines()]
+
+
+def _empty_findings_text(overall_state: str) -> str:
+    """Describe an empty finding set without contradicting the source assessment."""
+    if overall_state == "no_significant_findings":
+        return "No significant findings were identified in the available analysis result."
+    return "No individual finding entries were supplied by the analysis result."
+
+
+def _markdown_text(value: object) -> str:
+    """Render untrusted source data as one escaped Markdown text fragment."""
+    text = str(value).replace("\r\n", "\n").replace("\r", "\n").replace("\n", " ")
+    return re.sub(r"([\\`*_{}\[\]<>#+\-.!|])", r"\\\1", text)
+
+
 def _reference_lines(label: str, references: tuple[EvidenceReference, ...]) -> list[str]:
     """Format canonical finding evidence references without model-authored content."""
     return [label + ":"] + [
         "- "
-        + f"source type `{reference.source_type}`; source ID `{reference.source_id}`; "
-        + f"locator `{'.'.join(str(item) for item in reference.locator)}`"
+        + f"source type {_markdown_text(reference.source_type)}; "
+        + f"source ID {_markdown_text(reference.source_id)}; "
+        + f"locator {_markdown_text('.'.join(str(item) for item in reference.locator))}"
         for reference in references
     ]
 
@@ -140,19 +184,23 @@ def _reference_lines(label: str, references: tuple[EvidenceReference, ...]) -> l
 def _knowledge_reference_lines(hypothesis: Hypothesis) -> list[str]:
     """Format canonical hypothesis knowledge references from the source artifact."""
     return ["Knowledge references:"] + [
-        f"- source ID `{reference.source_id}`; reference `{reference.reference}`"
+        f"- source ID {_markdown_text(reference.source_id)}; "
+        f"reference {_markdown_text(reference.reference)}"
         for reference in hypothesis.knowledge_refs
     ]
 
 
 def _inline_values(values: tuple[str, ...]) -> str:
     """Render non-empty source identifiers in their preserved source order."""
-    return ", ".join(f"`{value}`" for value in values)
+    return ", ".join(_markdown_text(value) for value in values)
 
 
 def _limitation_details(limitation: Limitation) -> str:
     """Render the exact structured limitation fields in a deterministic form."""
-    details = [f"lens ID `{limitation.lens_id}`", f"lens type `{limitation.lens_type}`"]
+    details = [
+        f"lens ID {_markdown_text(limitation.lens_id)}",
+        f"lens type {_markdown_text(limitation.lens_type)}",
+    ]
     if limitation.code == "partial_lens_analysis" and limitation.component is not None:
-        details.append(f"component `{limitation.component}`")
+        details.append(f"component {_markdown_text(limitation.component)}")
     return "Source limitation: " + "; ".join(details) + "."

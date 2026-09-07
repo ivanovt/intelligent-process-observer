@@ -2,8 +2,12 @@
 
 from __future__ import annotations
 
+import asyncio
+
+from openai import APITimeoutError
 from pydantic import BaseModel, ConfigDict, Field
 from pydantic_ai import Agent
+from pydantic_ai.exceptions import ModelAPIError
 from pydantic_ai.messages import ModelResponse, ToolCallPart
 from pydantic_ai.models import Model, ModelRequestParameters, ModelSettings
 from pydantic_ai.models.wrapper import WrapperModel
@@ -59,6 +63,7 @@ class PydanticAIReportGenerationAgent:
     ) -> None:
         """Configure one model with bounded request deadline and output size."""
         self._model = model
+        self._timeout_seconds = timeout_seconds
         self._settings: ModelSettings = {
             "timeout": timeout_seconds,
             "max_tokens": max_output_tokens,
@@ -81,9 +86,17 @@ class PydanticAIReportGenerationAgent:
                 "Present hypotheses only as possible explanations, never confirmed causes."
             ),
         )
-        result = await agent.run(
-            request.model_dump_json(),
-            model_settings=self._settings,
-            usage_limits=UsageLimits(request_limit=1),
-        )
+        try:
+            async with asyncio.timeout(self._timeout_seconds):
+                result = await agent.run(
+                    request.model_dump_json(),
+                    model_settings=self._settings,
+                    usage_limits=UsageLimits(request_limit=1),
+                )
+        except TimeoutError as error:
+            raise TimeoutError from error
+        except ModelAPIError as error:
+            if isinstance(error.__cause__, APITimeoutError):
+                raise TimeoutError from error
+            raise
         return ReportPresentationDraft.model_validate_json(result.output.model_dump_json())

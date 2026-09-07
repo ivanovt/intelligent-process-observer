@@ -51,6 +51,7 @@ def test_report_composition_uses_model_limits_and_shared_routing_policy() -> Non
     assert model.settings == {
         "extra_body": {"provider": {"allow_fallbacks": False, "order": ["pinned"]}}
     }
+    assert model.provider.client.max_retries == 0
     assert agent._model.model_name == "vendor/report-model"
     assert agent._settings == {"timeout": 43.5, "max_tokens": 765}
 

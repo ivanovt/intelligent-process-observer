@@ -5,8 +5,10 @@ from __future__ import annotations
 import asyncio
 from uuid import uuid4
 
+import httpx
 import pytest
-from pydantic_ai.exceptions import UnexpectedModelBehavior
+from openai import APITimeoutError
+from pydantic_ai.exceptions import ModelAPIError, UnexpectedModelBehavior
 from pydantic_ai.messages import ModelResponse, ToolCallPart
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 
@@ -115,6 +117,20 @@ def test_adapter_rejects_non_output_tools_and_propagates_timeout_and_cancellatio
             PydanticAIReportGenerationAgent(FunctionModel(timeout_model)).complete_presentation(
                 request
             )
+        )
+
+    def provider_timeout_model(*args, **kwargs):
+        del args, kwargs
+        try:
+            raise APITimeoutError(httpx.Request("POST", "https://openrouter.ai/api/v1"))
+        except APITimeoutError as timeout:
+            raise ModelAPIError("openai/report", "provider timeout") from timeout
+
+    with pytest.raises(TimeoutError):
+        _run(
+            PydanticAIReportGenerationAgent(
+                FunctionModel(provider_timeout_model)
+            ).complete_presentation(request)
         )
 
     def cancelled_model(*args, **kwargs):

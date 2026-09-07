@@ -49,6 +49,7 @@ def build_report_model(settings: Settings):
     from pydantic_ai.providers.openrouter import OpenRouterProvider
 
     provider = OpenRouterProvider(api_key=settings.openrouter_api_key.get_secret_value())
+    provider.client.max_retries = 0
     policy = {"allow_fallbacks": settings.openrouter_allow_fallbacks}
     if settings.openrouter_provider_order:
         policy["order"] = settings.openrouter_provider_order

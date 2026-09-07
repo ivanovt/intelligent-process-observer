@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from typing import Annotated, Literal
 from uuid import UUID
 
@@ -77,9 +77,9 @@ class ObservationReport(StrictReportingModel):
     @classmethod
     def generated_at_is_utc(cls, value: datetime) -> datetime:
         """Require an aware UTC timestamp supplied by the application clock."""
-        if value.tzinfo is not UTC:
+        if value.tzinfo is None or value.utcoffset() != timedelta(0):
             raise ValueError("generated_at must be UTC")
-        return value
+        return value.astimezone(UTC)
 
     @field_validator("content")
     @classmethod
