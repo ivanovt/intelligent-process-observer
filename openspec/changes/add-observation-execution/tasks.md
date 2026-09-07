@@ -11,7 +11,7 @@
 - [x] 2.2 Implement request/policy validation and one-shot projection of a complete loaded Observation aggregate into a detached immutable Metric/Alert snapshot, returning only the exact controlled pre-initialization rejection codes for malformed request/policy, absent, invalid, empty, Log, or unsupported definitions before runtime creation.
 - [x] 2.3 Implement canonical Lens ordering by literal type order `metric`, `alert` then lexical Lens ID, preserving Relationship definition order and keeping provider configuration out of reasoning/report semantic projections.
 - [x] 2.4 Implement atomic initialization that loads the definition, creates one fresh ObservationRun and the exact type-aware LensRun graph, advances the parent to running, and rolls the entire transaction back before pipeline work on any error.
-- [ ] 2.5 Add focused tests for UTC window validation, snapshot isolation, definition-read count, the exact completed/failed/rejected internal outcome shapes and controlled preparation-code mapping, no-run-ID rejection, propagated cancellation/persistence failures, unsupported/absent input, equal cross-type Lens IDs, canonical ordering independent of presentation order, exact topology correlation, fresh identities, and initialization rollback.
+- [x] 2.5 Add focused tests for UTC window validation, snapshot isolation, definition-read count, the exact completed/failed/rejected internal outcome shapes and controlled preparation-code mapping, no-run-ID rejection, propagated cancellation/persistence failures, unsupported/absent input, equal cross-type Lens IDs, canonical ordering independent of presentation order, exact topology correlation, fresh identities, and initialization rollback.
 
 ## 3. Compose Type-Specific Lens Execution Adapters
 
