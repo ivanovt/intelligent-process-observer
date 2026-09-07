@@ -25,14 +25,26 @@ from app.metrics.result_builder import MetricResultBuilder
 
 
 class Transaction(AbstractAsyncContextManager["Session"]):
-    def __init__(self, session: Session) -> None:
+    def __init__(
+        self,
+        session: Session,
+        *,
+        commit_gate: asyncio.Event | None = None,
+        exit_error: BaseException | None = None,
+    ) -> None:
         self.session = session
+        self.commit_gate = commit_gate
+        self.exit_error = exit_error
         self.committed = False
 
     async def __aenter__(self) -> Session:
         return self.session
 
     async def __aexit__(self, exc_type: object, exc: object, traceback: object) -> bool:
+        if self.commit_gate is not None:
+            await self.commit_gate.wait()
+        if self.exit_error is not None:
+            raise self.exit_error
         self.committed = exc_type is None
         return False
 
@@ -47,12 +59,24 @@ class Session:
 
 
 class Factory:
-    def __init__(self, session: Session) -> None:
-        self.session = session
+    def __init__(
+        self,
+        runs: dict[object, LensRunModel],
+        *,
+        first_commit_gate: asyncio.Event | None = None,
+        first_exit_error: BaseException | None = None,
+    ) -> None:
+        self.runs = runs
+        self.first_commit_gate = first_commit_gate
+        self.first_exit_error = first_exit_error
         self.transactions: list[Transaction] = []
 
     def begin(self) -> Transaction:
-        transaction = Transaction(self.session)
+        transaction = Transaction(
+            Session(self.runs),
+            commit_gate=self.first_commit_gate if not self.transactions else None,
+            exit_error=self.first_exit_error if not self.transactions else None,
+        )
         self.transactions.append(transaction)
         return transaction
 
@@ -66,21 +90,28 @@ class Repository:
 
 
 class Adapter:
-    def __init__(self) -> None:
+    def __init__(self, *, on_started: asyncio.Event | None = None) -> None:
         self.active = 0
         self.maximum_active = 0
         self.started: list[object] = []
         self.release: dict[object, asyncio.Event] = {}
+        self.on_started = on_started
+        self.cancelled: list[object] = []
 
     async def execute(
         self, assignment: LensExecutionAssignment, policy: ExecutionPolicy
     ) -> CollectedLensOutcome:
         release = self.release.setdefault(assignment.lens_run_id, asyncio.Event())
         self.started.append(assignment.lens_run_id)
+        if self.on_started is not None:
+            self.on_started.set()
         self.active += 1
         self.maximum_active = max(self.maximum_active, self.active)
         try:
             await release.wait()
+        except asyncio.CancelledError:
+            self.cancelled.append(assignment.lens_run_id)
+            raise
         finally:
             self.active -= 1
         return _metric_outcome(assignment, "completed", "good")
@@ -89,7 +120,7 @@ class Adapter:
 def test_fan_out_uses_fixed_work_conserving_workers_and_canonical_result_order() -> None:
     assignments = tuple(_metric_assignment(str(index)) for index in range(3))
     runs = {assignment.lens_run_id: _run(assignment) for assignment in assignments}
-    factory = Factory(Session(runs))
+    factory = Factory(runs)
     adapter = Adapter()
 
     async def exercise() -> tuple[CollectedLensOutcome, ...]:
@@ -136,7 +167,7 @@ def test_fan_out_does_not_call_adapter_when_pending_admission_fails() -> None:
     with pytest.raises(ValueError, match="expected pending"):
         asyncio.run(
             fan_out_lens_runs(
-                session_factory=Factory(Session({assignment.lens_run_id: run})),
+                session_factory=Factory({assignment.lens_run_id: run}),
                 runtime_repository=Repository(),  # type: ignore[arg-type]
                 adapter=adapter,
                 assignments=(assignment,),
@@ -144,6 +175,67 @@ def test_fan_out_does_not_call_adapter_when_pending_admission_fails() -> None:
             )
         )
     assert adapter.started == []
+
+
+def test_fan_out_settles_active_siblings_after_admission_commit_failure() -> None:
+    assignments = tuple(_metric_assignment(str(index)) for index in range(3))
+    runs = {assignment.lens_run_id: _run(assignment) for assignment in assignments}
+    sibling_started = asyncio.Event()
+    factory = Factory(
+        runs,
+        first_commit_gate=sibling_started,
+        first_exit_error=RuntimeError("admission commit failed"),
+    )
+    adapter = Adapter(on_started=sibling_started)
+
+    async def exercise() -> None:
+        with pytest.raises(RuntimeError, match="admission commit failed"):
+            await fan_out_lens_runs(
+                session_factory=factory,
+                runtime_repository=Repository(),  # type: ignore[arg-type]
+                adapter=adapter,
+                assignments=assignments,
+                policy=ExecutionPolicy(max_parallel_lens_runs=2, lens_deadline_seconds=1),
+            )
+
+    asyncio.run(exercise())
+
+    assert len(factory.transactions) == 2
+    assert factory.transactions[0].session is not factory.transactions[1].session
+    assert adapter.started == [assignments[1].lens_run_id]
+    assert adapter.cancelled == [assignments[1].lens_run_id]
+    assert adapter.active == 0
+    assert assignments[2].lens_run_id not in adapter.started
+
+
+def test_fan_out_settles_owned_workers_when_caller_cancels() -> None:
+    assignments = tuple(_metric_assignment(str(index)) for index in range(2))
+    runs = {assignment.lens_run_id: _run(assignment) for assignment in assignments}
+    adapter = Adapter()
+
+    async def exercise() -> None:
+        task = asyncio.create_task(
+            fan_out_lens_runs(
+                session_factory=Factory(runs),
+                runtime_repository=Repository(),  # type: ignore[arg-type]
+                adapter=adapter,
+                assignments=assignments,
+                policy=ExecutionPolicy(max_parallel_lens_runs=2, lens_deadline_seconds=1),
+            )
+        )
+        for _ in range(100):
+            if len(adapter.started) == 2:
+                break
+            await asyncio.sleep(0)
+        assert len(adapter.started) == 2
+        task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await task
+
+    asyncio.run(exercise())
+
+    assert set(adapter.cancelled) == {assignment.lens_run_id for assignment in assignments}
+    assert adapter.active == 0
 
 
 def test_strict_join_verifies_topology_and_partitions_exact_result_variants() -> None:

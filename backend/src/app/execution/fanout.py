@@ -41,21 +41,44 @@ async def fan_out_lens_runs(
         return ()
     results: list[CollectedLensOutcome | None] = [None] * len(assignments)
     next_index = 0
+    stopping = False
+    workers: list[asyncio.Task[None]] = []
+
+    def stop_workers() -> None:
+        """Prevent more claims and cancel every still-active owned worker."""
+
+        nonlocal stopping
+        stopping = True
+        current_worker = asyncio.current_task()
+        for worker_task in workers:
+            if worker_task is not current_worker and not worker_task.done():
+                worker_task.cancel()
 
     async def worker() -> None:
         nonlocal next_index
-        while next_index < len(assignments):
-            index = next_index
-            next_index += 1
-            assignment = assignments[index]
-            await _admit_lens_run(session_factory, runtime_repository, assignment)
-            results[index] = await adapter.execute(assignment, policy)
+        try:
+            while not stopping and next_index < len(assignments):
+                index = next_index
+                next_index += 1
+                assignment = assignments[index]
+                await _admit_lens_run(session_factory, runtime_repository, assignment)
+                if stopping:
+                    return
+                results[index] = await adapter.execute(assignment, policy)
+        except BaseException:
+            stop_workers()
+            raise
 
-    workers = tuple(
+    workers.extend(
         asyncio.create_task(worker())
         for _ in range(min(policy.max_parallel_lens_runs, len(assignments)))
     )
-    await asyncio.gather(*workers)
+    try:
+        await asyncio.gather(*workers)
+    except BaseException:
+        stop_workers()
+        await asyncio.gather(*workers, return_exceptions=True)
+        raise
     if any(result is None for result in results):
         raise RuntimeError("fan-out completed without every collected Lens outcome")
     return tuple(cast(CollectedLensOutcome, result) for result in results)
