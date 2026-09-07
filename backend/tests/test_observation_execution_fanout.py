@@ -7,6 +7,14 @@ from uuid import uuid4
 
 import pytest
 
+from app.alerts.contracts import (
+    AlertAnalysisWindow,
+    AlertIdentity,
+    AlertLensExecutionContext,
+    AlertMandatoryEvidence,
+    AlertProviderScope,
+)
+from app.alerts.result_builder import AlertResultBuilder
 from app.execution import (
     AlertLensSnapshot,
     AnalysisWindow,
@@ -19,13 +27,20 @@ from app.execution import (
     verify_and_partition_lens_outcomes,
 )
 from app.infrastructure.persistence.models import LensRunModel
-from app.infrastructure.persistence.runtime_contracts import (
-    LensAnalysisResultInput,
-    LensResultIdentity,
-    LensRunStatus,
-    LensType,
+from app.infrastructure.persistence.runtime_contracts import LensRunStatus
+from app.metrics.contracts import (
+    MetricAnalysisWindow,
+    MetricEvidence,
+    MetricIdentity,
+    MetricLensExecutionContext,
+    MetricMandatoryAnalysisFailure,
+    MetricProviderScope,
+    MetricSemantics,
+    MetricTrend,
+    MetricVariability,
+    PreparedDegradedSeries,
+    PreparedGoodSeries,
 )
-from app.metrics.contracts import MetricLensExecutionContext, MetricMandatoryAnalysisFailure
 from app.metrics.result_builder import MetricResultBuilder
 
 
@@ -210,19 +225,20 @@ def test_fan_out_uses_fixed_work_conserving_workers_and_canonical_result_order()
 def test_fan_out_does_not_call_adapter_when_pending_admission_fails() -> None:
     assignment = _metric_assignment("only")
     run = _run(assignment)
-    run.status = "failed"
     adapter = Adapter()
+    error = RuntimeError("initial admission commit failed")
 
-    with pytest.raises(ValueError, match="expected pending"):
+    with pytest.raises(RuntimeError) as caught:
         asyncio.run(
             fan_out_lens_runs(
-                session_factory=Factory({assignment.lens_run_id: run}),
+                session_factory=Factory({assignment.lens_run_id: run}, first_exit_error=error),
                 runtime_repository=Repository(),  # type: ignore[arg-type]
                 adapter=adapter,
                 assignments=(assignment,),
                 policy=ExecutionPolicy(max_parallel_lens_runs=1, lens_deadline_seconds=1),
             )
         )
+    assert caught.value is error
     assert adapter.started == []
 
 
@@ -326,14 +342,15 @@ def test_fan_out_settles_siblings_after_later_admission_commit_failure() -> None
 
 
 def test_fan_out_settles_owned_workers_when_caller_cancels() -> None:
-    assignments = tuple(_metric_assignment(str(index)) for index in range(2))
+    assignments = tuple(_metric_assignment(str(index)) for index in range(3))
     runs = {assignment.lens_run_id: _run(assignment) for assignment in assignments}
     adapter = Adapter()
+    factory = Factory(runs)
 
     async def exercise() -> None:
         task = asyncio.create_task(
             fan_out_lens_runs(
-                session_factory=Factory(runs),
+                session_factory=factory,
                 runtime_repository=Repository(),  # type: ignore[arg-type]
                 adapter=adapter,
                 assignments=assignments,
@@ -351,21 +368,28 @@ def test_fan_out_settles_owned_workers_when_caller_cancels() -> None:
 
     asyncio.run(exercise())
 
-    assert set(adapter.cancelled) == {assignment.lens_run_id for assignment in assignments}
+    assert set(adapter.cancelled) == {assignment.lens_run_id for assignment in assignments[:2]}
     assert adapter.active == 0
+    assert len(factory.transactions) == 2
+    assert adapter.started == [assignments[0].lens_run_id, assignments[1].lens_run_id]
+    assert runs[assignments[2].lens_run_id].status == "pending"
 
 
 def test_strict_join_verifies_topology_and_partitions_exact_result_variants() -> None:
-    good = _metric_assignment("good")
+    completed_good = _metric_assignment("completed-good")
+    completed_degraded = _metric_assignment("completed-degraded")
     partial_good = _metric_assignment("partial-good")
-    insufficient = _metric_assignment("insufficient")
+    partial_degraded = _metric_assignment("partial-degraded")
+    insufficient = _metric_assignment("completed-insufficient")
     failed = _metric_assignment("failed")
     alert_completed = _alert_assignment("alert-completed")
     alert_partial = _alert_assignment("alert-partial")
     alert_failed = _alert_assignment("alert-failed")
     outcomes = (
-        _metric_outcome(good, "completed", "good"),
-        _metric_outcome(partial_good, "partial", "degraded"),
+        _metric_outcome(completed_good, "completed", "good"),
+        _metric_outcome(completed_degraded, "completed", "degraded"),
+        _metric_outcome(partial_good, "partial", "good"),
+        _metric_outcome(partial_degraded, "partial", "degraded"),
         _metric_outcome(insufficient, "completed", "insufficient"),
         _metric_outcome(failed, "failed", None),
         _alert_outcome(alert_completed, "completed"),
@@ -374,21 +398,40 @@ def test_strict_join_verifies_topology_and_partitions_exact_result_variants() ->
     )
 
     partition = verify_and_partition_lens_outcomes(
-        (good, partial_good, insufficient, failed, alert_completed, alert_partial, alert_failed),
+        (
+            completed_good,
+            completed_degraded,
+            partial_good,
+            partial_degraded,
+            insufficient,
+            failed,
+            alert_completed,
+            alert_partial,
+            alert_failed,
+        ),
         outcomes,
     )
 
-    assert partition.usable == (outcomes[0], outcomes[1], outcomes[4], outcomes[5])
-    assert partition.unavailable == (outcomes[2], outcomes[3], outcomes[6])
-    assert outcomes[3].artifact is not None
-    assert outcomes[6].artifact is None
+    assert partition.usable == (
+        outcomes[0],
+        outcomes[1],
+        outcomes[2],
+        outcomes[3],
+        outcomes[6],
+        outcomes[7],
+    )
+    assert partition.unavailable == (outcomes[4], outcomes[5], outcomes[8])
+    assert outcomes[5].artifact is not None
+    assert outcomes[8].artifact is None
     with pytest.raises(ValueError, match="differs from initialized topology"):
-        verify_and_partition_lens_outcomes((good,), (outcomes[0], outcomes[1]))
+        verify_and_partition_lens_outcomes((completed_good,), (outcomes[0], outcomes[1]))
     with pytest.raises(ValueError, match="differs from initialized topology"):
-        verify_and_partition_lens_outcomes((good, partial_good), (outcomes[1], outcomes[0]))
+        verify_and_partition_lens_outcomes(
+            (completed_good, completed_degraded), (outcomes[1], outcomes[0])
+        )
     with pytest.raises(ValueError, match="invalid data-quality"):
         verify_and_partition_lens_outcomes(
-            (partial_good,), (_metric_outcome(partial_good, "partial", "insufficient"),)
+            (partial_good,), (_boundary_invalid_metric_outcome(partial_good),)
         )
 
 
@@ -446,36 +489,21 @@ def _run(assignment: LensExecutionAssignment) -> LensRunModel:
 def _metric_outcome(
     assignment: LensExecutionAssignment, status: str, quality: str | None
 ) -> CollectedLensOutcome:
-    context = MetricLensExecutionContext.model_validate(
-        {
-            "identity": {
-                "observation_id": assignment.observation_id,
-                "observation_run_id": assignment.observation_run_id,
-                "lens_id": assignment.lens.lens_id,
-                "lens_run_id": assignment.lens_run_id,
-                "metric_ref": assignment.lens.metric_id,
-                "unit": assignment.lens.unit,
-            },
-            "provider_scope": {"adapter_type": "prometheus", "source_id": "source", "query": "up"},
-            "analysis_window": {
-                "from": assignment.analysis_window.from_,
-                "to": assignment.analysis_window.to,
-            },
-            "analysis_objectives": (),
-            "reference_periods": (),
-            "history_policy": {},
-        }
-    )
+    context = _metric_context(assignment)
     builder = MetricResultBuilder()
     if status == "failed":
         _, artifact = builder.failed(context, MetricMandatoryAnalysisFailure(diagnostic="test"))
-    else:
+    elif quality == "insufficient":
         _, artifact = builder.completed_insufficient(context)
-        artifact.payload["data_quality"] = quality
+    else:
+        prepared = _prepared_metric(quality)
+        semantics = _metric_semantics()
         if status == "partial":
-            artifact.status = LensRunStatus.PARTIAL
-            artifact.payload["status"]["state"] = "partial"
-            artifact.payload["reason"] = {"code": "test", "component": "test"}
+            _, artifact = builder.partial_reference_unavailable(
+                context, prepared, semantics, (), ()
+            )
+        else:
+            _, artifact = builder.completed_sufficient(context, prepared, semantics)
     return CollectedLensOutcome(
         assignment=assignment,
         status=status,  # type: ignore[arg-type]
@@ -491,31 +519,102 @@ def _alert_outcome(
         return CollectedLensOutcome(
             assignment=assignment, status="failed", reason=ExecutionReason(code="test")
         )
-    provenance = {"source": "test"}
-    identity = LensResultIdentity(
-        observation_id=assignment.observation_id,
-        observation_run_id=assignment.observation_run_id,
-        lens_id=assignment.lens.lens_id,
-        lens_run_id=assignment.lens_run_id,
-    )
-    artifact = LensAnalysisResultInput(
-        result_type=LensType.ALERT,
-        status=LensRunStatus(status),
-        schema_version="1.0",
-        identity=identity,
-        provenance=provenance,
-        payload={
-            "schema_version": "1.0",
-            "lens_type": "alert",
-            "identity": identity.model_dump(mode="json"),
-            "provenance": provenance,
-            "status": status,
-            **({"reason": {"code": "test", "component": "test"}} if status == "partial" else {}),
-        },
-    )
+    context = _alert_context(assignment)
+    builder = AlertResultBuilder()
+    if status == "completed":
+        _, terminal = builder.completed_zero(context, AlertMandatoryEvidence())
+    else:
+        _, terminal = builder.usable(
+            context,
+            (),
+            AlertMandatoryEvidence(),
+            None,
+            current_rejected=True,
+            reference_unavailable=False,
+            zero=True,
+        )
     return CollectedLensOutcome(
         assignment=assignment,
         status=status,  # type: ignore[arg-type]
-        artifact=artifact,
+        artifact=terminal.artifact,
         reason=ExecutionReason(code="test") if status == "partial" else None,
+    )
+
+
+def _metric_context(assignment: LensExecutionAssignment) -> MetricLensExecutionContext:
+    assert isinstance(assignment.lens, MetricLensSnapshot)
+    return MetricLensExecutionContext(
+        identity=MetricIdentity(
+            observation_id=assignment.observation_id,
+            observation_run_id=assignment.observation_run_id,
+            lens_id=assignment.lens.lens_id,
+            lens_run_id=assignment.lens_run_id,
+            metric_ref=assignment.lens.metric_id,
+            unit=assignment.lens.unit,
+        ),
+        provider_scope=MetricProviderScope(
+            adapter_type=assignment.lens.adapter_type,
+            source_id=assignment.lens.source_id,
+            query=assignment.lens.query,
+        ),
+        analysis_window=MetricAnalysisWindow(
+            **{"from": assignment.analysis_window.from_, "to": assignment.analysis_window.to}
+        ),
+        analysis_objectives=assignment.lens.analysis_objectives,
+        reference_periods=assignment.lens.reference_periods,
+    )
+
+
+def _prepared_metric(quality: str) -> PreparedGoodSeries | PreparedDegradedSeries:
+    prepared_type = PreparedGoodSeries if quality == "good" else PreparedDegradedSeries
+    return prepared_type(
+        data_quality=quality,
+        samples=(),
+        evidence=MetricEvidence(mean=1.0, std=0.0, min=1.0, max=1.0, slope=0.0),
+        residuals=(),
+    )
+
+
+def _metric_semantics() -> MetricSemantics:
+    return MetricSemantics(
+        trend=MetricTrend(direction="stable", rate="not_classified"),
+        variability=MetricVariability(state="low"),
+    )
+
+
+def _alert_context(assignment: LensExecutionAssignment) -> AlertLensExecutionContext:
+    assert isinstance(assignment.lens, AlertLensSnapshot)
+    return AlertLensExecutionContext(
+        identity=AlertIdentity(
+            observation_id=assignment.observation_id,
+            observation_run_id=assignment.observation_run_id,
+            lens_id=assignment.lens.lens_id,
+            lens_run_id=assignment.lens_run_id,
+        ),
+        provider_scope=AlertProviderScope(
+            source=assignment.lens.source, query=assignment.lens.selector_query
+        ),
+        analysis_window=AlertAnalysisWindow(
+            **{"from": assignment.analysis_window.from_, "to": assignment.analysis_window.to}
+        ),
+        lens_name=assignment.lens.name,
+        analysis_objectives=assignment.lens.analysis_objectives,
+        reference_periods=assignment.lens.reference_periods,
+    )
+
+
+def _boundary_invalid_metric_outcome(
+    assignment: LensExecutionAssignment,
+) -> CollectedLensOutcome:
+    """Construct the sole deliberately invalid envelope used by JOIN rejection coverage."""
+
+    valid = _metric_outcome(assignment, "partial", "good")
+    assert valid.artifact is not None
+    envelope = valid.artifact.to_persistence_envelope()
+    envelope.payload["data_quality"] = "insufficient"
+    return CollectedLensOutcome(
+        assignment=assignment,
+        status="partial",
+        artifact=envelope,
+        reason=ExecutionReason(code="test", component="test"),
     )
