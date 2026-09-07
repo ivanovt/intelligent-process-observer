@@ -41,6 +41,7 @@ from app.execution.initialization import (
     TransactionSessionFactory,
     initialize_observation_execution,
 )
+from app.execution.orchestrator import ObservationExecutionOrchestrator
 from app.execution.ordering import canonical_lens_order
 from app.execution.projectors import (
     admissible_artifacts,
@@ -105,4 +106,5 @@ __all__ = [
     "generate_and_persist_report",
     "invoke_and_persist_report",
     "invoke_and_persist_reasoning",
+    "ObservationExecutionOrchestrator",
 ]
