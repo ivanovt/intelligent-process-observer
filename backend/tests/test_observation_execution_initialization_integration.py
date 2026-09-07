@@ -212,7 +212,8 @@ class CommitFailingTransaction(AbstractAsyncContextManager[AsyncSession]):
         self._session = self._session_factory()
         event.listen(self._session.sync_session, "before_commit", _raise_commit_failure)
         self._transaction = self._session.begin()
-        return await self._transaction.__aenter__()
+        await self._transaction.__aenter__()
+        return self._session
 
     async def __aexit__(
         self,
