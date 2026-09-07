@@ -8,6 +8,12 @@ from datetime import UTC, datetime
 from typing import Literal, Protocol
 from uuid import UUID
 
+from app.infrastructure.persistence.runtime_contracts import (
+    LensAnalysisResultInput,
+    LensRunStatus,
+    LensType,
+)
+
 type PreparationRejectionCode = Literal[
     "invalid_execution_request",
     "observation_not_found",
@@ -142,6 +148,7 @@ class CollectedLensOutcome:
 
     assignment: LensExecutionAssignment
     status: LensTerminalStatus
+    artifact: LensAnalysisResultInput | None = None
     reason: ExecutionReason | None = None
 
     def __post_init__(self) -> None:
@@ -153,6 +160,45 @@ class CollectedLensOutcome:
             raise ValueError("completed Lens outcome cannot carry a reason")
         if self.status in {"partial", "failed"} and type(self.reason) is not ExecutionReason:
             raise ValueError("partial and failed Lens outcomes require an execution reason")
+        _validate_collected_artifact(self.assignment, self.status, self.artifact)
+
+
+def _validate_collected_artifact(
+    assignment: LensExecutionAssignment,
+    status: LensTerminalStatus,
+    artifact: LensAnalysisResultInput | None,
+) -> None:
+    """Require the exact durable artifact shape for one terminal Lens variant."""
+
+    is_metric = isinstance(assignment.lens, MetricLensSnapshot)
+    if artifact is None:
+        if not is_metric and status == "failed":
+            return
+        raise ValueError("collected Lens outcome requires its terminal artifact")
+    if not isinstance(artifact, LensAnalysisResultInput):
+        raise ValueError("collected Lens outcome artifact must be a validated persistence envelope")
+    LensAnalysisResultInput.model_validate(artifact.model_dump())
+    expected_type = LensType.METRIC if is_metric else LensType.ALERT
+    expected_status = LensRunStatus(status)
+    identity = artifact.identity
+    if (
+        artifact.result_type is not expected_type
+        or artifact.status is not expected_status
+        or identity.observation_id != assignment.observation_id
+        or identity.observation_run_id != assignment.observation_run_id
+        or identity.lens_id != assignment.lens.lens_id
+        or identity.lens_run_id != assignment.lens_run_id
+    ):
+        raise ValueError("collected Lens outcome artifact contradicts its assignment or status")
+    if is_metric:
+        assert isinstance(assignment.lens, MetricLensSnapshot)
+        if (
+            identity.metric_ref != assignment.lens.metric_id
+            or identity.unit != assignment.lens.unit
+        ):
+            raise ValueError("collected Metric artifact identity contradicts its assignment")
+    elif status == "failed":
+        raise ValueError("failed Alert outcome cannot carry an artifact")
 
 
 @dataclass(frozen=True, slots=True)

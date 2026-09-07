@@ -24,10 +24,15 @@ from app.execution.contracts import (
     MetricLensSnapshot,
 )
 from app.infrastructure.persistence.alert_runtime import persist_alert_terminal
-from app.infrastructure.persistence.models import LensRunModel, ObservationRunModel
+from app.infrastructure.persistence.models import (
+    LensAnalysisResultModel,
+    LensRunModel,
+    ObservationRunModel,
+)
 from app.infrastructure.persistence.repository import RuntimePersistenceRepository
 from app.infrastructure.persistence.runtime_contracts import (
     LensAnalysisResultInput,
+    LensResultIdentity,
     LensRunStatus,
     LensType,
     StructuredReason,
@@ -94,8 +99,10 @@ class MetricLensExecutionAdapter:
             return await self._persist_wrapper_failure(assignment, context, "identity_mismatch")
         async with self._session_factory.begin() as session:
             lens_run = await _load_assigned_running_lens(session, assignment)
-            await self._pipeline.persist_terminal(cast(object, session), lens_run, analysis)
-            return _collected_outcome(assignment, lens_run)
+            persisted = await self._pipeline.persist_terminal(
+                cast(object, session), lens_run, analysis
+            )
+            return _collected_outcome(assignment, lens_run, _persisted_artifact(persisted))
 
     async def _persist_wrapper_failure(
         self,
@@ -116,10 +123,10 @@ class MetricLensExecutionAdapter:
                 LensRunStatus.FAILED,
                 reason=StructuredReason(code=code, component="metric"),
             )
-            await self._repository.persist_lens_analysis_result(
+            persisted = await self._repository.persist_lens_analysis_result(
                 cast(object, session), lens_run, artifact
             )
-            return _collected_outcome(assignment, lens_run)
+            return _collected_outcome(assignment, lens_run, _persisted_artifact(persisted))
 
 
 class AlertLensExecutionAdapter:
@@ -162,8 +169,14 @@ class AlertLensExecutionAdapter:
             return await self._persist_wrapper_failure(assignment, "identity_mismatch")
         async with self._session_factory.begin() as session:
             lens_run = await _load_assigned_running_lens(session, assignment)
-            await persist_alert_terminal(cast(object, session), lens_run, outcome, self._repository)
-            return _collected_outcome(assignment, lens_run)
+            persisted = await persist_alert_terminal(
+                cast(object, session), lens_run, outcome, self._repository
+            )
+            return _collected_outcome(
+                assignment,
+                lens_run,
+                _persisted_artifact(persisted) if persisted is not None else None,
+            )
 
     async def _persist_wrapper_failure(
         self, assignment: LensExecutionAssignment, code: str
@@ -176,8 +189,14 @@ class AlertLensExecutionAdapter:
         )
         async with self._session_factory.begin() as session:
             lens_run = await _load_assigned_running_lens(session, assignment)
-            await persist_alert_terminal(cast(object, session), lens_run, outcome, self._repository)
-            return _collected_outcome(assignment, lens_run)
+            persisted = await persist_alert_terminal(
+                cast(object, session), lens_run, outcome, self._repository
+            )
+            return _collected_outcome(
+                assignment,
+                lens_run,
+                _persisted_artifact(persisted) if persisted is not None else None,
+            )
 
 
 def metric_execution_context(assignment: LensExecutionAssignment) -> MetricLensExecutionContext:
@@ -297,7 +316,9 @@ async def _load_assigned_running_lens(
 
 
 def _collected_outcome(
-    assignment: LensExecutionAssignment, lens_run: LensRunModel
+    assignment: LensExecutionAssignment,
+    lens_run: LensRunModel,
+    artifact: LensAnalysisResultInput | None,
 ) -> CollectedLensOutcome:
     status = LensRunStatus(lens_run.status)
     if status not in {LensRunStatus.COMPLETED, LensRunStatus.PARTIAL, LensRunStatus.FAILED}:
@@ -312,4 +333,28 @@ def _collected_outcome(
                 else None
             ),
         )
-    return CollectedLensOutcome(assignment=assignment, status=status.value, reason=reason)
+    return CollectedLensOutcome(
+        assignment=assignment, status=status.value, artifact=artifact, reason=reason
+    )
+
+
+def _persisted_artifact(persisted: object) -> LensAnalysisResultInput:
+    """Rebuild and validate the exact envelope just accepted by persistence."""
+
+    if not isinstance(persisted, LensAnalysisResultModel):
+        raise ValueError("terminal persistence did not return a Lens analysis result")
+    payload = persisted.payload
+    if not isinstance(payload, dict):
+        raise ValueError("persisted Lens analysis result payload must be an object")
+    identity = payload.get("identity")
+    provenance = payload.get("provenance")
+    if not isinstance(identity, dict) or not isinstance(provenance, dict):
+        raise ValueError("persisted Lens analysis result lacks identity or provenance")
+    return LensAnalysisResultInput(
+        result_type=LensType(persisted.result_type),
+        status=LensRunStatus(persisted.status),
+        schema_version=persisted.schema_version,
+        identity=LensResultIdentity.model_validate(identity),
+        provenance=provenance,
+        payload=payload,
+    )

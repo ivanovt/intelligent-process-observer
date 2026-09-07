@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 from contextlib import AbstractAsyncContextManager
+from copy import deepcopy
 from dataclasses import replace
 from datetime import UTC, datetime
 from unittest.mock import patch
@@ -21,8 +22,13 @@ from app.execution import (
     MetricLensSnapshot,
     metric_execution_context,
 )
-from app.infrastructure.persistence.models import LensRunModel, ObservationRunModel
+from app.infrastructure.persistence.models import (
+    LensAnalysisResultModel,
+    LensRunModel,
+    ObservationRunModel,
+)
 from app.infrastructure.persistence.runtime_contracts import (
+    LensAnalysisResultInput,
     LensRunStatus,
     LensType,
     StructuredReason,
@@ -90,6 +96,16 @@ class MetricPipeline:
                 failure=MetricMandatoryAnalysisFailure(diagnostic="test failure"),
             )
         _, terminal_result = builder.completed_insufficient(context)
+        if self.status is LensRunStatus.PARTIAL:
+            payload = deepcopy(terminal_result.payload)
+            payload["status"] = {"state": "partial"}
+            payload["reason"] = {"code": "reference_unavailable", "component": "test"}
+            terminal_result = LensAnalysisResultInput(
+                **(
+                    terminal_result.model_dump()
+                    | {"status": LensRunStatus.PARTIAL, "payload": payload}
+                )
+            )
         return MetricPreTransactionAnalysis(
             context=context,
             prepared=PreparedInsufficientSeries(data_quality="insufficient", samples=()),
@@ -101,7 +117,7 @@ class MetricPipeline:
 
     async def persist_terminal(
         self, session: object, lens_run: LensRunModel, analysis: object
-    ) -> None:
+    ) -> LensAnalysisResultModel:
         assert analysis.context == self.context
         self.phases.append("metric_history_and_persist")
         lens_run.status = self.status.value
@@ -112,6 +128,7 @@ class MetricPipeline:
             if self.status is LensRunStatus.FAILED
             else None
         )
+        return _persisted(lens_run, analysis.terminal_result)
 
 
 class Repository:
@@ -132,9 +149,9 @@ class Repository:
 
     async def persist_lens_analysis_result(
         self, session: object, lens_run: LensRunModel, result: object
-    ) -> object:
+    ) -> LensAnalysisResultModel:
         self.artifacts.append(result)
-        return object()
+        return _persisted(lens_run, result)
 
 
 class Resolver:
@@ -176,6 +193,8 @@ def test_metric_adapter_projects_context_and_excludes_terminal_work_from_deadlin
 
     assert outcome.status == "completed"
     assert outcome.reason is None
+    assert outcome.artifact is not None
+    assert outcome.artifact.status is LensRunStatus.COMPLETED
     assert phases == ["metric_analysis", "terminal_transaction", "metric_history_and_persist"]
     assert pipeline.context.identity.observation_run_id == assignment.observation_run_id
     assert pipeline.context.identity.lens_run_id == assignment.lens_run_id
@@ -184,7 +203,7 @@ def test_metric_adapter_projects_context_and_excludes_terminal_work_from_deadlin
     assert factory.transactions[0].committed is True
 
 
-def test_metric_adapter_collects_normal_partial_and_failed_pipeline_outcomes() -> None:
+def test_metric_adapter_collects_terminal_outcomes_with_persisted_artifacts() -> None:
     for target, expected_reason in (
         (LensRunStatus.PARTIAL, "reference_unavailable"),
         (LensRunStatus.FAILED, "mandatory_metric_analysis_failed"),
@@ -201,6 +220,8 @@ def test_metric_adapter_collects_normal_partial_and_failed_pipeline_outcomes() -
         assert outcome.status == target.value
         assert outcome.reason is not None
         assert outcome.reason.code == expected_reason
+        assert outcome.artifact is not None
+        assert outcome.artifact.status is target
 
 
 def test_alert_adapter_persists_completed_artifact_path_with_exact_context() -> None:
@@ -208,16 +229,19 @@ def test_alert_adapter_persists_completed_artifact_path_with_exact_context() -> 
     phases: list[str] = []
     resolver = Resolver(AlertRecordsAvailable(source="jira_track_and_release", records=()))
 
+    repository = Repository()
     outcome = asyncio.run(
         AlertLensExecutionAdapter(
             session_factory=Factory(_session(lens_run, parent), phases),
-            repository=Repository(),  # type: ignore[arg-type]
+            repository=repository,  # type: ignore[arg-type]
             provider_resolver=resolver,
             agent=Agent(),  # type: ignore[arg-type]
         ).execute(assignment, _policy())
     )
 
     assert outcome.status == "completed"
+    assert outcome.artifact is not None
+    assert outcome.artifact.payload == repository.artifacts[0].payload
     assert resolver.scope.source == "jira_track_and_release"
     assert resolver.scope.query == "project = OPS"
     assert phases == ["terminal_transaction"]
@@ -241,10 +265,11 @@ def test_alert_adapter_persists_normal_failed_outcome_without_an_artifact() -> N
 
 def test_alert_adapter_persists_normal_partial_outcome() -> None:
     assignment, lens_run, parent = _alert_assignment(reference_periods=("1h",))
+    repository = Repository()
     outcome = asyncio.run(
         AlertLensExecutionAdapter(
             session_factory=Factory(_session(lens_run, parent), []),
-            repository=Repository(),  # type: ignore[arg-type]
+            repository=repository,  # type: ignore[arg-type]
             provider_resolver=Resolver(
                 (
                     AlertRecordsAvailable(source="jira_track_and_release", records=()),
@@ -258,6 +283,9 @@ def test_alert_adapter_persists_normal_partial_outcome() -> None:
     assert outcome.status == "partial"
     assert outcome.reason is not None
     assert outcome.reason.code == "reference_unavailable"
+    assert outcome.artifact is not None
+    assert outcome.artifact.status is LensRunStatus.PARTIAL
+    assert outcome.artifact.payload == repository.artifacts[0].payload
 
 
 def test_metric_adapter_normalizes_timeout_with_wrapper_reason_and_assigned_artifact() -> None:
@@ -295,6 +323,8 @@ def test_metric_adapter_normalizes_timeout_with_wrapper_reason_and_assigned_arti
         "to": "2026-09-01T01:00:00Z",
     }
     assert artifact.provenance["source"] == "prometheus"
+    assert outcome.artifact is not None
+    assert outcome.artifact.payload == artifact.payload
 
 
 def test_metric_adapter_normalizes_unexpected_and_mismatched_analysis() -> None:
@@ -595,3 +625,13 @@ def _session(lens_run: LensRunModel, parent: ObservationRunModel) -> Session:
 
 def _policy() -> ExecutionPolicy:
     return ExecutionPolicy(max_parallel_lens_runs=1, lens_deadline_seconds=1.0)
+
+
+def _persisted(lens_run: LensRunModel, artifact: object) -> LensAnalysisResultModel:
+    return LensAnalysisResultModel(
+        lens_run_id=lens_run.id,
+        result_type=artifact.result_type.value,
+        status=artifact.status.value,
+        schema_version=artifact.schema_version,
+        payload=artifact.payload,
+    )

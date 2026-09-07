@@ -6,6 +6,7 @@ from uuid import uuid4
 import pytest
 
 from app.execution.contracts import (
+    AlertLensSnapshot,
     AnalysisWindow,
     CollectedLensOutcome,
     CompletedObservationExecutionOutcome,
@@ -24,6 +25,8 @@ from app.infrastructure.persistence.models import (
     ObservationModel,
     ObservationRelationshipModel,
 )
+from app.metrics.contracts import MetricMandatoryAnalysisFailure
+from app.metrics.result_builder import MetricResultBuilder
 
 
 def test_projection_detaches_the_complete_mixed_definition() -> None:
@@ -212,27 +215,77 @@ def test_collected_lens_outcome_requires_assignment_and_actual_reason() -> None:
     assignment = _assignment()
     partial_reason = ExecutionReason(code="reference_unavailable", component="metric")
 
-    completed = CollectedLensOutcome(assignment=assignment, status="completed")
-    partial = CollectedLensOutcome(assignment=assignment, status="partial", reason=partial_reason)
-    failed = CollectedLensOutcome(assignment=assignment, status="failed", reason=partial_reason)
+    context = _metric_context(assignment)
+    _, completed_artifact = MetricResultBuilder().completed_insufficient(context)
+    _, failed_artifact = MetricResultBuilder().failed(
+        context, MetricMandatoryAnalysisFailure(diagnostic="test")
+    )
+    completed = CollectedLensOutcome(
+        assignment=assignment, status="completed", artifact=completed_artifact
+    )
+    failed = CollectedLensOutcome(
+        assignment=assignment, status="failed", artifact=failed_artifact, reason=partial_reason
+    )
 
     assert completed.reason is None
-    assert partial.reason is partial_reason
     assert failed.reason is partial_reason
     with pytest.raises(ValueError, match="requires a Lens execution assignment"):
         CollectedLensOutcome(  # type: ignore[arg-type]
             assignment=SimpleNamespace(), status="completed"
         )
     with pytest.raises(ValueError, match="require an execution reason"):
-        CollectedLensOutcome(assignment=assignment, status="partial", reason="raw")  # type: ignore[arg-type]
+        CollectedLensOutcome(  # type: ignore[arg-type]
+            assignment=assignment, status="partial", artifact=completed_artifact, reason="raw"
+        )
     with pytest.raises(ValueError, match="require an execution reason"):
         CollectedLensOutcome(
             assignment=assignment,
             status="failed",
+            artifact=failed_artifact,
             reason=SimpleNamespace(code="analysis_failed", component="metric"),
         )  # type: ignore[arg-type]
     with pytest.raises(ValueError, match="cannot carry a reason"):
-        CollectedLensOutcome(assignment=assignment, status="completed", reason=partial_reason)
+        CollectedLensOutcome(
+            assignment=assignment,
+            status="completed",
+            artifact=completed_artifact,
+            reason=partial_reason,
+        )
+
+
+@pytest.mark.parametrize("status", ("completed", "partial", "failed"))
+def test_collected_metric_outcome_requires_an_artifact_for_every_terminal_status(
+    status: str,
+) -> None:
+    with pytest.raises(ValueError, match="requires its terminal artifact"):
+        CollectedLensOutcome(
+            assignment=_assignment(),
+            status=status,  # type: ignore[arg-type]
+            reason=ExecutionReason(code="test") if status != "completed" else None,
+        )
+
+
+def test_collected_alert_failure_requires_artifact_absence() -> None:
+    metric_assignment = _assignment()
+    assignment = LensExecutionAssignment(
+        observation_id=metric_assignment.observation_id,
+        observation_run_id=metric_assignment.observation_run_id,
+        lens_run_id=metric_assignment.lens_run_id,
+        analysis_window=metric_assignment.analysis_window,
+        lens=AlertLensSnapshot(
+            lens_id="alerts",
+            name="Alerts",
+            description=None,
+            source="jira_track_and_release",
+            selector_query="project = OPS",
+            analysis_objectives=(),
+            reference_periods=(),
+        ),
+    )
+    reason = ExecutionReason(code="analysis_failed", component="alert")
+    failed = CollectedLensOutcome(assignment=assignment, status="failed", reason=reason)
+
+    assert failed.artifact is None
 
 
 def test_projection_rejects_log_or_other_unsupported_lenses() -> None:
@@ -276,6 +329,12 @@ def _assignment() -> LensExecutionAssignment:
             reference_periods=("1h",),
         ),
     )
+
+
+def _metric_context(assignment: LensExecutionAssignment):
+    from app.execution.adapters import metric_execution_context
+
+    return metric_execution_context(assignment)
 
 
 def _definition(schema_version: int = 1) -> ObservationModel:
