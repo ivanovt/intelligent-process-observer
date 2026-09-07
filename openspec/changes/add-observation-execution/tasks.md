@@ -48,7 +48,7 @@
 - [x] 7.1 Add PostgreSQL-backed end-to-end orchestration tests for all-completed success, mixed completed/partial/failed degradation, zero-usable failure, Relationship and reasoning persistence, analysis-preserving report failure, successful report-plus-completion, cancellation preservation, and exact aggregate retrieval.
 - [x] 7.2 Run the existing Metric, Alert, runtime persistence, Relationship Evaluation, knowledge retrieval, Observation Reasoning, and Report Generation test suites and correct only regressions caused within this change's approved scope.
 - [x] 7.3 Verify public execution classes/interfaces/methods have concise behavior-focused docstrings, architecture/framework boundaries remain import-safe, the migration head is unchanged, and no public API, frontend, dependency, Log, scheduler, notification, or retry/replay surface was introduced.
-- [ ] 7.4 Run `make check` as the final local verification step and report every failure accurately before any archive or pull-request activity.
+- [x] 7.4 Run `make check` as the final local verification step and report every failure accurately before any archive or pull-request activity.
 
 ## Requirement Traceability
 
