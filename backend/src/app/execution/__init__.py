@@ -46,10 +46,17 @@ from app.execution.projectors import (
     admissible_artifacts,
     build_observation_reasoning_input,
     relationship_definitions,
+    report_generation_request,
     validate_reasoning_success,
     validate_relationship_batch,
 )
-from app.execution.stages import evaluate_and_persist_relationships, invoke_and_persist_reasoning
+from app.execution.stages import (
+    evaluate_and_persist_relationships,
+    fail_observation_execution,
+    generate_and_persist_report,
+    invoke_and_persist_reasoning,
+    invoke_and_persist_report,
+)
 
 __all__ = [
     "AlertLensSnapshot",
@@ -92,6 +99,10 @@ __all__ = [
     "relationship_definitions",
     "validate_reasoning_success",
     "validate_relationship_batch",
+    "report_generation_request",
     "evaluate_and_persist_relationships",
+    "fail_observation_execution",
+    "generate_and_persist_report",
+    "invoke_and_persist_report",
     "invoke_and_persist_reasoning",
 ]

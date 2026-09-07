@@ -5,8 +5,11 @@ from __future__ import annotations
 from contextlib import AbstractAsyncContextManager
 from typing import Protocol
 
+from sqlalchemy import select
+
 from app.execution.contracts import (
     CollectedLensOutcome,
+    CompletedObservationExecutionOutcome,
     ExecutionReason,
     FailedObservationExecutionOutcome,
     LensExecutionAssignment,
@@ -19,17 +22,24 @@ from app.execution.projectors import (
     admissible_artifacts,
     build_observation_reasoning_input,
     relationship_definitions,
+    report_generation_request,
     validate_reasoning_success,
     validate_relationship_batch,
 )
-from app.infrastructure.persistence.models import ObservationRunModel
+from app.infrastructure.persistence.models import (
+    ObservationAnalysisResultModel,
+    ObservationRunModel,
+)
 from app.infrastructure.persistence.repository import RuntimePersistenceRepository
 from app.infrastructure.persistence.runtime_contracts import (
     ObservationAnalysisResultInput,
+    ObservationReportInput,
     ObservationRunStatus,
     RelationshipEvaluationInput,
+    StructuredReason,
 )
 from app.reasoning.contracts import ReasoningFailure, ReasoningSuccess
+from app.reporting.contracts import ObservationReport, ReportFailure, ReportSuccess
 
 
 class StageSessionFactory(Protocol):
@@ -61,8 +71,11 @@ async def evaluate_and_persist_relationships(
         _validate_assignments(snapshot, assignments, outcomes, run_id)
         verify_and_partition_lens_outcomes(assignments, outcomes)
     except Exception:
-        return FailedObservationExecutionOutcome(
+        return await fail_observation_execution(
+            session_factory=session_factory,
+            runtime_repository=runtime_repository,
             observation_run_id=run_id,
+            observation_id=snapshot.observation_id,
             reason=ExecutionReason("relationship_evaluation_failed", "relationship_evaluator"),
         )
     try:
@@ -82,8 +95,11 @@ async def evaluate_and_persist_relationships(
             for evaluation in validated_evaluations
         )
     except Exception:
-        return FailedObservationExecutionOutcome(
+        return await fail_observation_execution(
+            session_factory=session_factory,
+            runtime_repository=runtime_repository,
             observation_run_id=run_id,
+            observation_id=snapshot.observation_id,
             reason=ExecutionReason("relationship_evaluation_failed", "relationship_evaluator"),
         )
     async with session_factory.begin() as session:
@@ -136,8 +152,8 @@ async def invoke_and_persist_reasoning(
     evaluations: tuple[object, ...],
 ) -> ReasoningSuccess | ReasoningFailure:
     """Invoke reasoning once outside a transaction and atomically persist valid success."""
+    run_id = _run_id((*partition.usable, *partition.unavailable))
     try:
-        run_id = _run_id((*partition.usable, *partition.unavailable))
         validated_evaluations = validate_relationship_batch(
             snapshot,
             evaluations,
@@ -146,12 +162,35 @@ async def invoke_and_persist_reasoning(
         )
         value = build_observation_reasoning_input(snapshot, partition, validated_evaluations)
     except (AttributeError, TypeError, ValueError):
-        return ReasoningFailure(code="reasoning_result_invalid", component="result_builder")
+        failure = ReasoningFailure(code="reasoning_result_invalid", component="result_builder")
+        await fail_observation_execution(
+            session_factory=session_factory,
+            runtime_repository=runtime_repository,
+            observation_run_id=run_id,
+            observation_id=snapshot.observation_id,
+            reason=ExecutionReason(failure.code, failure.component),
+        )
+        return failure
     outcome = await executor.execute(value)
     if isinstance(outcome, ReasoningFailure):
+        await fail_observation_execution(
+            session_factory=session_factory,
+            runtime_repository=runtime_repository,
+            observation_run_id=run_id,
+            observation_id=snapshot.observation_id,
+            reason=ExecutionReason(outcome.code, outcome.component),
+        )
         return outcome
     if not isinstance(outcome, ReasoningSuccess):
-        return ReasoningFailure(code="reasoning_result_invalid", component="result_builder")
+        failure = ReasoningFailure(code="reasoning_result_invalid", component="result_builder")
+        await fail_observation_execution(
+            session_factory=session_factory,
+            runtime_repository=runtime_repository,
+            observation_run_id=run_id,
+            observation_id=snapshot.observation_id,
+            reason=ExecutionReason(failure.code, failure.component),
+        )
+        return failure
     try:
         result = validate_reasoning_success(
             outcome.result,
@@ -159,7 +198,15 @@ async def invoke_and_persist_reasoning(
             observation_run_id=run_id,
         )
     except (TypeError, ValueError):
-        return ReasoningFailure(code="reasoning_result_invalid", component="result_builder")
+        failure = ReasoningFailure(code="reasoning_result_invalid", component="result_builder")
+        await fail_observation_execution(
+            session_factory=session_factory,
+            runtime_repository=runtime_repository,
+            observation_run_id=run_id,
+            observation_id=snapshot.observation_id,
+            reason=ExecutionReason(failure.code, failure.component),
+        )
+        return failure
     async with session_factory.begin() as session:
         run = await _current_run(session, run_id, snapshot.observation_id)
         await runtime_repository.persist_observation_analysis_result(
@@ -172,6 +219,106 @@ async def invoke_and_persist_reasoning(
             ),
         )
     return ReasoningSuccess(result=result)
+
+
+async def generate_and_persist_report(
+    *,
+    session_factory: StageSessionFactory,
+    runtime_repository: RuntimePersistenceRepository,
+    executor,
+    snapshot: ObservationExecutionSnapshot,
+    analysis_result,
+) -> CompletedObservationExecutionOutcome | FailedObservationExecutionOutcome:
+    """Generate one report, then atomically persist it with parent completion."""
+    run_id = analysis_result.identity.observation_run_id
+    try:
+        if analysis_result.identity.observation_id != snapshot.observation_id:
+            raise ValueError("analysis result observation identity does not match snapshot")
+        request = report_generation_request(snapshot, analysis_result)
+    except (AttributeError, TypeError, ValueError):
+        return await fail_observation_execution(
+            session_factory=session_factory,
+            runtime_repository=runtime_repository,
+            observation_run_id=run_id,
+            observation_id=snapshot.observation_id,
+            reason=ExecutionReason("report_result_invalid", "report_builder"),
+        )
+    outcome = await executor.execute(request)
+    if isinstance(outcome, ReportFailure):
+        return await fail_observation_execution(
+            session_factory=session_factory,
+            runtime_repository=runtime_repository,
+            observation_run_id=run_id,
+            observation_id=snapshot.observation_id,
+            reason=ExecutionReason(outcome.code, outcome.component),
+        )
+    if not isinstance(outcome, ReportSuccess):
+        return await fail_observation_execution(
+            session_factory=session_factory,
+            runtime_repository=runtime_repository,
+            observation_run_id=run_id,
+            observation_id=snapshot.observation_id,
+            reason=ExecutionReason("report_result_invalid", "report_builder"),
+        )
+    report = outcome.report
+    if (
+        not isinstance(report, ObservationReport)
+        or report.observation_id != snapshot.observation_id
+        or report.observation_run_id != run_id
+        or report.format != "markdown"
+        or not report.content.strip()
+    ):
+        return await fail_observation_execution(
+            session_factory=session_factory,
+            runtime_repository=runtime_repository,
+            observation_run_id=run_id,
+            observation_id=snapshot.observation_id,
+            reason=ExecutionReason("report_result_invalid", "report_builder"),
+        )
+    async with session_factory.begin() as session:
+        run = await _current_run(session, run_id, snapshot.observation_id)
+        analysis = await session.scalar(
+            select(ObservationAnalysisResultModel).where(
+                ObservationAnalysisResultModel.observation_run_id == run_id
+            )
+        )
+        if analysis is None:
+            raise ValueError("committed ObservationAnalysisResult is missing")
+        await runtime_repository.persist_observation_report(
+            session,
+            run,
+            analysis,
+            ObservationReportInput(
+                generated_at=report.generated_at, format="markdown", content=report.content
+            ),
+        )
+        await runtime_repository.advance_observation_run(
+            session, run, ObservationRunStatus.COMPLETED
+        )
+    return CompletedObservationExecutionOutcome(observation_run_id=run_id)
+
+
+async def fail_observation_execution(
+    *,
+    session_factory: StageSessionFactory,
+    runtime_repository: RuntimePersistenceRepository,
+    observation_run_id,
+    observation_id,
+    reason: ExecutionReason,
+) -> FailedObservationExecutionOutcome:
+    """Guardedly persist a controlled parent failure after committed artifacts."""
+    async with session_factory.begin() as session:
+        run = await _current_run(session, observation_run_id, observation_id)
+        await runtime_repository.advance_observation_run(
+            session,
+            run,
+            ObservationRunStatus.FAILED,
+            reason=StructuredReason(code=reason.code, component=reason.component),
+        )
+    return FailedObservationExecutionOutcome(observation_run_id=observation_run_id, reason=reason)
+
+
+invoke_and_persist_report = generate_and_persist_report
 
 
 async def _current_run(session, run_id, observation_id):

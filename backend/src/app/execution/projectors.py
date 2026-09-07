@@ -32,6 +32,7 @@ from app.reasoning.contracts import (
 )
 from app.reasoning.input import insufficient_metric_as_unavailable, validate_input
 from app.relationships.contracts import RelationshipEvaluation
+from app.reporting.contracts import ReportGenerationRequest, ReportSemanticContext
 
 
 def relationship_definitions(
@@ -154,6 +155,22 @@ def validate_reasoning_success(
     ):
         raise ValueError("Observation reasoning result identity does not match current run")
     return result
+
+
+def report_generation_request(
+    snapshot: ObservationExecutionSnapshot,
+    result: ObservationAnalysisResult,
+) -> ReportGenerationRequest:
+    """Project only the frozen semantic context admitted to report generation."""
+    return ReportGenerationRequest(
+        context=ReportSemanticContext(
+            identity=result.identity,
+            name=snapshot.name,
+            description=snapshot.description,
+            analytical_objective=snapshot.objective,
+        ),
+        analysis_result=result,
+    )
 
 
 def _semantic_descriptor(value) -> SemanticDescriptor:
