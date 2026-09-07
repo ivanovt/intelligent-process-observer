@@ -1,5 +1,13 @@
 """Framework-neutral values and ports for Observation execution."""
 
+from app.execution.adapters import (
+    AlertLensExecutionAdapter,
+    AlertProviderResolver,
+    MetricLensExecutionAdapter,
+    TerminalSessionFactory,
+    alert_execution_context,
+    metric_execution_context,
+)
 from app.execution.contracts import (
     AlertLensSnapshot,
     AnalysisWindow,
@@ -29,6 +37,8 @@ from app.execution.ordering import canonical_lens_order
 
 __all__ = [
     "AlertLensSnapshot",
+    "AlertLensExecutionAdapter",
+    "AlertProviderResolver",
     "AnalysisWindow",
     "CollectedLensOutcome",
     "CompletedObservationExecutionOutcome",
@@ -39,6 +49,7 @@ __all__ = [
     "LensExecutionAdapter",
     "LensExecutionAssignment",
     "MetricLensSnapshot",
+    "MetricLensExecutionAdapter",
     "ObservationExecutionRequest",
     "ObservationExecutionOutcome",
     "ObservationExecutionSnapshot",
@@ -47,7 +58,10 @@ __all__ = [
     "RelationshipSnapshot",
     "SemanticDescriptorSnapshot",
     "TransactionSessionFactory",
+    "TerminalSessionFactory",
+    "alert_execution_context",
     "canonical_lens_order",
     "initialize_observation_execution",
+    "metric_execution_context",
     "project_observation_execution",
 ]
