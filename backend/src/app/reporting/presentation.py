@@ -6,6 +6,7 @@ import string
 import unicodedata
 from collections.abc import Hashable, Iterable
 from datetime import datetime, timedelta
+from uuid import UUID
 
 from app.reasoning.contracts import EvidenceReference, Hypothesis, Limitation
 from app.reporting.contracts import (
@@ -63,8 +64,8 @@ def build_report(
     lines = [
         "# Observation Report",
         "",
-        f"Observation ID: {_markdown_text(result.identity.observation_id)}",
-        f"Observation Run ID: {_markdown_text(result.identity.observation_run_id)}",
+        f"Observation ID: {_markdown_opaque(result.identity.observation_id)}",
+        f"Observation Run ID: {_markdown_opaque(result.identity.observation_run_id)}",
     ]
     lines.extend(
         (
@@ -83,7 +84,7 @@ def build_report(
         lines.extend(
             (
                 "",
-                f"### Finding {_markdown_text(finding.id)}",
+                f"### Finding {_markdown_opaque(finding.id)}",
                 *_presentation_lines(finding_text[finding.id]),
             )
         )
@@ -95,7 +96,7 @@ def build_report(
         lines.extend(
             (
                 "",
-                f"### Possible explanation {_markdown_text(hypothesis.id)}",
+                f"### Possible explanation {_markdown_opaque(hypothesis.id)}",
                 *_presentation_lines(hypothesis_text[hypothesis.id]),
                 "This is a possible explanation, not a confirmed cause.",
                 "Supported by findings: " + _inline_values(hypothesis.supported_by),
@@ -109,7 +110,7 @@ def build_report(
         lines.extend(
             (
                 "",
-                f"### Limitation {index + 1}: {_markdown_text(limitation.code)}",
+                f"### Limitation {index + 1}: {_markdown_opaque(limitation.code)}",
                 *_presentation_lines(limitation_text[index]),
                 _limitation_details(limitation),
             )
@@ -138,12 +139,12 @@ def _validate_presentation_text(value: str) -> None:
     """Reject blank model prose without trying to classify its meaning."""
     if not value.strip():
         raise ValueError("presentation text must not be blank")
-    _normalize_plain_text(value)
+    _normalize_prose(value)
 
 
 def _presentation_lines(value: str) -> list[str]:
     """Contain normalized model prose inside one renderer-owned blockquote."""
-    return [f"> {_markdown_text(value)}"]
+    return [f"> {_markdown_prose(value)}"]
 
 
 def _empty_findings_text(overall_state: str) -> str:
@@ -153,27 +154,49 @@ def _empty_findings_text(overall_state: str) -> str:
     return "No individual finding entries were supplied by the analysis result."
 
 
-def _markdown_text(value: object) -> str:
-    """Render untrusted source data as one escaped Markdown text fragment."""
-    return _normalize_plain_text(str(value)).translate(_MARKDOWN_ESCAPE_TABLE)
+def _markdown_prose(value: str) -> str:
+    """Render model prose as normalized escaped Markdown content."""
+    return _normalize_prose(value).translate(_MARKDOWN_ESCAPE_TABLE)
 
 
-def _normalize_plain_text(value: str) -> str:
-    """Collapse structural whitespace and reject non-renderable control characters."""
+def _normalize_prose(value: str) -> str:
+    """Collapse structural whitespace and reject invisible or non-renderable controls."""
     if any(
-        unicodedata.category(character) == "Cc" and not character.isspace() for character in value
+        unicodedata.category(character) == "Cf"
+        or (unicodedata.category(character) == "Cc" and not character.isspace())
+        for character in value
     ):
         raise ValueError("report text contains a non-renderable control character")
-    return " ".join(value.split())
+    normalized = " ".join(value.split())
+    if not normalized:
+        raise ValueError("report text must contain visible content")
+    return normalized
+
+
+def _markdown_opaque(value: UUID | str | int) -> str:
+    """Escape one source value without collapsing identity-significant content."""
+    encoded = "".join(
+        _visible_control(character)
+        if unicodedata.category(character) in {"Cc", "Cf"}
+        else character
+        for character in str(value)
+    )
+    return encoded.translate(_MARKDOWN_ESCAPE_TABLE)
+
+
+def _visible_control(character: str) -> str:
+    """Encode an invisible source character without losing its exact code point."""
+    width = 4 if ord(character) <= 0xFFFF else 8
+    return f"\\u{ord(character):0{width}x}"
 
 
 def _reference_lines(label: str, references: tuple[EvidenceReference, ...]) -> list[str]:
     """Format canonical finding evidence references without model-authored content."""
     return [label + ":"] + [
         "- "
-        + f"source type {_markdown_text(reference.source_type)}; "
-        + f"source ID {_markdown_text(reference.source_id)}; "
-        + f"locator {_markdown_text('.'.join(str(item) for item in reference.locator))}"
+        + f"source type {_markdown_opaque(reference.source_type)}; "
+        + f"source ID {_markdown_opaque(reference.source_id)}; "
+        + f"locator {_locator_text(reference.locator)}"
         for reference in references
     ]
 
@@ -181,23 +204,31 @@ def _reference_lines(label: str, references: tuple[EvidenceReference, ...]) -> l
 def _knowledge_reference_lines(hypothesis: Hypothesis) -> list[str]:
     """Format canonical hypothesis knowledge references from the source artifact."""
     return ["Knowledge references:"] + [
-        f"- source ID {_markdown_text(reference.source_id)}; "
-        f"reference {_markdown_text(reference.reference)}"
+        f"- source ID {_markdown_opaque(reference.source_id)}; "
+        f"reference {_markdown_opaque(reference.reference)}"
         for reference in hypothesis.knowledge_refs
     ]
 
 
 def _inline_values(values: tuple[str, ...]) -> str:
     """Render non-empty source identifiers in their preserved source order."""
-    return ", ".join(_markdown_text(value) for value in values)
+    return ", ".join(_markdown_opaque(value) for value in values)
+
+
+def _locator_text(locator: tuple[str | int, ...]) -> str:
+    """Render locator boundaries and segment types without traceability collisions."""
+    return " / ".join(
+        f"{'index' if isinstance(segment, int) else 'key'}={_markdown_opaque(segment)}"
+        for segment in locator
+    )
 
 
 def _limitation_details(limitation: Limitation) -> str:
     """Render the exact structured limitation fields in a deterministic form."""
     details = [
-        f"lens ID {_markdown_text(limitation.lens_id)}",
-        f"lens type {_markdown_text(limitation.lens_type)}",
+        f"lens ID {_markdown_opaque(limitation.lens_id)}",
+        f"lens type {_markdown_opaque(limitation.lens_type)}",
     ]
     if limitation.code == "partial_lens_analysis" and limitation.component is not None:
-        details.append(f"component {_markdown_text(limitation.component)}")
+        details.append(f"component {_markdown_opaque(limitation.component)}")
     return "Source limitation: " + "; ".join(details) + "."

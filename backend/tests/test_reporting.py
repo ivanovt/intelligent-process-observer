@@ -199,6 +199,42 @@ def test_renderer_restores_source_order_and_all_traceability_without_mutation() 
     assert "missing\\_lens\\_evidence" in report.content
 
 
+def test_renderer_preserves_opaque_identity_whitespace_and_locator_segment_types() -> None:
+    """Distinct source identities and locator segment types stay distinguishable."""
+    findings = (
+        Finding(
+            id="finding one",
+            statement="First finding.",
+            evidence_refs=(
+                EvidenceReference(
+                    source_type="metric_result",
+                    source_id="metric one",
+                    locator=("items", 0),
+                ),
+            ),
+        ),
+        Finding(
+            id="finding  one",
+            statement="Second finding.",
+            evidence_refs=(
+                EvidenceReference(
+                    source_type="metric_result",
+                    source_id="metric  one",
+                    locator=("items", "0"),
+                ),
+            ),
+        ),
+    )
+    request = _request(findings=findings, hypotheses=(), limitations=())
+
+    content = build_report(request, _draft(request), NOW).content
+
+    assert "### Finding finding one" in content
+    assert "### Finding finding  one" in content
+    assert "source ID metric one; locator key=items / index=0" in content
+    assert "source ID metric  one; locator key=items / key=0" in content
+
+
 def test_renderer_honestly_represents_empty_analysis_collections() -> None:
     """Empty findings, hypotheses, and limitations receive deterministic absence text."""
     request = _request(state="no_significant_findings", findings=(), hypotheses=(), limitations=())
@@ -326,9 +362,9 @@ def test_renderer_normalizes_structure_significant_whitespace(
     assert ">     " not in report.content and "  \n" not in report.content
 
 
-@pytest.mark.parametrize("control", ["\x00", "\x01", "\x7f"])
+@pytest.mark.parametrize("control", ["\x00", "\x01", "\x7f", "\u200b", "\u202e"])
 def test_report_builder_rejects_postgresql_incompatible_control_text(control: str) -> None:
-    """A successful report cannot contain non-renderable database text controls."""
+    """A successful report cannot contain invisible or non-renderable controls."""
     request = _request()
     draft = _draft(request).model_copy(update={"overall_assessment": f"assessment{control}content"})
     with pytest.raises(ValueError, match="control character"):
