@@ -283,6 +283,10 @@ class RuntimePersistenceRepository:
         )
         if result.rowcount != 1:
             raise ValueError("ObservationRun persisted lifecycle state changed before transition")
+        # Keep lifecycle writes at an explicit caller-transaction-owned flush boundary.
+        # Do not mutate the loaded model until the guarded UPDATE is durable in the
+        # current transaction; a failed flush must leave the in-memory state truthful.
+        await session.flush()
         observation_run.status = target.value
         observation_run.reason = self._reason_payload(reason)
         if target is ObservationRunStatus.RUNNING:
@@ -324,6 +328,10 @@ class RuntimePersistenceRepository:
         )
         if result.rowcount != 1:
             raise ValueError("LensRun persisted lifecycle state changed before transition")
+        # Keep lifecycle writes at an explicit caller-transaction-owned flush boundary.
+        # Do not mutate the loaded model until the guarded UPDATE is durable in the
+        # current transaction; a failed flush must leave the in-memory state truthful.
+        await session.flush()
         lens_run.status = target.value
         lens_run.reason = self._reason_payload(reason)
         if target is LensRunStatus.RUNNING:
