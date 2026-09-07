@@ -31,7 +31,10 @@ from app.execution.stages import (
     generate_and_persist_report,
     invoke_and_persist_reasoning,
 )
-from app.infrastructure.persistence.models import ObservationRunModel
+from app.infrastructure.persistence.models import (
+    ObservationAnalysisResultModel,
+    ObservationRunModel,
+)
 from app.infrastructure.persistence.runtime_contracts import ObservationAnalysisIdentity
 from app.metrics.contracts import (
     MetricEvidence,
@@ -211,6 +214,15 @@ class _StageRepository:
 
     async def persist_observation_report(self, _session, _run, _analysis, value):
         self.calls.append(("report", value))
+
+
+def _stored_analysis(result: ObservationAnalysisResult) -> ObservationAnalysisResultModel:
+    """Build the persisted analysis envelope used by stage transaction fakes."""
+    return ObservationAnalysisResultModel(
+        observation_run_id=result.identity.observation_run_id,
+        schema_version=result.schema_version,
+        payload=result.model_dump(mode="json"),
+    )
 
 
 def _snapshot() -> ObservationExecutionSnapshot:
@@ -854,7 +866,7 @@ def test_report_stage_isolates_minimal_request_and_persists_report_then_completi
 
     tx = _StageTransaction(
         ObservationRunModel(id=run_id, observation_id=snapshot.observation_id, status="running"),
-        analysis=object(),
+        analysis=_stored_analysis(analysis),
     )
     repo = _StageRepository()
     result = asyncio.run(
@@ -873,6 +885,118 @@ def test_report_stage_isolates_minimal_request_and_persists_report_then_completi
         captured[0].model_dump()
     )
     assert [call[0] for call in repo.calls] == ["report", "advance"]
+
+
+def test_report_stage_uses_committed_analysis_instead_of_caller_analysis() -> None:
+    """The report executor receives the committed analysis, not a caller replacement."""
+    snapshot = _stage_snapshot(include_alert=False)
+    run_id = uuid4()
+    stored = ObservationAnalysisResult(
+        identity=ObservationIdentity(
+            observation_id=snapshot.observation_id, observation_run_id=run_id
+        ),
+        overall_state="significant_findings_present",
+        findings=(),
+        hypotheses=(),
+        limitations=(),
+    )
+    caller = stored.model_copy(update={"overall_state": "uncertain"})
+    report = ObservationReport(
+        observation_id=snapshot.observation_id,
+        observation_run_id=run_id,
+        generated_at=datetime(2026, 1, 2, tzinfo=UTC),
+        content="# Report",
+    )
+    captured = []
+
+    class Executor:
+        async def execute(self, request):
+            captured.append(request)
+            return ReportSuccess(report=report)
+
+    tx = _StageTransaction(
+        ObservationRunModel(id=run_id, observation_id=snapshot.observation_id, status="running"),
+        analysis=_stored_analysis(stored),
+    )
+    result = asyncio.run(
+        generate_and_persist_report(
+            session_factory=_StageFactory(tx),
+            runtime_repository=_StageRepository(),
+            executor=Executor(),
+            snapshot=snapshot,
+            analysis_result=caller,
+            observation_run_id=run_id,
+        )
+    )
+
+    assert result.observation_run_id == run_id
+    assert captured[0].analysis_result == stored
+
+
+@pytest.mark.parametrize(
+    "stored_analysis",
+    [
+        None,
+        ObservationAnalysisResultModel(
+            observation_run_id=uuid4(), schema_version="1.0", payload={}
+        ),
+    ],
+)
+def test_report_stage_maps_missing_or_invalid_committed_analysis(
+    stored_analysis,
+) -> None:
+    """Missing or malformed committed analysis fails before report invocation."""
+    snapshot = _stage_snapshot(include_alert=False)
+    run_id = uuid4()
+    if stored_analysis is not None:
+        stored_analysis.observation_run_id = run_id
+    tx = _StageTransaction(
+        ObservationRunModel(id=run_id, observation_id=snapshot.observation_id, status="running"),
+        analysis=stored_analysis,
+    )
+
+    class Executor:
+        async def execute(self, _request):
+            pytest.fail("executor must not run")
+
+    result = asyncio.run(
+        generate_and_persist_report(
+            session_factory=_StageFactory(tx),
+            runtime_repository=_StageRepository(),
+            executor=Executor(),
+            snapshot=snapshot,
+            analysis_result=None,
+            observation_run_id=run_id,
+        )
+    )
+    assert result.reason == ExecutionReason("report_result_invalid", "report_builder")
+
+
+def test_report_stage_propagates_committed_analysis_query_failure() -> None:
+    """Persistence query failures remain infrastructure errors."""
+    snapshot = _stage_snapshot(include_alert=False)
+    run_id = uuid4()
+    error = RuntimeError("analysis query failed")
+
+    class Transaction(_StageTransaction):
+        async def scalar(self, _query):
+            raise error
+
+    tx = Transaction(
+        ObservationRunModel(id=run_id, observation_id=snapshot.observation_id, status="running")
+    )
+    with pytest.raises(RuntimeError) as raised:
+        asyncio.run(
+            generate_and_persist_report(
+                session_factory=_StageFactory(tx),
+                runtime_repository=_StageRepository(),
+                executor=object(),
+                snapshot=snapshot,
+                analysis_result=None,
+                observation_run_id=run_id,
+            )
+        )
+    assert raised.value is error
 
 
 def test_report_failure_preserves_analysis_and_guarded_failure_reason() -> None:
@@ -895,7 +1019,7 @@ def test_report_failure_preserves_analysis_and_guarded_failure_reason() -> None:
 
     tx = _StageTransaction(
         ObservationRunModel(id=run_id, observation_id=snapshot.observation_id, status="running"),
-        analysis=object(),
+        analysis=_stored_analysis(analysis),
     )
     repo = _StageRepository()
     executor = Executor()
@@ -1011,7 +1135,7 @@ def test_report_final_transaction_exit_error_is_propagated_without_claiming_comp
     error = RuntimeError("commit failed")
     tx = _StageTransaction(
         ObservationRunModel(id=run_id, observation_id=snapshot.observation_id, status="running"),
-        analysis=object(),
+        analysis=_stored_analysis(analysis),
         fail_exit=error,
     )
     with pytest.raises(RuntimeError) as raised:

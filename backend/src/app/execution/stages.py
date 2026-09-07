@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from contextlib import AbstractAsyncContextManager
 from typing import Protocol
 
@@ -306,14 +307,17 @@ async def generate_and_persist_report(
 ) -> CompletedObservationExecutionOutcome | FailedObservationExecutionOutcome:
     """Generate one report, then atomically persist it with parent completion."""
     run_id = observation_run_id
+    async with session_factory.begin() as session:
+        committed_analysis_model = await session.scalar(
+            select(ObservationAnalysisResultModel).where(
+                ObservationAnalysisResultModel.observation_run_id == run_id
+            )
+        )
     try:
-        if (
-            not isinstance(analysis_result, ObservationAnalysisResult)
-            or analysis_result.identity.observation_id != snapshot.observation_id
-            or analysis_result.identity.observation_run_id != run_id
-        ):
-            raise ValueError("analysis result observation identity does not match snapshot")
-        request = report_generation_request(snapshot, analysis_result)
+        committed_analysis = _reconstruct_committed_analysis(
+            committed_analysis_model, run_id, snapshot.observation_id
+        )
+        request = report_generation_request(snapshot, committed_analysis)
     except (AttributeError, TypeError, ValueError):
         return await fail_observation_execution(
             session_factory=session_factory,
@@ -358,10 +362,10 @@ async def generate_and_persist_report(
         run = await _current_run(session, run_id, snapshot.observation_id)
         analysis = await session.scalar(
             select(ObservationAnalysisResultModel).where(
-                ObservationAnalysisResultModel.observation_run_id == run_id
+                ObservationAnalysisResultModel.observation_run_id == run.id
             )
         )
-        if analysis is None:
+        if analysis is None or analysis.observation_run_id != run.id:
             raise ValueError("committed ObservationAnalysisResult is missing")
         await runtime_repository.persist_observation_report(
             session,
@@ -398,6 +402,20 @@ async def fail_observation_execution(
 
 
 invoke_and_persist_report = generate_and_persist_report
+
+
+def _reconstruct_committed_analysis(analysis, run_id, observation_id) -> ObservationAnalysisResult:
+    """Strictly reconstruct one loaded committed analysis for an Observation run."""
+    if analysis is None or analysis.observation_run_id != run_id:
+        raise ValueError("committed ObservationAnalysisResult is missing")
+    result = ObservationAnalysisResult.model_validate_json(json.dumps(analysis.payload))
+    if (
+        result.identity.observation_id != observation_id
+        or result.identity.observation_run_id != run_id
+        or analysis.schema_version != result.schema_version
+    ):
+        raise ValueError("committed ObservationAnalysisResult identity is invalid")
+    return result
 
 
 async def _current_run(session, run_id, observation_id):
