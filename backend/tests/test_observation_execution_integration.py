@@ -246,16 +246,19 @@ class RelationshipFixture:
 class ReasoningFixture:
     """Return a correlated, empty-but-valid Observation analysis."""
 
+    def __init__(self):
+        self.results = []
+
     async def execute(self, value):
-        return ReasoningSuccess(
-            result=ObservationAnalysisResult(
-                identity=value.context.identity,
-                overall_state="uncertain",
-                findings=(),
-                hypotheses=(),
-                limitations=(),
-            )
+        result = ObservationAnalysisResult(
+            identity=value.context.identity,
+            overall_state="uncertain",
+            findings=(),
+            hypotheses=(),
+            limitations=(),
         )
+        self.results.append(result)
+        return ReasoningSuccess(result=result)
 
 
 class ReportFixture:
@@ -277,7 +280,7 @@ class ReportFixture:
         )
 
 
-async def _seed(factory, *, alerts=False, relationships=False) -> UUID:
+async def _seed(factory, *, alerts=False, relationships=False, extra_metric=False) -> UUID:
     oid = uuid4()
     async with factory.begin() as session:
         observation = ObservationModel(
@@ -309,6 +312,21 @@ async def _seed(factory, *, alerts=False, relationships=False) -> UUID:
                 position=1,
             ),
         ]
+        if extra_metric:
+            observation.lenses.append(
+                MetricLensModel(
+                    lens_id="metric-c",
+                    name="metric-c",
+                    adapter_type="prometheus",
+                    source_id="fixture",
+                    metric_id="metric-c",
+                    query="up",
+                    unit="count",
+                    analysis_objectives=[],
+                    reference_periods=[],
+                    position=2,
+                )
+            )
         if alerts:
             observation.alert_lenses = [
                 AlertLensModel(
@@ -346,7 +364,7 @@ def _request(oid):
     return ObservationExecutionRequest(oid, AnalysisWindow(end - timedelta(minutes=5), end))
 
 
-def _orchestrator(factory, modes, *, report_failed=False, slow=False):
+def _orchestrator(factory, modes, *, report_failed=False, slow=False, reasoning_executor=None):
     repo = RuntimePersistenceRepository()
     return ObservationExecutionOrchestrator(
         session_factory=factory,
@@ -355,7 +373,7 @@ def _orchestrator(factory, modes, *, report_failed=False, slow=False):
         metric_adapter=(SlowMetricFixtureAdapter if slow else MetricFixtureAdapter)(factory, modes),
         alert_adapter=AlertFixtureAdapter(factory),
         relationship_evaluator=RelationshipEvaluator(),
-        reasoning_executor=ReasoningFixture(),
+        reasoning_executor=reasoning_executor or ReasoningFixture(),
         report_executor=ReportFixture(report_failed),
     )
 
@@ -385,10 +403,13 @@ def test_postgresql_success_persists_exact_aggregate_and_report(sessions):
 
 def test_postgresql_mixed_degradation_preserves_metric_and_alert_distinctions(sessions):
     async def scenario():
-        oid = await _seed(sessions, alerts=True, relationships=True)
-        out = await _orchestrator(sessions, {"metric-a": "partial", "metric-b": "failed"}).execute(
-            _request(oid), ExecutionPolicy(2, 5)
-        )
+        reasoning = ReasoningFixture()
+        oid = await _seed(sessions, alerts=True, relationships=True, extra_metric=True)
+        out = await _orchestrator(
+            sessions,
+            {"metric-a": "partial", "metric-b": "failed", "metric-c": "completed"},
+            reasoning_executor=reasoning,
+        ).execute(_request(oid), ExecutionPolicy(2, 5))
         async with sessions() as s:
             run = await RuntimePersistenceRepository().get_observation_run(s, _run_id(out))
             assert run.status == "completed"
@@ -398,6 +419,7 @@ def test_postgresql_mixed_degradation_preserves_metric_and_alert_distinctions(se
                 [
                     ("metric", "partial", True),
                     ("metric", "failed", True),
+                    ("metric", "completed", True),
                     ("alert", "failed", False),
                 ]
             )
@@ -405,6 +427,10 @@ def test_postgresql_mixed_degradation_preserves_metric_and_alert_distinctions(se
                 run.observation_analysis_result is not None
                 and len(run.relationship_evaluations) == 1
             )
+            assert run.observation_analysis_result.payload == reasoning.results[0].model_dump(
+                mode="json"
+            )
+            assert run.observation_analysis_result.payload["overall_state"] == "uncertain"
 
     asyncio.run(scenario())
 
@@ -487,7 +513,10 @@ def test_postgresql_cancellation_keeps_completed_child_and_cancels_unfinished(se
 def test_postgresql_fresh_session_retrieval_preserves_exact_correlation(sessions):
     async def scenario():
         oid = await _seed(sessions, relationships=True)
-        out = await _orchestrator(sessions, {}).execute(_request(oid), ExecutionPolicy(2, 5))
+        reasoning = ReasoningFixture()
+        out = await _orchestrator(sessions, {}, reasoning_executor=reasoning).execute(
+            _request(oid), ExecutionPolicy(2, 5)
+        )
         run_id = _run_id(out)
         async with sessions() as first:
             run = await RuntimePersistenceRepository().get_observation_run(first, run_id)
@@ -495,10 +524,16 @@ def test_postgresql_fresh_session_retrieval_preserves_exact_correlation(sessions
             assert all(item.observation_run_id == run_id for item in run.lens_runs)
             assert all(item.observation_run_id == run_id for item in run.relationship_evaluations)
             assert run.observation_analysis_result.observation_run_id == run_id
+            assert run.observation_analysis_result.payload == reasoning.results[0].model_dump(
+                mode="json"
+            )
         async with sessions() as second:
             restored = await RuntimePersistenceRepository().get_observation_run(second, run_id)
             assert restored.id == run_id
             assert restored.observation_analysis_result.observation_run_id == run_id
             assert restored.observation_analysis_result.report.content == "# fixture"
+            assert restored.observation_analysis_result.payload == reasoning.results[0].model_dump(
+                mode="json"
+            )
 
     asyncio.run(scenario())

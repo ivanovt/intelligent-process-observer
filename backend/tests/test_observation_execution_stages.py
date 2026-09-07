@@ -1,12 +1,20 @@
 from __future__ import annotations
 
 import asyncio
+import json
 from dataclasses import replace
 from datetime import UTC, datetime
 from uuid import uuid4
 
 import pytest
 
+from app.alerts.contracts import (
+    AlertIdentity,
+    AlertLensExecutionContext,
+    AlertMandatoryEvidence,
+    AlertProviderScope,
+)
+from app.alerts.result_builder import AlertResultBuilder
 from app.execution.contracts import (
     AlertLensSnapshot,
     AnalysisWindow,
@@ -23,6 +31,7 @@ from app.execution.contracts import (
     SemanticDescriptorSnapshot,
 )
 from app.execution.projectors import (
+    build_observation_reasoning_input,
     relationship_definitions,
     validate_relationship_batch,
 )
@@ -153,9 +162,40 @@ def _metric_artifact(snapshot, assignment, *, insufficient=False):
             unit=assignment.lens.unit,
         ),
     )
-    object.__setattr__(artifact, "provenance", result.provenance.model_dump(mode="python"))
-    object.__setattr__(artifact, "payload", result.model_dump(mode="python", by_alias=True))
+    object.__setattr__(artifact, "provenance", result.provenance.model_dump(mode="json"))
+    object.__setattr__(artifact, "payload", result.model_dump(mode="json", by_alias=True))
     return artifact
+
+
+def _alert_artifact(snapshot, assignment, *, partial=False):
+    """Build a strict Alert artifact through the production result builder."""
+    context = AlertLensExecutionContext(
+        identity=AlertIdentity(
+            observation_id=snapshot.observation_id,
+            observation_run_id=assignment.observation_run_id,
+            lens_id=assignment.lens.lens_id,
+            lens_run_id=assignment.lens_run_id,
+        ),
+        provider_scope=AlertProviderScope(
+            source=assignment.lens.source, query=assignment.lens.selector_query
+        ),
+        analysis_window={"from": snapshot.analysis_window.from_, "to": snapshot.analysis_window.to},
+        lens_name=assignment.lens.name,
+    )
+    builder = AlertResultBuilder(clock=lambda: snapshot.analysis_window.to)
+    if partial:
+        result, terminal = builder.usable(
+            context,
+            (),
+            AlertMandatoryEvidence(),
+            None,
+            current_rejected=True,
+            reference_unavailable=False,
+            zero=True,
+        )
+    else:
+        result, terminal = builder.completed_zero(context, AlertMandatoryEvidence())
+    return CollectedLensArtifact.from_persistence_envelope(terminal.artifact)
 
 
 def _assignment(snapshot, lens):
@@ -902,6 +942,73 @@ def test_reasoning_input_is_canonical_and_excludes_provider_and_runtime_configur
         "persistence",
     ):
         assert forbidden not in str(dumped)
+
+
+@pytest.mark.parametrize("alert_partial", [False, True])
+def test_reasoning_projector_reconstructs_json_metric_and_alert_payloads(
+    alert_partial: bool,
+) -> None:
+    """The public reasoning projector strictly rebuilds JSONB-like native results."""
+    base = _stage_snapshot(include_alert=True)
+    snapshot = replace(base, metric_lenses=(base.metric_lenses[0],))
+    run_id = uuid4()
+    metric_assignment = _assignment(snapshot, snapshot.metric_lenses[0])
+    metric_assignment = replace(metric_assignment, observation_run_id=run_id)
+    alert_assignment = replace(
+        _assignment(snapshot, snapshot.alert_lenses[0]), observation_run_id=run_id
+    )
+    metric = _metric_artifact(snapshot, metric_assignment)
+    alert = _alert_artifact(snapshot, alert_assignment, partial=alert_partial)
+    metric = replace(metric, payload=json.loads(json.dumps(metric.payload)))
+    alert = replace(
+        alert,
+        payload=json.loads(json.dumps(alert.to_persistence_envelope().payload)),
+    )
+    partition = LensOutcomePartition(
+        usable=(
+            CollectedLensOutcome(assignment=metric_assignment, status="completed", artifact=metric),
+            CollectedLensOutcome(
+                assignment=alert_assignment,
+                status="partial" if alert_partial else "completed",
+                artifact=alert,
+                reason=ExecutionReason("invalid_records", "current_normalization")
+                if alert_partial
+                else None,
+            ),
+        ),
+        unavailable=(),
+    )
+
+    value = build_observation_reasoning_input(snapshot, partition, (), observation_run_id=run_id)
+
+    assert {item.lens_type for item in value.usable_results} == {"metric", "alert"}
+    assert any(item.status == "partial" for item in value.usable_results) is alert_partial
+
+
+def test_reasoning_projector_rejects_malformed_json_payload() -> None:
+    """JSON fallback must not turn malformed persisted evidence into a usable result."""
+    base = _stage_snapshot(include_alert=False)
+    snapshot = replace(base, metric_lenses=(base.metric_lenses[0],))
+    assignment = _assignment(snapshot, snapshot.metric_lenses[0])
+    artifact = _metric_artifact(snapshot, assignment)
+    malformed = dict(artifact.to_persistence_envelope().payload)
+    malformed["unexpected"] = "must be rejected by strict result contract"
+    outcome = CollectedLensOutcome(
+        assignment=assignment,
+        status="completed",
+        artifact=replace(
+            artifact,
+            payload=json.loads(json.dumps(malformed)),
+        ),
+    )
+
+    with pytest.raises(ValueError, match="persisted Lens result payload is invalid"):
+        build_observation_reasoning_input(
+            snapshot,
+            LensOutcomePartition(usable=(outcome,), unavailable=()),
+            (),
+            observation_run_id=assignment.observation_run_id,
+        )
 
 
 def test_report_stage_isolates_minimal_request_and_persists_report_then_completion() -> None:
