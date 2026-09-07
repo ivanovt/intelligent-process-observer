@@ -221,7 +221,7 @@ type PreparationResult = ObservationExecutionSnapshot | RejectedObservationExecu
 class ObservationDefinitionLoader(Protocol):
     """Load one complete Observation definition aggregate exactly once."""
 
-    async def load(self, observation_id: UUID) -> object | None:
+    async def get(self, session: object, observation_id: UUID) -> object | None:
         """Return the complete aggregate, or ``None`` when it is absent."""
 
 

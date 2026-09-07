@@ -20,6 +20,12 @@ from app.execution.contracts import (
     SemanticDescriptorSnapshot,
     project_observation_execution,
 )
+from app.execution.initialization import (
+    InitializedObservationExecution,
+    TransactionSessionFactory,
+    initialize_observation_execution,
+)
+from app.execution.ordering import canonical_lens_order
 
 __all__ = [
     "AlertLensSnapshot",
@@ -27,6 +33,7 @@ __all__ = [
     "CollectedLensOutcome",
     "CompletedObservationExecutionOutcome",
     "ExecutionReason",
+    "InitializedObservationExecution",
     "ExecutionPolicy",
     "FailedObservationExecutionOutcome",
     "LensExecutionAdapter",
@@ -39,5 +46,8 @@ __all__ = [
     "RejectedObservationExecutionOutcome",
     "RelationshipSnapshot",
     "SemanticDescriptorSnapshot",
+    "TransactionSessionFactory",
+    "canonical_lens_order",
+    "initialize_observation_execution",
     "project_observation_execution",
 ]
