@@ -27,6 +27,7 @@ from app.infrastructure.persistence.alert_runtime import persist_alert_terminal
 from app.infrastructure.persistence.models import LensRunModel, ObservationRunModel
 from app.infrastructure.persistence.repository import RuntimePersistenceRepository
 from app.infrastructure.persistence.runtime_contracts import (
+    LensAnalysisResultInput,
     LensRunStatus,
     LensType,
     StructuredReason,
@@ -231,20 +232,30 @@ def alert_execution_context(assignment: LensExecutionAssignment) -> AlertLensExe
     )
 
 
-def _validate_metric_analysis(
-    analysis: MetricPreTransactionAnalysis, context: MetricLensExecutionContext
-) -> None:
+def _validate_metric_analysis(analysis: object, context: MetricLensExecutionContext) -> None:
+    if not isinstance(analysis, MetricPreTransactionAnalysis):
+        raise ValueError("Metric pipeline returned an invalid pre-transaction analysis")
     if analysis.context != context:
         raise ValueError("Metric pipeline analysis identity differs from its assignment")
-    artifact = getattr(analysis, "terminal_result", None)
-    if artifact is not None and (
+    artifact = analysis.terminal_result
+    if not isinstance(artifact, LensAnalysisResultInput):
+        raise ValueError("Metric pipeline analysis returned an invalid terminal artifact")
+    LensAnalysisResultInput.model_validate(artifact.model_dump())
+    if (
         artifact.result_type is not LensType.METRIC
         or artifact.identity.observation_id != context.identity.observation_id
         or artifact.identity.observation_run_id != context.identity.observation_run_id
         or artifact.identity.lens_id != context.identity.lens_id
         or artifact.identity.lens_run_id != context.identity.lens_run_id
+        or artifact.identity.metric_ref != context.identity.metric_ref
+        or artifact.identity.unit != context.identity.unit
     ):
         raise ValueError("Metric pipeline artifact identity differs from its assignment")
+    if analysis.failure is not None:
+        if artifact.status is not LensRunStatus.FAILED:
+            raise ValueError("Failed Metric analysis requires a failed terminal artifact")
+    elif artifact.status not in {LensRunStatus.COMPLETED, LensRunStatus.PARTIAL}:
+        raise ValueError("Successful Metric analysis requires a usable terminal artifact")
 
 
 def _validate_alert_outcome(outcome: object, context: AlertLensExecutionContext) -> None:

@@ -2,8 +2,8 @@ from __future__ import annotations
 
 import asyncio
 from contextlib import AbstractAsyncContextManager
+from dataclasses import replace
 from datetime import UTC, datetime
-from types import SimpleNamespace
 from unittest.mock import patch
 from uuid import uuid4
 
@@ -19,9 +19,17 @@ from app.execution import (
     LensExecutionAssignment,
     MetricLensExecutionAdapter,
     MetricLensSnapshot,
+    metric_execution_context,
 )
 from app.infrastructure.persistence.models import LensRunModel, ObservationRunModel
-from app.infrastructure.persistence.runtime_contracts import LensRunStatus, StructuredReason
+from app.infrastructure.persistence.runtime_contracts import (
+    LensRunStatus,
+    LensType,
+    StructuredReason,
+)
+from app.metrics.contracts import MetricMandatoryAnalysisFailure, PreparedInsufficientSeries
+from app.metrics.pipeline import MetricPreTransactionAnalysis
+from app.metrics.result_builder import MetricResultBuilder
 
 
 class Transaction(AbstractAsyncContextManager["Session"]):
@@ -64,10 +72,32 @@ class MetricPipeline:
         self.status = status
         self.context = None
 
-    async def analyze(self, context: object) -> object:
+    async def analyze(self, context: object) -> MetricPreTransactionAnalysis:
         self.phases.append("metric_analysis")
         self.context = context
-        return SimpleNamespace(context=context)
+        builder = MetricResultBuilder()
+        if self.status is LensRunStatus.FAILED:
+            _, terminal_result = builder.failed(
+                context, MetricMandatoryAnalysisFailure(diagnostic="test failure")
+            )
+            return MetricPreTransactionAnalysis(
+                context=context,
+                prepared=None,
+                semantics=None,
+                dataset_ref=None,
+                insufficient_agent_outcome=None,
+                terminal_result=terminal_result,
+                failure=MetricMandatoryAnalysisFailure(diagnostic="test failure"),
+            )
+        _, terminal_result = builder.completed_insufficient(context)
+        return MetricPreTransactionAnalysis(
+            context=context,
+            prepared=PreparedInsufficientSeries(data_quality="insufficient", samples=()),
+            semantics=None,
+            dataset_ref=None,
+            insufficient_agent_outcome=None,
+            terminal_result=terminal_result,
+        )
 
     async def persist_terminal(
         self, session: object, lens_run: LensRunModel, analysis: object
@@ -280,7 +310,7 @@ def test_metric_adapter_normalizes_unexpected_and_mismatched_analysis() -> None:
             async def analyze(self, context: object) -> object:
                 if self.mode == "raise":
                     raise RuntimeError("provider credentials: secret")
-                return SimpleNamespace(context=object())
+                return object()
 
         outcome = asyncio.run(
             MetricLensExecutionAdapter(
@@ -292,6 +322,91 @@ def test_metric_adapter_normalizes_unexpected_and_mismatched_analysis() -> None:
         assert outcome.status == "failed"
         assert outcome.reason is not None
         assert (outcome.reason.code, outcome.reason.component) == (expected, "metric")
+        assert repository.artifacts[0].payload["status"]["error"]["code"] == (
+            "mandatory_metric_analysis_failed"
+        )
+
+
+def test_metric_adapter_normalizes_invalid_producer_analysis_contract_matrix() -> None:
+    """Reject malformed Metric producer results before their terminal path can run."""
+
+    cases = (
+        "wrong_analysis_type",
+        "wrong_terminal_type",
+        "wrong_terminal_lens_type",
+        "incomplete_assigned_identity",
+        "different_assigned_identity",
+        "failure_with_completed_artifact",
+        "success_with_failed_artifact",
+    )
+
+    for name in cases:
+        assignment, lens_run, parent = _metric_assignment()
+        repository = Repository()
+        context = metric_execution_context(assignment)
+        completed = asyncio.run(MetricPipeline([], LensRunStatus.COMPLETED).analyze(context))
+        failed = asyncio.run(MetricPipeline([], LensRunStatus.FAILED).analyze(context))
+        invalid_identity = completed.terminal_result.identity.model_copy(
+            update={"metric_ref": None}
+        )
+        wrong_identity = completed.terminal_result.identity.model_copy(
+            update={"observation_run_id": uuid4()}
+        )
+        producer_analysis = {
+            "wrong_analysis_type": object(),
+            "wrong_terminal_type": replace(completed, terminal_result=object()),
+            "wrong_terminal_lens_type": replace(
+                completed,
+                terminal_result=completed.terminal_result.model_copy(
+                    update={"result_type": LensType.ALERT}
+                ),
+            ),
+            "incomplete_assigned_identity": replace(
+                completed,
+                terminal_result=completed.terminal_result.model_copy(
+                    update={"identity": invalid_identity}
+                ),
+            ),
+            "different_assigned_identity": replace(
+                completed,
+                terminal_result=completed.terminal_result.model_copy(
+                    update={"identity": wrong_identity}
+                ),
+            ),
+            "failure_with_completed_artifact": replace(
+                completed,
+                failure=MetricMandatoryAnalysisFailure(diagnostic="producer contradiction"),
+            ),
+            "success_with_failed_artifact": replace(failed, failure=None),
+        }[name]
+
+        class RejectedProducerPipeline(MetricPipeline):
+            def __init__(self, analysis: object) -> None:
+                super().__init__([], LensRunStatus.COMPLETED)
+                self.analysis = analysis
+
+            async def analyze(self, context: object) -> object:
+                return self.analysis
+
+            async def persist_terminal(
+                self, session: object, lens_run: LensRunModel, analysis: object
+            ) -> None:
+                raise AssertionError("rejected producer artifact must not be terminalized")
+
+        outcome = asyncio.run(
+            MetricLensExecutionAdapter(
+                session_factory=Factory(_session(lens_run, parent), []),
+                pipeline=RejectedProducerPipeline(producer_analysis),
+                repository=repository,  # type: ignore[arg-type]
+            ).execute(assignment, _policy())
+        )
+
+        assert outcome.status == "failed"
+        assert outcome.reason is not None
+        assert (outcome.reason.code, outcome.reason.component) == ("identity_mismatch", "metric")
+        assert len(repository.artifacts) == 1
+        assert repository.artifacts[0] is not getattr(producer_analysis, "terminal_result", None)
+        assert repository.artifacts[0].status is LensRunStatus.FAILED
         assert repository.artifacts[0].payload["status"]["error"]["code"] == (
             "mandatory_metric_analysis_failed"
         )
