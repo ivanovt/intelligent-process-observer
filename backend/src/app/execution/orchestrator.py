@@ -166,7 +166,9 @@ class ObservationExecutionOrchestrator:
         except asyncio.CancelledError as cancellation:
             await self._cancel_after_initialization(initialized, cancellation)
             raise
-        except Exception as error:
+        except (KeyboardInterrupt, SystemExit):
+            raise
+        except BaseException as error:
             if _is_persistence_error(error):
                 raise
             await self._abort_after_failure(initialized, stage)
@@ -273,7 +275,7 @@ class _PersistenceAwareSessionFactory:
 
 
 class _PersistenceAwareTransaction:
-    """Delegate a transaction while tagging errors raised by its body or commit."""
+    """Delegate a transaction while tagging its enter, commit, and rollback failures."""
 
     def __init__(self, transaction: AbstractAsyncContextManager[object]) -> None:
         self._transaction = transaction
@@ -286,8 +288,6 @@ class _PersistenceAwareTransaction:
             raise
 
     async def __aexit__(self, exc_type, exc, traceback) -> bool:
-        if exc is not None:
-            _mark_persistence_error(exc)
         try:
             return await self._transaction.__aexit__(exc_type, exc, traceback)
         except BaseException as error:

@@ -15,7 +15,10 @@ from app.execution import (
     MetricLensSnapshot,
     ObservationExecutionOrchestrator,
 )
-from app.execution.orchestrator import _TypeRoutedLensAdapter
+from app.execution.orchestrator import (
+    _PersistenceAwareTransaction,
+    _TypeRoutedLensAdapter,
+)
 
 
 class RecordingAdapter:
@@ -108,3 +111,121 @@ def test_public_execute_has_only_fresh_request_and_policy_inputs() -> None:
         name in parameters
         for name in ("run_id", "resume", "stage", "replay", "idempotency", "retry")
     )
+
+
+class _UnexpectedBaseException(BaseException):
+    pass
+
+
+class _Transaction:
+    def __init__(
+        self,
+        exit_error: BaseException | None = None,
+        enter_error: BaseException | None = None,
+    ) -> None:
+        self.exit_error = exit_error
+        self.enter_error = enter_error
+
+    async def __aenter__(self) -> object:
+        if self.enter_error is not None:
+            raise self.enter_error
+        return object()
+
+    async def __aexit__(self, exc_type, exc, traceback) -> bool:
+        if self.exit_error is not None:
+            raise self.exit_error
+        return False
+
+
+class _Factory:
+    def begin(self) -> _Transaction:
+        return _Transaction()
+
+
+def test_persistence_wrapper_does_not_tag_semantic_body_failure() -> None:
+    error = ValueError("semantic failure")
+
+    async def run() -> None:
+        async with _PersistenceAwareTransaction(_Transaction()):
+            raise error
+
+    with pytest.raises(ValueError, match="semantic failure"):
+        asyncio.run(run())
+    assert not getattr(error, "persistence_failure", False)
+
+
+def test_persistence_wrapper_tags_and_propagates_exit_failure() -> None:
+    error = RuntimeError("commit failed")
+
+    async def run() -> None:
+        async with _PersistenceAwareTransaction(_Transaction(error)):
+            pass
+
+    with pytest.raises(RuntimeError, match="commit failed") as raised:
+        asyncio.run(run())
+    assert raised.value is error
+    assert error.persistence_failure is True
+
+
+def test_persistence_wrapper_tags_and_propagates_enter_failure() -> None:
+    error = RuntimeError("connection failed")
+
+    async def run() -> None:
+        async with _PersistenceAwareTransaction(_Transaction(enter_error=error)):
+            pass
+
+    with pytest.raises(RuntimeError, match="connection failed") as raised:
+        asyncio.run(run())
+    assert raised.value is error
+    assert error.persistence_failure is True
+
+
+@pytest.mark.parametrize(
+    "error_type", [_UnexpectedBaseException, ValueError, KeyboardInterrupt, SystemExit]
+)
+def test_outer_base_exception_boundary_preserves_special_process_exits_and_aborts_other_errors(
+    monkeypatch: pytest.MonkeyPatch, error_type: type[BaseException]
+) -> None:
+    initialized = type(
+        "InitializedFake",
+        (),
+        {"assignments": (), "snapshot": None, "observation_run_id": uuid4()},
+    )()
+    abort_stages: list[str] = []
+
+    async def initialize(*args, **kwargs):
+        return initialized
+
+    async def fanout(*args, **kwargs):
+        raise error_type()
+
+    async def abort(value, stage: str) -> None:
+        assert value is initialized
+        abort_stages.append(stage)
+
+    monkeypatch.setattr("app.execution.orchestrator.initialize_observation_execution", initialize)
+    monkeypatch.setattr("app.execution.orchestrator.fan_out_lens_runs", fanout)
+    orchestrator = ObservationExecutionOrchestrator(
+        session_factory=_Factory(),
+        definition_loader=None,
+        runtime_repository=None,
+        metric_adapter=None,
+        alert_adapter=None,
+        relationship_evaluator=None,
+        reasoning_executor=None,
+        report_executor=None,
+    )
+    monkeypatch.setattr(orchestrator, "_abort_after_failure", abort)
+
+    async def run():
+        return await orchestrator.execute(None, None)
+
+    if error_type in {_UnexpectedBaseException, ValueError}:
+        outcome = asyncio.run(run())
+        assert outcome.reason.code == "execution_failed"
+        assert outcome.reason.component == "fanout"
+        assert abort_stages == ["fanout"]
+    else:
+        with pytest.raises(error_type):
+            asyncio.run(run())
+        assert abort_stages == []
