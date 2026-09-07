@@ -28,4 +28,4 @@
 
 - [x] 5.1 Add one representative in-memory integration test from correlated semantic context and a populated `ObservationAnalysisResult` through a scripted presentation completion to strict English Markdown, including uncertainty, findings, possible hypotheses, limitations, and deterministic evidence/finding/knowledge references.
 - [x] 5.2 Add integration coverage for `no_significant_findings` with empty findings/hypotheses; verify exact projection of report time, format, and content into the existing `ObservationReportInput` while retaining Observation/run identity for the repository's separate correlation boundary, without calling persistence or changing runtime lifecycle.
-- [ ] 5.3 Run focused backend reporting tests and Ruff checks, then run `make check`; report failures accurately and leave archive, Observation execution integration, and pull-request actions for their separately approved workflow steps.
+- [x] 5.3 Run focused backend reporting tests and Ruff checks, then run `make check`; report failures accurately and leave archive, Observation execution integration, and pull-request actions for their separately approved workflow steps.
