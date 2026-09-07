@@ -150,11 +150,66 @@ def _validate_assignments(snapshot, assignments, outcomes, run_id) -> None:
 
 def _validate_partition(snapshot, partition, run_id) -> None:
     """Require a non-contradictory current-run reasoning partition."""
-    all_outcomes = (*partition.usable, *partition.unavailable)
+    usable = tuple(partition.usable)
+    unavailable = tuple(partition.unavailable)
+    all_outcomes = (*usable, *unavailable)
     if not all_outcomes:
         raise ValueError("reasoning partition cannot be empty")
-    assignments = tuple(item.assignment for item in all_outcomes)
-    _validate_assignments(snapshot, assignments, all_outcomes, run_id)
+
+    expected_lenses = canonical_lens_order(snapshot)
+    expected_keys = tuple((lens.lens_type, lens.lens_id) for lens in expected_lenses)
+    expected_key_set = set(expected_keys)
+    seen_keys: set[tuple[str, str]] = set()
+    seen_lens_run_ids = set()
+    for outcome in all_outcomes:
+        if not isinstance(outcome, CollectedLensOutcome):
+            raise ValueError("reasoning partition contains an invalid outcome")
+        assignment = outcome.assignment
+        if (
+            assignment.observation_id != snapshot.observation_id
+            or assignment.observation_run_id != run_id
+            or assignment.analysis_window != snapshot.analysis_window
+        ):
+            raise ValueError("reasoning partition assignment identity is invalid")
+        key = (assignment.lens.lens_type, assignment.lens.lens_id)
+        if key not in expected_key_set or key in seen_keys:
+            raise ValueError("reasoning partition is not an exact Lens partition")
+        expected_lens = expected_lenses[expected_keys.index(key)]
+        if assignment.lens != expected_lens:
+            raise ValueError("reasoning partition Lens snapshot is invalid")
+        if assignment.lens_run_id in seen_lens_run_ids:
+            raise ValueError("reasoning partition contains a duplicate LensRun")
+        seen_keys.add(key)
+        seen_lens_run_ids.add(assignment.lens_run_id)
+
+    if seen_keys != expected_key_set:
+        raise ValueError("reasoning partition is not an exact Lens partition")
+
+    canonical_outcomes = tuple(
+        sorted(
+            all_outcomes,
+            key=lambda item: expected_keys.index(
+                (item.assignment.lens.lens_type, item.assignment.lens.lens_id)
+            ),
+        )
+    )
+    if tuple(item.assignment.lens for item in canonical_outcomes) != expected_lenses:
+        raise ValueError("reasoning partition topology is invalid")
+    _validate_assignments(
+        snapshot,
+        tuple(item.assignment for item in canonical_outcomes),
+        canonical_outcomes,
+        run_id,
+    )
+
+    for category, expected_category in (
+        (usable, tuple(item for item in canonical_outcomes if item in usable)),
+        (unavailable, tuple(item for item in canonical_outcomes if item in unavailable)),
+    ):
+        if tuple(item.assignment for item in category) != tuple(
+            item.assignment for item in expected_category
+        ):
+            raise ValueError("reasoning partition category order is invalid")
 
 
 async def invoke_and_persist_reasoning(
