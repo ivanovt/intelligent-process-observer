@@ -24,8 +24,8 @@
 
 - [x] 4.1 Implement the fixed-size asyncio worker scheduler with canonical admission, independent sessions, durable pending-to-running admission, work-conserving slot reuse, a deadline limited to pre-terminalization analytical work after admission, deadline-exempt Metric History and terminal persistence, bounded active work, and canonical collected-result ordering.
 - [x] 4.2 Implement strict normal JOIN verification against the initialized topology and exact usable/unavailable classification for sufficient/partial Metrics, completed-insufficient/failed Metrics, and completed/partial/failed Alerts.
-- [ ] 4.3 Implement the zero-usable gate that atomically fails the ObservationRun with `no_usable_lens_results/usable_results_gate`, preserves Lens artifacts, and prevents all Observation-level stages.
-- [ ] 4.4 Add controllable asynchronous orchestration tests proving the concurrency ceiling, work-conserving non-batched admission, queue-time and terminal-transaction exclusion from deadlines, completion-order independence, one-Lens failure isolation, timeout terminalization only for deadline-covered analytical work, History/persistence-error propagation, strict no-early-continuation JOIN, degraded continuation, and zero-usable STOP.
+- [x] 4.3 Implement the zero-usable gate that atomically fails the ObservationRun with `no_usable_lens_results/usable_results_gate`, preserves Lens artifacts, and prevents all Observation-level stages.
+- [x] 4.4 Add controllable asynchronous orchestration tests proving the concurrency ceiling, work-conserving non-batched admission, queue-time and terminal-transaction exclusion from deadlines, completion-order independence, one-Lens failure isolation, timeout terminalization only for deadline-covered analytical work, History/persistence-error propagation, strict no-early-continuation JOIN, degraded continuation, and zero-usable STOP.
 
 ## 5. Compose Observation-Level Evaluation, Reasoning, and Reporting
 
