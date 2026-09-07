@@ -283,7 +283,7 @@ class RuntimePersistenceRepository:
         reason: StructuredReason | None = None,
         now: datetime | None = None,
     ) -> LensRunModel:
-        """Advance one LensRun and preserve required partial or failure reason metadata."""
+        """Advance one LensRun and preserve required terminal reason metadata."""
 
         validate_lens_run_transition(LensRunStatus(lens_run.status), target, reason)
         lens_run.status = target.value
@@ -305,7 +305,8 @@ class RuntimePersistenceRepository:
         """Persist one eligible Lens artifact after validating its aggregate correlation.
 
         Failed Alert and Log runs are rejected because their absence is meaningful; a
-        failed Metric artifact remains storable as non-usable traceability data.
+        failed Metric artifact remains storable as non-usable traceability data. A
+        cancelled LensRun cannot receive an artifact.
         """
 
         # Avoid implicit lazy I/O when callers pass a LensRun loaded without its parent.
@@ -425,7 +426,8 @@ class RuntimePersistenceRepository:
         """Load a runtime aggregate with every available artifact in eager async-safe form.
 
         Missing results remain absent rather than becoming empty placeholders, preserving
-        the failed Alert/Log distinction and early-failed ObservationRun semantics.
+        the failed Alert/Log distinction, cancelled LensRuns, and terminal ObservationRun
+        semantics. Previously committed child and Observation-level artifacts remain loaded.
         """
 
         result = await session.scalars(
@@ -463,6 +465,8 @@ class RuntimePersistenceRepository:
         cannot be attached to a contradictory runtime aggregate.
         """
 
+        if lens_run.status == LensRunStatus.CANCELLED.value:
+            raise ValueError("Cancelled LensRun cannot have an analysis result")
         if result.result_type.value != lens_run.lens_type:
             raise ValueError("Lens analysis result type does not match LensRun type")
         if result.status.value != lens_run.status:

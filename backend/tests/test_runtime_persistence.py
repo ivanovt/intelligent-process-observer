@@ -25,6 +25,8 @@ from app.infrastructure.persistence.runtime_contracts import (
     ObservationRunStatus,
     RelationshipEvaluationInput,
     StructuredReason,
+    is_terminal_lens_run,
+    is_terminal_observation_run,
     is_usable_lens_result,
     validate_lens_run_transition,
     validate_observation_run_transition,
@@ -138,6 +140,11 @@ def test_observation_and_lens_lifecycle_transitions() -> None:
         ObservationRunStatus.FAILED,
         StructuredReason(code="analysis_failed"),
     )
+    validate_observation_run_transition(
+        ObservationRunStatus.RUNNING,
+        ObservationRunStatus.CANCELLED,
+        StructuredReason(code="execution_cancelled"),
+    )
     validate_lens_run_transition(LensRunStatus.PENDING, LensRunStatus.RUNNING)
     for terminal_status in (LensRunStatus.COMPLETED,):
         validate_lens_run_transition(LensRunStatus.RUNNING, terminal_status)
@@ -147,6 +154,16 @@ def test_observation_and_lens_lifecycle_transitions() -> None:
             terminal_status,
             StructuredReason(code="analysis_failed"),
         )
+    for current in (LensRunStatus.PENDING, LensRunStatus.RUNNING):
+        validate_lens_run_transition(
+            current,
+            LensRunStatus.CANCELLED,
+            StructuredReason(code="execution_cancelled"),
+        )
+
+    assert is_terminal_observation_run(ObservationRunStatus.CANCELLED) is True
+    assert is_terminal_lens_run(LensRunStatus.CANCELLED) is True
+    assert is_usable_lens_result(LensRunStatus.CANCELLED) is False
 
     with pytest.raises(ValueError):
         validate_observation_run_transition(
@@ -160,6 +177,17 @@ def test_observation_and_lens_lifecycle_transitions() -> None:
         )
     with pytest.raises(ValueError, match="structured reason"):
         validate_lens_run_transition(LensRunStatus.RUNNING, LensRunStatus.PARTIAL)
+    with pytest.raises(ValueError, match="execution_cancelled"):
+        validate_lens_run_transition(
+            LensRunStatus.RUNNING,
+            LensRunStatus.CANCELLED,
+            StructuredReason(code="analysis_failed"),
+        )
+    with pytest.raises(ValueError):
+        validate_lens_run_transition(
+            LensRunStatus.CANCELLED,
+            LensRunStatus.COMPLETED,
+        )
     with pytest.raises(ValidationError):
         StructuredReason(code="failure", message="diagnostic text")
 
@@ -391,6 +419,21 @@ def test_failed_alert_and_log_runs_reject_result_attachment() -> None:
                     RecordingSession(), lens_run, result_input(lens_run, LensRunStatus.COMPLETED)
                 )
             )
+
+
+def test_cancelled_lens_run_rejects_result_attachment() -> None:
+    repository = RuntimePersistenceRepository()
+    observation_run = pending_observation_run()
+    lens_run = pending_lens_run(observation_run, LensType.METRIC)
+    lens_run.status = LensRunStatus.CANCELLED.value
+    lens_run.reason = {"code": "execution_cancelled", "component": None}
+
+    with pytest.raises(ValueError, match="Cancelled LensRun"):
+        run(
+            repository.persist_lens_analysis_result(
+                RecordingSession(), lens_run, result_input(lens_run, LensRunStatus.COMPLETED)
+            )
+        )
 
 
 def test_terminal_lifecycle_operations_persist_structured_reasons() -> None:
