@@ -31,6 +31,7 @@ from app.reasoning.contracts import (
     UnavailableLens,
 )
 from app.reasoning.input import insufficient_metric_as_unavailable, validate_input
+from app.relationships.contracts import RelationshipEvaluation
 
 
 def relationship_definitions(
@@ -85,14 +86,19 @@ def validate_relationship_batch(
     expected = tuple(item.relationship_id for item in snapshot.relationships)
     if len(evaluations) != len(expected):
         raise ValueError("Relationship evaluation batch cardinality differs from definitions")
-    ids = tuple(getattr(item, "relationship_id", None) for item in evaluations)
+    adapter = TypeAdapter(RelationshipEvaluation)
+    try:
+        validated = tuple(adapter.validate_python(item) for item in evaluations)
+    except Exception as exc:
+        raise ValueError("Relationship evaluation batch identity or order is invalid") from exc
+    ids = tuple(item.relationship_id for item in validated)
     if ids != expected or len(set(ids)) != len(ids):
         raise ValueError("Relationship evaluation batch identity or order is invalid")
     # Relationship evaluations intentionally have no run identity.  The correlation
     # boundary is established by the stage's current ObservationRun validation.
     if not isinstance(observation_id, UUID) or not isinstance(observation_run_id, UUID):
         raise ValueError("Relationship evaluation requires current-run identity")
-    return tuple(evaluations)
+    return validated
 
 
 def build_observation_reasoning_input(

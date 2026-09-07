@@ -68,7 +68,7 @@ async def evaluate_and_persist_relationships(
     try:
         definitions = relationship_definitions(snapshot)
         evaluations = evaluator.evaluate(definitions, admissible_artifacts(outcomes, snapshot))
-        validate_relationship_batch(
+        validated_evaluations = validate_relationship_batch(
             snapshot,
             evaluations,
             observation_id=snapshot.observation_id,
@@ -79,7 +79,7 @@ async def evaluate_and_persist_relationships(
                 relationship_id=evaluation.relationship_id,
                 payload=evaluation.model_dump(mode="json"),
             )
-            for evaluation in evaluations
+            for evaluation in validated_evaluations
         )
     except Exception:
         return FailedObservationExecutionOutcome(
@@ -94,23 +94,28 @@ async def evaluate_and_persist_relationships(
                 run,
                 persistence_input,
             )
-    return tuple(evaluations)
+    return validated_evaluations
 
 
 def _validate_assignments(snapshot, assignments, outcomes, run_id) -> None:
     """Require the initialized assignment topology to equal frozen Lens topology."""
-    expected = tuple((lens.lens_type, lens.lens_id) for lens in canonical_lens_order(snapshot))
+    expected_lenses = canonical_lens_order(snapshot)
+    expected = tuple((lens.lens_type, lens.lens_id) for lens in expected_lenses)
     if len(assignments) != len(expected):
         raise ValueError("initialized assignment topology is invalid")
     actual: list[tuple[str, str]] = []
     lens_run_ids = set()
-    for assignment in assignments:
+    for assignment, expected_lens in zip(assignments, expected_lenses, strict=True):
         if not isinstance(assignment, LensExecutionAssignment):
             raise ValueError("initialized assignment topology is invalid")
         if assignment.observation_id != snapshot.observation_id:
             raise ValueError("initialized assignment observation identity is invalid")
         if assignment.observation_run_id != run_id:
             raise ValueError("initialized assignment run identity is invalid")
+        if assignment.analysis_window != snapshot.analysis_window:
+            raise ValueError("initialized assignment analysis window is invalid")
+        if assignment.lens != expected_lens:
+            raise ValueError("initialized assignment Lens snapshot is invalid")
         actual.append((assignment.lens.lens_type, assignment.lens.lens_id))
         lens_run_ids.add(assignment.lens_run_id)
     if (
@@ -133,7 +138,13 @@ async def invoke_and_persist_reasoning(
     """Invoke reasoning once outside a transaction and atomically persist valid success."""
     try:
         run_id = _run_id((*partition.usable, *partition.unavailable))
-        value = build_observation_reasoning_input(snapshot, partition, evaluations)
+        validated_evaluations = validate_relationship_batch(
+            snapshot,
+            evaluations,
+            observation_id=snapshot.observation_id,
+            observation_run_id=run_id,
+        )
+        value = build_observation_reasoning_input(snapshot, partition, validated_evaluations)
     except (AttributeError, TypeError, ValueError):
         return ReasoningFailure(code="reasoning_result_invalid", component="result_builder")
     outcome = await executor.execute(value)

@@ -147,6 +147,16 @@ class _CountingEvaluator:
         raise self.error
 
 
+class _ReturningEvaluator:
+    def __init__(self, value) -> None:
+        self.calls = 0
+        self.value = value
+
+    def evaluate(self, relationships, results):
+        self.calls += 1
+        return self.value
+
+
 def test_relationship_stage_rejects_reordered_or_incomplete_topology_before_evaluator() -> None:
     snapshot = _alert_snapshot()
     assignment, outcome = _failed_alert(snapshot)
@@ -166,6 +176,62 @@ def test_relationship_stage_rejects_reordered_or_incomplete_topology_before_eval
     assert isinstance(result, FailedObservationExecutionOutcome)
     assert result.reason.code == "relationship_evaluation_failed"
     assert evaluator.calls == 0
+
+
+@pytest.mark.parametrize("change", ["lens", "window"])
+def test_relationship_stage_rejects_same_lens_identity_with_changed_frozen_configuration(
+    change: str,
+) -> None:
+    snapshot = replace(_alert_snapshot(), metric_lenses=())
+    expected_assignment, outcome = _failed_alert(snapshot)
+    if change == "lens":
+        changed_lens = replace(snapshot.alert_lenses[0], selector_query="project = other")
+        changed_assignment = replace(expected_assignment, lens=changed_lens)
+    else:
+        changed_window = replace(
+            snapshot.analysis_window,
+            to=snapshot.analysis_window.to.replace(day=3),
+        )
+        changed_assignment = replace(expected_assignment, analysis_window=changed_window)
+    changed_outcome = replace(outcome, assignment=changed_assignment)
+    evaluator = _CountingEvaluator(RuntimeError("must not run"))
+
+    result = asyncio.run(
+        evaluate_and_persist_relationships(
+            session_factory=_NoopSessionFactory(),
+            runtime_repository=object(),
+            evaluator=evaluator,
+            snapshot=snapshot,
+            outcomes=(changed_outcome,),
+            assignments=(changed_assignment,),
+        )
+    )
+
+    assert isinstance(result, FailedObservationExecutionOutcome)
+    assert evaluator.calls == 0
+
+
+def test_relationship_stage_rejects_invalid_evaluator_value_before_persistence() -> None:
+    snapshot = replace(_alert_snapshot(), metric_lenses=())
+    assignment, outcome = _failed_alert(snapshot)
+
+    class DuckEvaluation:
+        relationship_id = "first"
+
+    evaluator = _ReturningEvaluator((DuckEvaluation(),))
+    result = asyncio.run(
+        evaluate_and_persist_relationships(
+            session_factory=_NoopSessionFactory(),
+            runtime_repository=object(),
+            evaluator=evaluator,
+            snapshot=snapshot,
+            outcomes=(outcome,),
+            assignments=(assignment,),
+        )
+    )
+
+    assert isinstance(result, FailedObservationExecutionOutcome)
+    assert evaluator.calls == 1
 
 
 def test_relationship_stage_maps_evaluator_runtime_error_but_not_cancellation() -> None:
