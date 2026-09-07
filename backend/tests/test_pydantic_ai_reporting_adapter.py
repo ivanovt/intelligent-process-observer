@@ -1,0 +1,129 @@
+"""Deterministic boundary tests for the PydanticAI report presentation adapter."""
+
+from __future__ import annotations
+
+import asyncio
+from uuid import uuid4
+
+import pytest
+from pydantic_ai.exceptions import UnexpectedModelBehavior
+from pydantic_ai.messages import ModelResponse, ToolCallPart
+from pydantic_ai.models.function import AgentInfo, FunctionModel
+
+from app.infrastructure.agents.pydantic_ai_reporting import PydanticAIReportGenerationAgent
+from app.reasoning.contracts import ObservationAnalysisResult, ObservationIdentity
+from app.reporting.contracts import (
+    ReportGenerationRequest,
+    ReportPolicyViolation,
+    ReportPresentationDraft,
+    ReportSemanticContext,
+)
+
+
+def _run(coroutine):
+    """Run one adapter coroutine in an isolated event loop."""
+    return asyncio.run(coroutine)
+
+
+def _scripted_model(responses):
+    """Inject response scripts and retain all observed request metadata."""
+    calls = []
+
+    def scripted(messages, info: AgentInfo) -> ModelResponse:
+        calls.append((messages, info))
+        return responses[len(calls) - 1](info)
+
+    return FunctionModel(scripted), calls
+
+
+def _output(payload):
+    """Return an output-tool response script for the strict typed draft."""
+    return lambda info: ModelResponse(parts=[ToolCallPart(info.output_tools[0].name, payload)])
+
+
+def _request() -> ReportGenerationRequest:
+    """Build the smallest strict report request accepted by the adapter."""
+    identity = ObservationIdentity(observation_id=uuid4(), observation_run_id=uuid4())
+    return ReportGenerationRequest(
+        context=ReportSemanticContext(identity=identity, name="Observation"),
+        analysis_result=ObservationAnalysisResult(
+            identity=identity,
+            overall_state="no_significant_findings",
+            findings=(),
+            hypotheses=(),
+            limitations=(),
+        ),
+    )
+
+
+def _draft(request: ReportGenerationRequest) -> ReportPresentationDraft:
+    """Build the corresponding strict empty-collection presentation completion."""
+    return ReportPresentationDraft(
+        overall_state=request.analysis_result.overall_state,
+        overall_assessment="No significant findings were identified.",
+    )
+
+
+def test_adapter_uses_one_typed_tool_free_request_with_bounded_settings() -> None:
+    """The adapter has no function tools, retries, or second request path."""
+    request = _request()
+    model, calls = _scripted_model([_output(_draft(request).model_dump(mode="json"))])
+    output = _run(
+        PydanticAIReportGenerationAgent(
+            model, timeout_seconds=12.5, max_output_tokens=321
+        ).complete_presentation(request)
+    )
+    assert output == _draft(request) and len(calls) == 1
+    messages, info = calls[0]
+    assert not info.function_tools
+    prompt = next(
+        part.content
+        for message in messages
+        for part in message.parts
+        if part.part_kind == "user-prompt"
+    )
+    assert prompt == request.model_dump_json()
+    system = " ".join(
+        part.content
+        for message in messages
+        for part in message.parts
+        if part.part_kind == "system-prompt"
+    ).lower()
+    assert "english" in system and "untrusted data" in system and "recommendations" in system
+
+
+def test_adapter_rejects_non_output_tools_and_propagates_timeout_and_cancellation() -> None:
+    """Non-output tool calls are policy failures; transport cancellation is not translated."""
+    request = _request()
+    model, _ = _scripted_model(
+        [lambda _: ModelResponse(parts=[ToolCallPart("retrieve_knowledge", {"query": "x"})])]
+    )
+    with pytest.raises(ReportPolicyViolation):
+        _run(PydanticAIReportGenerationAgent(model).complete_presentation(request))
+
+    undeclared = _draft(request).model_dump(mode="json") | {"root_cause": "invented"}
+    model, _ = _scripted_model([_output(undeclared)])
+    with pytest.raises(UnexpectedModelBehavior):
+        _run(PydanticAIReportGenerationAgent(model).complete_presentation(request))
+
+    def timeout_model(*args, **kwargs):
+        del args, kwargs
+        raise TimeoutError()
+
+    with pytest.raises(TimeoutError):
+        _run(
+            PydanticAIReportGenerationAgent(FunctionModel(timeout_model)).complete_presentation(
+                request
+            )
+        )
+
+    def cancelled_model(*args, **kwargs):
+        del args, kwargs
+        raise asyncio.CancelledError()
+
+    with pytest.raises(asyncio.CancelledError):
+        _run(
+            PydanticAIReportGenerationAgent(FunctionModel(cancelled_model)).complete_presentation(
+                request
+            )
+        )

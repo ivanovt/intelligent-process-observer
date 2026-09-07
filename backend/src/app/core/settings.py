@@ -45,8 +45,10 @@ class Settings(BaseSettings):
     )
     openrouter_api_key: SecretStr | None = None
     observation_reasoning_model: str = Field(default="openai/gpt-5.6-terra", min_length=1)
+    observation_report_model: str = Field(default="openai/gpt-5.6-terra", min_length=1)
     openrouter_request_timeout_seconds: float = Field(default=120, gt=0)
     observation_reasoning_max_output_tokens: int = Field(default=12_288, gt=0)
+    observation_report_max_output_tokens: int = Field(default=8_192, gt=0)
     openrouter_allow_fallbacks: bool = True
     openrouter_provider_order: list[str] = Field(default_factory=list)
 
