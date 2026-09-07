@@ -13,6 +13,7 @@ from uuid import UUID, uuid4
 import pytest
 from alembic import command
 from alembic.config import Config
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
 from app.core.settings import get_settings
@@ -22,11 +23,16 @@ from app.execution import (
     ObservationExecutionOrchestrator,
     ObservationExecutionRequest,
 )
+from app.execution.contracts import (
+    CompletedObservationExecutionOutcome,
+    FailedObservationExecutionOutcome,
+)
 from app.infrastructure.persistence.models import (
     AlertLensModel,
     MetricLensModel,
     ObservationModel,
     ObservationRelationshipModel,
+    ObservationRunModel,
 )
 from app.infrastructure.persistence.repository import (
     ObservationRepository,
@@ -37,7 +43,9 @@ from app.metrics.contracts import (
     MetricEvidence,
     MetricIdentity,
     MetricLensExecutionContext,
+    MetricOptionalProjections,
     MetricProviderScope,
+    MetricSample,
     MetricSemantics,
     MetricTrend,
     MetricVariability,
@@ -46,6 +54,7 @@ from app.metrics.contracts import (
 from app.metrics.result_builder import MetricResultBuilder
 from app.reasoning.contracts import ObservationAnalysisResult, ReasoningSuccess
 from app.relationships.contracts import UnknownRelationshipEvaluation
+from app.relationships.evaluator import RelationshipEvaluator
 from app.reporting.contracts import ObservationReport, ReportFailure, ReportSuccess
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -113,7 +122,7 @@ class MetricFixtureAdapter:
         if mode == "failed":
             from app.metrics.contracts import MetricMandatoryAnalysisFailure
 
-            _, envelope = builder.failed(
+            result, envelope = builder.failed(
                 context, MetricMandatoryAnalysisFailure(diagnostic="fixture")
             )
             status, reason = (
@@ -121,28 +130,44 @@ class MetricFixtureAdapter:
                 StructuredReason(code="analysis_failed", component="metric"),
             )
         elif mode == "insufficient":
-            _, envelope = builder.completed_insufficient(context)
+            result, envelope = builder.completed_insufficient(context)
             status, reason = LensRunStatus.COMPLETED, None
         else:
-            _, envelope = builder.completed_sufficient(
-                context,
-                PreparedGoodSeries(
-                    data_quality="good",
-                    samples=(),
-                    evidence=MetricEvidence(mean=1, std=0, min=1, max=1, slope=0),
-                    residuals=(),
-                ),
-                MetricSemantics(
-                    trend=MetricTrend(direction="stable", rate="not_classified"),
-                    variability=MetricVariability(state="low"),
-                ),
+            prepared = PreparedGoodSeries(
+                data_quality="good",
+                samples=(MetricSample(timestamp=assignment.analysis_window.to, value=1.0),),
+                evidence=MetricEvidence(mean=1, std=0, min=1, max=1, slope=0),
+                residuals=(0,),
             )
-            status, reason = (
-                LensRunStatus.PARTIAL if mode == "partial" else LensRunStatus.COMPLETED,
-                None,
+            semantics = MetricSemantics(
+                trend=MetricTrend(direction="stable", rate="not_classified"),
+                variability=MetricVariability(state="low"),
             )
             if mode == "partial":
-                envelope = envelope.model_copy(update={"status": LensRunStatus.PARTIAL})
+                result, envelope = builder.partial_optional_analysis_failed(
+                    context,
+                    prepared,
+                    semantics,
+                    component="metrics_agent",
+                    optional=MetricOptionalProjections(),
+                )
+            else:
+                result, envelope = builder.completed_sufficient(
+                    context,
+                    prepared,
+                    semantics,
+                )
+            status, reason = (
+                (
+                    LensRunStatus.PARTIAL,
+                    StructuredReason(code="optional_analysis_failed", component="metrics_agent"),
+                )
+                if mode == "partial"
+                else (LensRunStatus.COMPLETED, None)
+            )
+        artifact_envelope = envelope.model_copy(
+            update={"payload": result.model_dump(by_alias=True)}
+        )
         async with self.factory.begin() as session:
             run = await session.get(
                 __import__(
@@ -160,12 +185,21 @@ class MetricFixtureAdapter:
             status=status.value,
             artifact=__import__(
                 "app.execution.contracts", fromlist=["CollectedLensArtifact"]
-            ).CollectedLensArtifact.from_persistence_envelope(envelope),
+            ).CollectedLensArtifact.from_persistence_envelope(artifact_envelope),
             reason=reason
             and __import__("app.execution.contracts", fromlist=["ExecutionReason"]).ExecutionReason(
                 reason.code, reason.component
             ),
         )
+
+
+class SlowMetricFixtureAdapter(MetricFixtureAdapter):
+    """Delay deterministic Metric completion so cancellation observes unfinished children."""
+
+    async def execute(self, assignment, policy):
+        if assignment.lens.lens_id == "metric-b":
+            await asyncio.sleep(0.4)
+        return await super().execute(assignment, policy)
 
 
 class AlertFixtureAdapter:
@@ -296,7 +330,10 @@ async def _seed(factory, *, alerts=False, relationships=False) -> UUID:
                     description=None,
                     participants=["metric-a", "metric-b"],
                     conditions={},
-                    expected={"metric-a": {"trend": {"direction": "stable"}}},
+                    expected={
+                        "metric-a": {"trend": {"direction": "stable"}},
+                        "metric-b": {"trend": {"direction": "stable"}},
+                    },
                     position=0,
                 )
             ]
@@ -309,18 +346,26 @@ def _request(oid):
     return ObservationExecutionRequest(oid, AnalysisWindow(end - timedelta(minutes=5), end))
 
 
-def _orchestrator(factory, modes, *, report_failed=False):
+def _orchestrator(factory, modes, *, report_failed=False, slow=False):
     repo = RuntimePersistenceRepository()
     return ObservationExecutionOrchestrator(
         session_factory=factory,
         definition_loader=ObservationRepository(),
         runtime_repository=repo,
-        metric_adapter=MetricFixtureAdapter(factory, modes),
+        metric_adapter=(SlowMetricFixtureAdapter if slow else MetricFixtureAdapter)(factory, modes),
         alert_adapter=AlertFixtureAdapter(factory),
-        relationship_evaluator=RelationshipFixture(),
+        relationship_evaluator=RelationshipEvaluator(),
         reasoning_executor=ReasoningFixture(),
         report_executor=ReportFixture(report_failed),
     )
+
+
+def _run_id(outcome):
+    """Assert a terminal execution outcome before dereferencing its run identity."""
+    assert isinstance(
+        outcome, (CompletedObservationExecutionOutcome, FailedObservationExecutionOutcome)
+    ), outcome
+    return outcome.observation_run_id
 
 
 def test_postgresql_success_persists_exact_aggregate_and_report(sessions):
@@ -328,10 +373,9 @@ def test_postgresql_success_persists_exact_aggregate_and_report(sessions):
         oid = await _seed(sessions, relationships=True)
         out = await _orchestrator(sessions, {}).execute(_request(oid), ExecutionPolicy(2, 5))
         async with sessions() as s:
-            run = await RuntimePersistenceRepository().get_observation_run(
-                s, out.observation_run_id
-            )
-            assert run.status == "completed" and len(run.lens_runs) == 2
+            run = await RuntimePersistenceRepository().get_observation_run(s, _run_id(out))
+            assert run.status == "completed", run.reason
+            assert len(run.lens_runs) == 2
             assert len(run.relationship_evaluations) == 1
             assert run.observation_analysis_result is not None
             assert run.observation_analysis_result.report is not None
@@ -346,17 +390,17 @@ def test_postgresql_mixed_degradation_preserves_metric_and_alert_distinctions(se
             _request(oid), ExecutionPolicy(2, 5)
         )
         async with sessions() as s:
-            run = await RuntimePersistenceRepository().get_observation_run(
-                s, out.observation_run_id
-            )
+            run = await RuntimePersistenceRepository().get_observation_run(s, _run_id(out))
             assert run.status == "completed"
-            assert [
-                (x.lens_type, x.status, x.analysis_result is not None) for x in run.lens_runs
-            ] == [
-                ("metric", "partial", True),
-                ("metric", "failed", True),
-                ("alert", "failed", False),
-            ]
+            assert sorted(
+                [(x.lens_type, x.status, x.analysis_result is not None) for x in run.lens_runs]
+            ) == sorted(
+                [
+                    ("metric", "partial", True),
+                    ("metric", "failed", True),
+                    ("alert", "failed", False),
+                ]
+            )
             assert (
                 run.observation_analysis_result is not None
                 and len(run.relationship_evaluations) == 1
@@ -372,10 +416,89 @@ def test_postgresql_report_failure_preserves_analysis_but_not_report(sessions):
             _request(oid), ExecutionPolicy(2, 5)
         )
         async with sessions() as s:
-            run = await RuntimePersistenceRepository().get_observation_run(
-                s, out.observation_run_id
-            )
+            run = await RuntimePersistenceRepository().get_observation_run(s, _run_id(out))
             assert run.status == "failed" and run.observation_analysis_result is not None
             assert run.observation_analysis_result.report is None
+
+    asyncio.run(scenario())
+
+
+def test_postgresql_zero_usable_stops_before_analysis(sessions):
+    async def scenario():
+        oid = await _seed(sessions)
+        out = await _orchestrator(
+            sessions, {"metric-a": "insufficient", "metric-b": "insufficient"}
+        ).execute(_request(oid), ExecutionPolicy(2, 5))
+        assert isinstance(out, FailedObservationExecutionOutcome)
+        assert out.reason.code == "no_usable_lens_results"
+        async with sessions() as s:
+            run = await RuntimePersistenceRepository().get_observation_run(s, _run_id(out))
+            assert run.status == "failed" and run.reason["code"] == "no_usable_lens_results"
+            assert run.observation_analysis_result is None
+
+    asyncio.run(scenario())
+
+
+def test_postgresql_all_failed_preserves_failed_artifacts_and_no_report(sessions):
+    async def scenario():
+        oid = await _seed(sessions)
+        out = await _orchestrator(sessions, {"metric-a": "failed", "metric-b": "failed"}).execute(
+            _request(oid), ExecutionPolicy(2, 5)
+        )
+        assert isinstance(out, FailedObservationExecutionOutcome)
+        async with sessions() as s:
+            run = await RuntimePersistenceRepository().get_observation_run(s, _run_id(out))
+            assert run.status == "failed"
+            assert all(item.status == "failed" for item in run.lens_runs)
+            assert run.observation_analysis_result is None
+
+    asyncio.run(scenario())
+
+
+def test_postgresql_cancellation_keeps_completed_child_and_cancels_unfinished(sessions):
+    async def scenario():
+        oid = await _seed(sessions)
+        task = asyncio.create_task(
+            _orchestrator(sessions, {}, slow=True).execute(_request(oid), ExecutionPolicy(2, 5))
+        )
+        await asyncio.sleep(0.15)
+        task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await task
+        async with sessions() as s:
+            run = await s.scalar(
+                select(ObservationRunModel)
+                .where(ObservationRunModel.observation_id == oid)
+                .order_by(ObservationRunModel.created_at.desc())
+            )
+            assert run is not None
+            assert run.status == "cancelled"
+            loaded = await RuntimePersistenceRepository().get_observation_run(s, run.id)
+            assert all(item.status in {"completed", "cancelled"} for item in loaded.lens_runs)
+            assert any(
+                item.status == "completed" and item.analysis_result is not None
+                for item in loaded.lens_runs
+            )
+            assert any(item.status == "cancelled" for item in loaded.lens_runs)
+
+    asyncio.run(scenario())
+
+
+def test_postgresql_fresh_session_retrieval_preserves_exact_correlation(sessions):
+    async def scenario():
+        oid = await _seed(sessions, relationships=True)
+        out = await _orchestrator(sessions, {}).execute(_request(oid), ExecutionPolicy(2, 5))
+        run_id = _run_id(out)
+        async with sessions() as first:
+            run = await RuntimePersistenceRepository().get_observation_run(first, run_id)
+            assert run.id == run_id and run.observation_id == oid
+            assert all(item.observation_run_id == run_id for item in run.lens_runs)
+            assert all(item.observation_run_id == run_id for item in run.relationship_evaluations)
+            assert run.observation_analysis_result.observation_run_id == run_id
+        async with sessions() as second:
+            restored = await RuntimePersistenceRepository().get_observation_run(second, run_id)
+            assert restored.id == run_id
+            assert restored.observation_analysis_result.observation_run_id == run_id
+            assert restored.observation_analysis_result.report.content == "# fixture"
 
     asyncio.run(scenario())
