@@ -7,10 +7,13 @@ from contextlib import AbstractAsyncContextManager
 from typing import Protocol
 
 from app.execution.contracts import (
+    AlertLensSnapshot,
     CompletedObservationExecutionOutcome,
     ExecutionPolicy,
     ExecutionReason,
     FailedObservationExecutionOutcome,
+    LensExecutionAdapter,
+    MetricLensSnapshot,
     ObservationDefinitionLoader,
     ObservationExecutionOutcome,
     ObservationExecutionRequest,
@@ -54,7 +57,8 @@ class ObservationExecutionOrchestrator:
         session_factory: ExecutionSessionFactory,
         definition_loader: ObservationDefinitionLoader,
         runtime_repository: RuntimePersistenceRepository,
-        lens_adapter,
+        metric_adapter: LensExecutionAdapter,
+        alert_adapter: LensExecutionAdapter,
         relationship_evaluator,
         reasoning_executor,
         report_executor,
@@ -62,7 +66,7 @@ class ObservationExecutionOrchestrator:
         self._session_factory = session_factory
         self._definition_loader = definition_loader
         self._runtime_repository = runtime_repository
-        self._lens_adapter = lens_adapter
+        self._lens_adapter = _TypeRoutedLensAdapter(metric_adapter, alert_adapter)
         self._relationship_evaluator = relationship_evaluator
         self._reasoning_executor = reasoning_executor
         self._report_executor = report_executor
@@ -162,7 +166,7 @@ class ObservationExecutionOrchestrator:
         except asyncio.CancelledError as cancellation:
             await self._cancel_after_initialization(initialized, cancellation)
             raise
-        except BaseException as error:
+        except Exception as error:
             if _is_persistence_error(error):
                 raise
             await self._abort_after_failure(initialized, stage)
@@ -224,6 +228,27 @@ class ObservationExecutionOrchestrator:
             if run is None:
                 raise ValueError("cancellation parent is missing")
             await self._runtime_repository.cancel_observation_execution(session, run)
+
+
+class _TypeRoutedLensAdapter:
+    """Dispatch an admitted assignment to the adapter for its frozen Lens type."""
+
+    def __init__(
+        self,
+        metric_adapter: LensExecutionAdapter,
+        alert_adapter: LensExecutionAdapter,
+    ) -> None:
+        self._metric_adapter = metric_adapter
+        self._alert_adapter = alert_adapter
+
+    async def execute(self, assignment, policy: ExecutionPolicy):
+        """Invoke exactly the adapter matching the assignment's frozen snapshot type."""
+
+        if isinstance(assignment.lens, MetricLensSnapshot):
+            return await self._metric_adapter.execute(assignment, policy)
+        if isinstance(assignment.lens, AlertLensSnapshot):
+            return await self._alert_adapter.execute(assignment, policy)
+        raise ValueError("unsupported Lens assignment type")
 
 
 def _is_persistence_error(error: BaseException) -> bool:
