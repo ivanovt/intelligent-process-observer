@@ -47,7 +47,7 @@ Execution is sequential. VS-02 through VS-04 intentionally extend the same featu
 | VS-02 | Create an Alert-only Observation through local draft semantics | VS-01 | high-risk | COMPLETE | 988aedd (+ accepted corrections) | No handoff (user-directed); high-risk review PASS |
 | VS-03 | Create Metric-only Observations from live definition capabilities | VS-02 | high-risk | COMPLETE | 24748c3 (+ accepted corrections) | No handoff (user-directed); high-risk review PASS |
 | VS-04 | Add constrained Relationships and complete mixed aggregates | VS-03 | high-risk | COMPLETE | 4498eb6 (+ accepted corrections) | No handoff (user-directed); high-risk review PASS |
-| FINAL | Verify the complete approved UI and repository compatibility | VS-04 | normal | IN_PROGRESS | - | - |
+| FINAL | Verify the complete approved UI and repository compatibility | VS-04 | normal | BLOCKED | - | Sol critical review: CHANGES REQUIRED (IR-001..IR-003) |
 
 ## Slice definitions
 
@@ -315,8 +315,8 @@ Mutable Coordinator-owned execution metadata only. Do not place new requirements
 
 | Item | Current value |
 |---|---|
-| Coordinator status | EXECUTING |
-| Active assignment | FINAL whole-change critical review |
+| Coordinator status | BLOCKED — AWAITING HUMAN TRIAGE |
+| Active assignment | none |
 | Last accepted slice | VS-04 |
 | Bounded correction | none |
-| Stop/escalation reason | none |
+| Stop/escalation reason | Whole-change review reported MEDIUM bounded-correction candidates IR-001 (pending-create Cancel permits late navigation/state effects), IR-002 (read-only detail omits supported child configuration), and IR-003 (required Review section is not substantively represented). Awaiting human acceptance and the pending-cancel behavior choice before correction dispatch. |
