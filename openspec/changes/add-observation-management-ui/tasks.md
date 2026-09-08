@@ -1,6 +1,6 @@
 ## 1. Frontend Foundation
 
-- [ ] 1.1 Start implementation on a clean `feature/add-observation-management-ui` branch based on `main` and verify that the unrelated `MVP_IMPLEMENTATION_ROADMAP.md` worktree change is not included.
+- [x] 1.1 Start implementation on a clean `feature/add-observation-management-ui` branch based on `main` and verify that the unrelated `MVP_IMPLEMENTATION_ROADMAP.md` worktree change is not included.
 - [ ] 1.2 Raise the frontend engine and documented development minimum to Node `>=24.15.0`, add the explicitly approved Tailwind 4, Base UI, Lucide, shadcn-support, React Router, Vitest, Testing Library, and jsdom dependencies at the proposal ranges, and update the npm lockfile without adding table, chart, form, cache, or global-state libraries.
 - [ ] 1.3 Configure Tailwind through Vite, the same-origin `/api` development proxy, Vitest/jsdom setup, frontend test scripts, and root `make test`/`make check` coverage while preserving the existing lint and production-build gates.
 - [ ] 1.4 Implement semantic CSS variables, Tailwind theme integration, responsive base styles, and the minimal project-owned Button/Input/Textarea/Select/Field/notice primitives needed by the management screens.
