@@ -6,5 +6,9 @@ export interface MetricLens extends LensReference { description:string|null; met
 export interface AlertLens extends AlertLensReference { description:string|null; source:'jira_track_and_release'; selector:{query:string}; analysis_objectives:string[]; reference_periods:string[]; observation_href:string }
 export interface Relationship extends RelationshipReference { description:string|null; participants:string[]; conditions:Record<string,unknown>; expected:Record<string,unknown>; observation_href:string }
 export interface ObservationResponse extends Omit<ObservationSummary,'lenses'|'alert_lenses'|'relationships'> { lenses:MetricLens[]; alert_lenses:AlertLens[]; relationships:Relationship[] }
+/** Public aggregate-create shape, deliberately separate from client draft state. */
+export interface AlertLensCreate { id:string; name:string; description:string|null; type:'alert'; source:'jira_track_and_release'; selector:{query:string}; analysis_objectives:string[]; reference_periods:string[] }
+/** Public Observation creation request. */
+export interface ObservationCreate { name:string; description:string|null; objective:string; lenses:never[]; alert_lenses:AlertLensCreate[]; relationships:never[] }
 export interface ApiErrorEnvelope { code:string; message:string; field?:string }
 export class ApiError extends Error { readonly status:number; readonly code:string; readonly field?:string; constructor(status:number,code:string,message:string,field?:string) { super(message); this.status=status; this.code=code; this.field=field } }

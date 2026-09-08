@@ -1,0 +1,8 @@
+import { describe, expect, it } from 'vitest'
+import { newAlert, serializeDraft, validateAlert, validateDraft, type ObservationDraft } from './draft'
+
+const alert={...newAlert('client-a'),id:'release_alerts',name:'Release alerts',selector:{query:' project = REL  AND status != Done '},analysis_objectives:['Assess recurrence','Compare recurrence'],reference_periods:['1d','7d']}
+describe('Observation Alert draft contracts',()=>{
+  it('serializes Alert-only data in order without the UI-only key or rewriting an opaque query',()=>{const draft:ObservationDraft={name:'Release health',description:'',objective:'Observe releases',lenses:[],alert_lenses:[alert],relationships:[]};expect(serializeDraft(draft)).toEqual({name:'Release health',description:null,objective:'Observe releases',lenses:[],alert_lenses:[{id:'release_alerts',name:'Release alerts',description:null,type:'alert',source:'jira_track_and_release',selector:{query:' project = REL  AND status != Done '},analysis_objectives:['Assess recurrence','Compare recurrence'],reference_periods:['1d','7d']}],relationships:[]})})
+  it('enforces Alert and aggregate invariants without mutating draft values',()=>{expect(validateAlert({...alert,id:'BAD',analysis_objectives:['same','same'],reference_periods:['0m','1d','1d']})).toMatchObject({id:'Use a lowercase identifier.',objectives:'Objectives must be non-blank and unique.',references:'Reference periods must be unique positive offsets.'});expect(validateDraft({name:'',description:'',objective:'',lenses:[],alert_lenses:[],relationships:[]})).toMatchObject({name:'Name is required.',objective:'Objective is required.',aggregate:'Configure at least one Lens.'})})
+})
