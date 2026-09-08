@@ -1,5 +1,13 @@
 import { describe, expect, it } from 'vitest'
-import { newAlert, newMetric, serializeDraft, validateAlert, validateDraft, validateMetric, type ObservationDraft } from './draft'
+import { generateObservationChildId, newAlert, newMetric, serializeDraft, validateAlert, validateDraft, validateMetric, type ObservationDraft } from './draft'
+
+describe('Observation child ID generation',()=>{
+  const generatedAt=1_700_000_000_000,suffix=generatedAt.toString(36)
+  it('normalizes readable names and decomposable Latin diacritics deterministically',()=>{expect(generateObservationChildId('  Cooling Pressure  ','metric',[],generatedAt)).toBe(`cooling_pressure_${suffix}`);expect(generateObservationChildId('Crème Pressure','relationship',[],generatedAt)).toBe(`creme_pressure_${suffix}`)})
+  it('uses type fallbacks when normalization has no leading ASCII letter',()=>{expect(generateObservationChildId('Тиск','alert',[],generatedAt)).toBe(`alert_${suffix}`);expect(generateObservationChildId('123 pressure','relationship',[],generatedAt)).toBe(`relationship_${suffix}`)})
+  it('preserves suffixes and the 255-character boundary through collisions',()=>{const name='a'.repeat(300),first=generateObservationChildId(name,'metric',[],generatedAt),second=generateObservationChildId(name,'metric',[first],generatedAt),third=generateObservationChildId(name,'metric',[first,second],generatedAt);expect(first).toHaveLength(255);expect(first.endsWith(`_${suffix}`)).toBe(true);expect(second).toHaveLength(255);expect(second.endsWith(`_${suffix}_2`)).toBe(true);expect(third).toHaveLength(255);expect(third.endsWith(`_${suffix}_3`)).toBe(true);expect(new Set([first,second,third])).toHaveLength(3)})
+  it('treats only supplied sibling IDs as collisions',()=>{const candidate=generateObservationChildId('Shared','alert',[],generatedAt);expect(generateObservationChildId('Shared','metric',[],generatedAt)).toBe(candidate);expect(generateObservationChildId('Shared','metric',[candidate],generatedAt)).toBe(`${candidate}_2`)})
+})
 
 const alert={...newAlert('client-a'),id:'release_alerts',name:'Release alerts',selector:{query:' project = REL  AND status != Done '},analysis_objectives:['Assess recurrence','Compare recurrence'],reference_periods:['1d','7d']}
 describe('Observation Alert draft contracts',()=>{

@@ -5,7 +5,7 @@
 
 ## Context
 
-UI Direction v1.2 is the accepted current direction. The frontend needs a visual implementation stack that preserves the project-owned visual/domain language, supports desktop-first engineering dashboards and forms, and remains mainstream and maintainable.
+UI Direction v1.3 is the accepted current direction. The frontend needs a visual implementation stack that preserves the project-owned visual/domain language, supports desktop-first engineering dashboards and forms, and remains mainstream and maintainable.
 
 ## Decision
 
