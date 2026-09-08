@@ -1,17 +1,17 @@
 # UI Documentation
 
-This directory contains the frozen UI direction, frontend technology decision, and implementation guidance for the MVP frontend.
+This directory contains the accepted current UI direction, frontend technology decision, and implementation guidance for the MVP frontend.
 
 ## Files
 
 - `frontend_ui_stack_adr.md` — accepted frontend visual technology stack and related trade-offs.
-- `ui_implementation_handoff_v1.md` — frozen implementation-oriented UI specification covering monitoring/investigation and Observation Management UX.
+- `ui_implementation_handoff_v1.md` — living major-v1 implementation handoff (currently v1.3) covering monitoring/investigation, Observation Management, and Data Sources UX.
 
 ## Status
 
-**UI Direction v1.2 is frozen.**
+**UI Direction v1.3 is the accepted current direction.**
 
-v1.1 extended the original monitoring/investigation direction with Observation Management:
+v1.2 retained the monitoring/investigation and Observation Management direction, and added:
 
 ```text
 09 Observations Management
@@ -19,9 +19,10 @@ v1.1 extended the original monitoring/investigation direction with Observation M
 11 Relationship Configuration
 12 Metric Lens Configuration
 13 Alert Lens Configuration
+14 Data Sources
 ```
 
-v1.2 retains that screen set and replaces manual Metric Lens, Alert Lens, and
+v1.3 retains that screen set and replaces manual Metric Lens, Alert Lens, and
 Relationship ID entry with generated, read-only IDs derived once from the initial
 name and then kept stable.
 
@@ -29,16 +30,23 @@ The implementation must preserve accepted information architecture, terminology,
 
 Minor implementation adjustments are allowed for responsive fit, accessibility, browser behavior, real data length, and actual API constraints. Meaningful visual, UX, or semantic changes require an explicit UI version change.
 
-## Source of truth
+## Authority and visual reference
 
-Frozen MagicPath visual reference:
+ADR-167 defines the authority order for UI work:
+
+1. accepted domain/runtime architecture and public contracts govern product semantics and API boundaries;
+2. accepted `docs/ui/` direction/handoff plus approved OpenSpec changes govern UI behavior, information architecture, and intentional visual evolution;
+3. MagicPath is an informative visual reference and optional synchronization target, not a parity requirement or implementation/acceptance gate;
+4. meaningful UI changes remain versioned and human-approved.
+
+Informative MagicPath visual reference:
 
 ```text
 Observation UI - Master Thesis
 https://magicpath.ai/files/447597481925181440
 ```
 
-Accepted domain/runtime contracts under `docs/architecture/` remain authoritative for backend/domain semantics.
+MagicPath can guide look and feel, but an approved change does not require 1:1 canvas parity or synchronization. Historical v1.1 and v1.2 wording remains historical; ADR-167 and this current v1.3 documentation govern new work.
 
 ## Usage
 

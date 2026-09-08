@@ -1,14 +1,14 @@
-# UI Implementation Handoff — v1.2
+# UI Implementation Handoff — v1.3
 
 **Project:** ObserveAI / Master Thesis
-**Status:** Frozen implementation handoff for MVP UI Direction v1.2
+**Status:** Accepted living major-v1 implementation handoff for MVP UI Direction v1.3
 **Date:** 2026-09-08
 
 ## 1. Purpose
 
-This document translates the frozen UI direction into implementation-oriented rules for the MVP frontend.
+This document translates the accepted current UI direction into implementation-oriented rules for the MVP frontend.
 
-UI Direction v1.2 includes the original monitoring/investigation experience and the Observation Management configuration UX. It retains the v1.1 screen set and evolves only Observation child identifier entry. The frontend must preserve the architecture's semantic boundaries and must not invent new product-level classifications, lifecycle semantics, or administrative capabilities that are not supported by accepted backend contracts.
+UI Direction v1.3 includes the original monitoring/investigation experience, Observation Management configuration UX, and read-only Data Sources visibility. It retains the v1.2 screen set and evolves only Observation child identifier entry. The frontend must preserve the architecture's semantic boundaries and must not invent new product-level classifications, lifecycle semantics, or administrative capabilities that are not supported by accepted backend contracts.
 
 ## 2. Accepted frontend visual stack
 
@@ -30,18 +30,25 @@ CSS custom properties + Tailwind theme integration
 
 Third-party libraries provide primitives. Product/domain semantics remain project-owned.
 
-## 3. Visual source of truth
+## 3. UI authority and visual reference
 
-Frozen MagicPath project:
+ADR-167 defines the UI authority order:
+
+1. accepted domain/runtime architecture and public contracts govern product semantics and API boundaries;
+2. this accepted `docs/ui/` direction/handoff plus approved OpenSpec changes govern UI behavior, information architecture, and intentional visual evolution;
+3. MagicPath is an informative visual reference and optional synchronization target, not a parity requirement or an implementation/acceptance gate;
+4. meaningful UI changes remain versioned and human-approved rather than arising from incidental implementation drift.
+
+Informative MagicPath project:
 
 ```text
 Observation UI - Master Thesis
 https://magicpath.ai/files/447597481925181440
 ```
 
-The mock is a visual/UX reference, not permission to invent API fields or backend lifecycle operations. Accepted architecture/contracts remain authoritative for domain semantics.
+MagicPath can inform look and feel but does not require 1:1 parity or canvas synchronization for an approved implementation. It is not permission to invent API fields or backend lifecycle operations. Accepted architecture/contracts remain authoritative for domain semantics.
 
-## 4. Screen set — v1.2
+## 4. Screen set — v1.3
 
 ### Monitoring and investigation
 
@@ -65,6 +72,7 @@ The mock is a visual/UX reference, not permission to invent API fields or backen
 11 Relationship Configuration
 12 Metric Lens Configuration
 13 Alert Lens Configuration
+14 Data Sources
 ```
 
 `00 Design System` is documentation/reference, not an application route.
@@ -347,6 +355,41 @@ Edit/Delete controls remain hidden until the corresponding API lifecycle is expl
 
 Do not invent Observation update/delete endpoints from the UI.
 
+### Data Sources
+
+Purpose: provide safe, read-only visibility of the environment-managed Prometheus
+sources available to Metric Lens configuration. This is not an application-managed
+source lifecycle or credential-management screen.
+
+Required areas:
+
+```text
+Page header identifying environment-managed Metric sources
+Manual Refresh action
+Loading, retryable failure, empty, and configured states
+Configured source list/card view
+Safe empty-state environment setup guidance
+```
+
+Each configured source is shown exactly once in the capabilities response order using
+only its provider type (`Prometheus`), stable ID, human-readable name, and wording that
+it is available for Metric Lens configuration. The screen must not show or infer a base
+URL, credentials, credential type, Basic username, Authorization data, connection
+health, or diagnostics.
+
+The configured registry comes from backend `PROMETHEUS_SOURCES`, an optional JSON array
+in the root backend environment or deployment environment. Multiple entries are
+supported; each needs a unique stable ID, display name, base URL, and exactly one
+accepted credential shape. A manual Refresh re-reads the already running backend; it
+does not reload Settings, test a connection, or mutate a source. The operational sequence
+is: change environment, restart the backend, then refresh the page.
+
+When no source is configured, show placeholder-only Bearer-token and Basic-auth JSON
+examples, explain that all valid entries become Metric Lens choices, and warn that real
+credentials belong only in local/deployment environment configuration. The UI must never
+write `.env`, collect credentials in a browser form, put them in `VITE_*`, or imply they
+may be committed.
+
 ### Create Observation
 
 Build one Observation Definition as a single validated aggregate.
@@ -421,7 +464,7 @@ no priority
 no tool-selection semantics
 ```
 
-Target UI Direction v1.1 treats Metric objectives as free-text intent. The current
+Target UI Direction v1.2 treats Metric objectives as free-text intent. The current
 public Metric Lens API accepts only `spike`, `drift`, and `oscillation`. Until that
 contract is explicitly changed, the Metric editor must constrain submitted values to
 the accepted vocabulary or report free-text support as a backend dependency. Do not
@@ -591,9 +634,9 @@ src/
 
 If `add-observation-management-ui` is the first frontend OpenSpec change, it may establish the minimum reusable frontend foundations needed by that feature. Do not expand it into implementation of the entire monitoring UI.
 
-## 15. Freeze rule
+## 15. Versioning and change-control rule
 
-**UI Direction v1.2 is frozen.**
+**UI Direction v1.3 is the accepted current direction.**
 
 Implementation may make minor technical adjustments for responsive fit, accessibility, browser behavior, real data length and actual API constraints, but must not silently change:
 
@@ -609,4 +652,4 @@ Metric-only Relationship boundary
 selector "which" vs runtime "when" semantics
 ```
 
-Meaningful visual, UX or semantic changes require an explicit versioned decision rather than incidental implementation deviation.
+Meaningful visual, UX or semantic changes require an explicit versioned and human-approved decision rather than incidental implementation deviation. Under ADR-167, MagicPath may inform the change and may be synchronized later, but it is not a parity requirement or implementation/acceptance gate.
