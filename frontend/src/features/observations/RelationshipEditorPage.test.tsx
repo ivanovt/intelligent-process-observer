@@ -1,40 +1,1050 @@
-import { cleanup, render, screen, waitFor } from '@testing-library/react'
-import userEvent from '@testing-library/user-event'
-import { BrowserRouter, MemoryRouter } from 'react-router-dom'
-import { afterEach, describe, expect, it, vi } from 'vitest'
-import App from '../../App'
-import { newAlert, newMetric, newRelationship, serializeDraft, validateRelationship, type DraftRelationship, type ObservationDraft } from './draft'
-import { descriptorMapFromRows } from './RelationshipEditorPage'
-import type { ObservationResponse } from './types'
+import { cleanup, render, screen, waitFor } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
+import { BrowserRouter, MemoryRouter } from "react-router-dom";
+import { afterEach, describe, expect, it, vi } from "vitest";
+import App from "../../App";
+import {
+  newAlert,
+  newMetric,
+  newRelationship,
+  serializeDraft,
+  validateRelationship,
+  type DraftRelationship,
+  type ObservationDraft,
+} from "./draft";
+import { descriptorMapFromRows } from "./RelationshipEditorPage";
+import type { ObservationResponse } from "./types";
 
-const response=(body:unknown,status=200)=>new Response(JSON.stringify(body),{status})
-const capabilities={metric:[{adapter_type:'prometheus',sources:[{id:'primary',name:'Primary Prometheus'}]}]}
-const observationId='f47ac10b-58cc-4c6f-91ae-1f8b50b65165'
-const created:ObservationResponse={id:observationId,name:'Mixed topology',description:null,objective:'Observe related behavior',schema_version:1,lenses:[{id:'cpu',name:'CPU',type:'metric',href:`/api/v1/observations/${observationId}/lenses/cpu`,description:null,metric_id:'cpu_usage',adapter_type:'prometheus',source_id:'primary',query:'cpu_query',unit:'%',analysis_objectives:['spike'],reference_periods:[],observation_href:`/api/v1/observations/${observationId}`},{id:'throughput',name:'Throughput',type:'metric',href:`/api/v1/observations/${observationId}/lenses/throughput`,description:null,metric_id:'throughput',adapter_type:'prometheus',source_id:'primary',query:'throughput_query',unit:'rps',analysis_objectives:['drift'],reference_periods:[],observation_href:`/api/v1/observations/${observationId}`}],alert_lenses:[{id:'cpu',name:'CPU alert',type:'alert',href:`/api/v1/observations/${observationId}/alert-lenses/cpu`,description:null,source:'jira_track_and_release',selector:{query:'project=CPU'},analysis_objectives:[],reference_periods:[],observation_href:`/api/v1/observations/${observationId}`}],relationships:[{id:'cpu_throughput',name:'CPU and throughput',href:`/api/v1/observations/${observationId}/relationships/cpu_throughput`,description:null,participants:['cpu','throughput'],conditions:{cpu:{trend:{direction:'increasing'}}},expected:{throughput:{trend:{direction:'decreasing'}}},observation_href:`/api/v1/observations/${observationId}`}],href:`/api/v1/observations/${observationId}`}
-const renderAt=(path='/observations/new')=>render(<MemoryRouter initialEntries={[path]}><App/></MemoryRouter>)
-const renderBrowserAt=(path='/observations/new')=>{window.history.pushState({},'',path);return render(<BrowserRouter><App/></BrowserRouter>)}
-async function metric(user:ReturnType<typeof userEvent.setup>,id:string,name:string,unit='%'){await user.click(screen.getByText('Add Metric Lens'));await screen.findByRole('option',{name:'Primary Prometheus'});await user.type(screen.getByLabelText('Lens ID'),id);await user.type(screen.getByLabelText('Name'),name);await user.type(screen.getByLabelText('Metric ID'),`${id}_metric`);await user.type(screen.getByLabelText('Unit'),unit);await user.selectOptions(screen.getByLabelText('Metric source'),'primary');await user.type(screen.getByLabelText('Provider query'),`${id}_query`);await user.click(screen.getByLabelText('spike'));await user.click(screen.getByText('Apply changes'))}
-async function alert(user:ReturnType<typeof userEvent.setup>){await user.click(screen.getByText('Add Alert Lens'));await user.type(screen.getByLabelText('Lens ID'),'cpu');await user.type(screen.getByLabelText('Name'),'CPU alert');await user.type(screen.getByLabelText('Provider selector'),'project=CPU');await user.click(screen.getByText('Apply changes'))}
-async function relationship(user:ReturnType<typeof userEvent.setup>,conditional=true,id='cpu_throughput',name='CPU and throughput'){await user.click(screen.getByText('Add Relationship'));await user.type(screen.getByLabelText('Relationship ID'),id);await user.type(screen.getByLabelText('Name'),name);await user.click(screen.getByLabelText(/CPU \(cpu\)/));await user.click(screen.getByLabelText(/Throughput \(throughput\)/));if(conditional){await user.click(screen.getByText('+ Add condition'));const participants=screen.getAllByLabelText('When — conditions participant');await user.selectOptions(participants[0],'cpu');await user.selectOptions(screen.getAllByLabelText('When — conditions property')[0],'trend.direction');await user.selectOptions(screen.getAllByLabelText('When — conditions value')[0],'increasing')}await user.click(screen.getByText('+ Add expectation'));let participants=screen.getAllByLabelText('Expect — evaluated when applicable participant');await user.selectOptions(participants[0],'throughput');await user.selectOptions(screen.getAllByLabelText('Expect — evaluated when applicable property')[0],'trend.direction');await user.selectOptions(screen.getAllByLabelText('Expect — evaluated when applicable value')[0],'decreasing');if(!conditional){await user.click(screen.getByText('+ Add expectation'));participants=screen.getAllByLabelText('Expect — evaluated when applicable participant');await user.selectOptions(participants[1],'cpu')}await user.click(screen.getByText('Apply changes'))}
-afterEach(()=>{cleanup();vi.restoreAllMocks();vi.unstubAllGlobals()})
+const response = (body: unknown, status = 200) =>
+  new Response(JSON.stringify(body), { status });
+const capabilities = {
+  metric: [
+    {
+      adapter_type: "prometheus",
+      sources: [{ id: "primary", name: "Primary Prometheus" }],
+    },
+  ],
+};
+const observationId = "f47ac10b-58cc-4c6f-91ae-1f8b50b65165";
+const created: ObservationResponse = {
+  id: observationId,
+  name: "Mixed topology",
+  description: null,
+  objective: "Observe related behavior",
+  schema_version: 1,
+  lenses: [
+    {
+      id: "cpu",
+      name: "CPU",
+      type: "metric",
+      href: `/api/v1/observations/${observationId}/lenses/cpu`,
+      description: null,
+      metric_id: "cpu_usage",
+      adapter_type: "prometheus",
+      source_id: "primary",
+      query: "cpu_query",
+      unit: "%",
+      analysis_objectives: ["spike"],
+      reference_periods: [],
+      observation_href: `/api/v1/observations/${observationId}`,
+    },
+    {
+      id: "throughput",
+      name: "Throughput",
+      type: "metric",
+      href: `/api/v1/observations/${observationId}/lenses/throughput`,
+      description: null,
+      metric_id: "throughput",
+      adapter_type: "prometheus",
+      source_id: "primary",
+      query: "throughput_query",
+      unit: "rps",
+      analysis_objectives: ["drift"],
+      reference_periods: [],
+      observation_href: `/api/v1/observations/${observationId}`,
+    },
+  ],
+  alert_lenses: [
+    {
+      id: "cpu",
+      name: "CPU alert",
+      type: "alert",
+      href: `/api/v1/observations/${observationId}/alert-lenses/cpu`,
+      description: null,
+      source: "jira_track_and_release",
+      selector: { query: "project=CPU" },
+      analysis_objectives: [],
+      reference_periods: [],
+      observation_href: `/api/v1/observations/${observationId}`,
+    },
+  ],
+  relationships: [
+    {
+      id: "cpu_throughput",
+      name: "CPU and throughput",
+      href: `/api/v1/observations/${observationId}/relationships/cpu_throughput`,
+      description: null,
+      participants: ["cpu", "throughput"],
+      conditions: { cpu: { trend: { direction: "increasing" } } },
+      expected: { throughput: { trend: { direction: "decreasing" } } },
+      observation_href: `/api/v1/observations/${observationId}`,
+    },
+  ],
+  href: `/api/v1/observations/${observationId}`,
+};
+const renderAt = (path = "/observations/new") =>
+  render(
+    <MemoryRouter initialEntries={[path]}>
+      <App />
+    </MemoryRouter>,
+  );
+const renderBrowserAt = (path = "/observations/new") => {
+  window.history.pushState({}, "", path);
+  return render(
+    <BrowserRouter>
+      <App />
+    </BrowserRouter>,
+  );
+};
+async function metric(
+  user: ReturnType<typeof userEvent.setup>,
+  id: string,
+  name: string,
+  unit = "%",
+) {
+  await user.click(screen.getByText("Add Metric Lens"));
+  await screen.findByRole("option", { name: "Primary Prometheus" });
+  await user.type(screen.getByLabelText("Lens ID"), id);
+  await user.type(screen.getByLabelText("Name"), name);
+  await user.type(screen.getByLabelText("Metric ID"), `${id}_metric`);
+  await user.type(screen.getByLabelText("Unit"), unit);
+  await user.selectOptions(screen.getByLabelText("Metric source"), "primary");
+  await user.type(screen.getByLabelText("Provider query"), `${id}_query`);
+  await user.click(screen.getByLabelText("spike"));
+  await user.click(screen.getByText("Apply changes"));
+}
+async function alert(user: ReturnType<typeof userEvent.setup>) {
+  await user.click(screen.getByText("Add Alert Lens"));
+  await user.type(screen.getByLabelText("Lens ID"), "cpu");
+  await user.type(screen.getByLabelText("Name"), "CPU alert");
+  await user.type(screen.getByLabelText("Provider selector"), "project=CPU");
+  await user.click(screen.getByText("Apply changes"));
+}
+async function relationship(
+  user: ReturnType<typeof userEvent.setup>,
+  conditional = true,
+  id = "cpu_throughput",
+  name = "CPU and throughput",
+) {
+  await user.click(screen.getByText("Add Relationship"));
+  await user.type(screen.getByLabelText("Relationship ID"), id);
+  await user.type(screen.getByLabelText("Name"), name);
+  await user.click(screen.getByLabelText(/CPU \(cpu\)/));
+  await user.click(screen.getByLabelText(/Throughput \(throughput\)/));
+  if (conditional) {
+    await user.click(screen.getByRole("button", { name: "Add condition" }));
+    const participants = screen.getAllByLabelText(
+      "When — conditions participant",
+    );
+    await user.selectOptions(participants[0], "cpu");
+    await user.selectOptions(
+      screen.getAllByLabelText("When — conditions property")[0],
+      "trend.direction",
+    );
+    await user.selectOptions(
+      screen.getAllByLabelText("When — conditions value")[0],
+      "increasing",
+    );
+  }
+  await user.click(screen.getByRole("button", { name: "Add expectation" }));
+  let participants = screen.getAllByLabelText(
+    "Expect — evaluated when applicable participant",
+  );
+  await user.selectOptions(participants[0], "throughput");
+  await user.selectOptions(
+    screen.getAllByLabelText("Expect — evaluated when applicable property")[0],
+    "trend.direction",
+  );
+  await user.selectOptions(
+    screen.getAllByLabelText("Expect — evaluated when applicable value")[0],
+    "decreasing",
+  );
+  if (!conditional) {
+    await user.click(screen.getByRole("button", { name: "Add expectation" }));
+    participants = screen.getAllByLabelText(
+      "Expect — evaluated when applicable participant",
+    );
+    await user.selectOptions(participants[1], "cpu");
+  }
+  await user.click(screen.getByText("Apply changes"));
+}
+afterEach(() => {
+  cleanup();
+  vi.restoreAllMocks();
+  vi.unstubAllGlobals();
+});
 
-describe('Relationship draft contracts',()=>{
-  it('maps only the accepted nested vocabulary conjunctively and rejects duplicate, unknown, Alert-only, and unused participants',()=>{const cpu={...newMetric('metric-cpu'),id:'cpu',name:'CPU',metric_id:'cpu',source_id:'primary',query:'cpu',unit:'%',analysis_objectives:[],reference_periods:[]},throughput={...newMetric('metric-throughput'),id:'throughput',name:'Throughput',metric_id:'throughput',source_id:'primary',query:'throughput',unit:'rps',analysis_objectives:[],reference_periods:[]},relation={...newRelationship('relationship'),id:'cpu_throughput',name:'CPU and throughput',participants:['cpu','throughput'],conditions:{cpu:{trend:{direction:'increasing'},variability:{state:'low'}}},expected:{throughput:{trend:{direction:'decreasing',rate:'fast'}}}} as DraftRelationship;expect(validateRelationship(relation,[cpu,throughput])).toEqual({});expect(descriptorMapFromRows([{key:'a',lensId:'cpu',property:'trend.direction',value:'increasing'},{key:'b',lensId:'cpu',property:'variability.state',value:'low'}])).toEqual({cpu:{trend:{direction:'increasing'},variability:{state:'low'}}});expect(validateRelationship({...relation,participants:['cpu','cpu']},[cpu,throughput]).participants).toMatch(/distinct/);expect(validateRelationship({...relation,participants:['cpu','alert_only'],expected:{alert_only:{trend:{direction:'decreasing'}}}},[cpu,throughput]).participants).toMatch(/Metric/);expect(validateRelationship({...relation,participants:['cpu','throughput'],expected:{cpu:{trend:{direction:'decreasing'}}}},[cpu,throughput]).topology).toMatch(/Every participant/);expect(validateRelationship({...relation,expected:{throughput:{trend:{direction:'unknown' as never}}}},[cpu,throughput]).descriptors).toMatch(/supported/)} )
-  it('serializes ordered Relationship children without client keys and permits a same-ID Alert only when a Metric Lens exists',()=>{const cpu={...newMetric('metric-cpu'),id:'cpu',name:'CPU',metric_id:'cpu',source_id:'primary',query:'cpu',unit:'%',analysis_objectives:[],reference_periods:[]},relation={...newRelationship('relationship'),id:'cpu_throughput',name:'CPU behavior',participants:['cpu','throughput'],conditions:{},expected:{cpu:{trend:{direction:'increasing'}},throughput:{variability:{state:'low'}}}} as DraftRelationship,throughput={...newMetric('metric-throughput'),id:'throughput',name:'Throughput',metric_id:'throughput',source_id:'primary',query:'throughput',unit:'rps',analysis_objectives:[],reference_periods:[]},draft:ObservationDraft={name:'Mixed',description:'',objective:'Observe',lenses:[cpu,throughput],alert_lenses:[{...newAlert('alert'),id:'cpu',name:'CPU alert',selector:{query:'project=CPU'}}],relationships:[relation]};expect(validateRelationship(relation,draft.lenses,draft.relationships)).toEqual({});expect(serializeDraft(draft).relationships).toEqual([{id:'cpu_throughput',name:'CPU behavior',description:null,participants:['cpu','throughput'],conditions:{},expected:{cpu:{trend:{direction:'increasing'}},throughput:{variability:{state:'low'}}}}])})
-})
+describe("Relationship draft contracts", () => {
+  it("maps only the accepted nested vocabulary conjunctively and rejects duplicate, unknown, Alert-only, and unused participants", () => {
+    const cpu = {
+        ...newMetric("metric-cpu"),
+        id: "cpu",
+        name: "CPU",
+        metric_id: "cpu",
+        source_id: "primary",
+        query: "cpu",
+        unit: "%",
+        analysis_objectives: [],
+        reference_periods: [],
+      },
+      throughput = {
+        ...newMetric("metric-throughput"),
+        id: "throughput",
+        name: "Throughput",
+        metric_id: "throughput",
+        source_id: "primary",
+        query: "throughput",
+        unit: "rps",
+        analysis_objectives: [],
+        reference_periods: [],
+      },
+      relation = {
+        ...newRelationship("relationship"),
+        id: "cpu_throughput",
+        name: "CPU and throughput",
+        participants: ["cpu", "throughput"],
+        conditions: {
+          cpu: {
+            trend: { direction: "increasing" },
+            variability: { state: "low" },
+          },
+        },
+        expected: {
+          throughput: { trend: { direction: "decreasing", rate: "fast" } },
+        },
+      } as DraftRelationship;
+    expect(validateRelationship(relation, [cpu, throughput])).toEqual({});
+    expect(
+      descriptorMapFromRows([
+        {
+          key: "a",
+          lensId: "cpu",
+          property: "trend.direction",
+          value: "increasing",
+        },
+        {
+          key: "b",
+          lensId: "cpu",
+          property: "variability.state",
+          value: "low",
+        },
+      ]),
+    ).toEqual({
+      cpu: {
+        trend: { direction: "increasing" },
+        variability: { state: "low" },
+      },
+    });
+    expect(
+      validateRelationship({ ...relation, participants: ["cpu", "cpu"] }, [
+        cpu,
+        throughput,
+      ]).participants,
+    ).toMatch(/distinct/);
+    expect(
+      validateRelationship(
+        {
+          ...relation,
+          participants: ["cpu", "alert_only"],
+          expected: { alert_only: { trend: { direction: "decreasing" } } },
+        },
+        [cpu, throughput],
+      ).participants,
+    ).toMatch(/Metric/);
+    expect(
+      validateRelationship(
+        {
+          ...relation,
+          participants: ["cpu", "throughput"],
+          expected: { cpu: { trend: { direction: "decreasing" } } },
+        },
+        [cpu, throughput],
+      ).topology,
+    ).toMatch(/Every participant/);
+    expect(
+      validateRelationship(
+        {
+          ...relation,
+          expected: {
+            throughput: { trend: { direction: "unknown" as never } },
+          },
+        },
+        [cpu, throughput],
+      ).descriptors,
+    ).toMatch(/supported/);
+  });
+  it("serializes ordered Relationship children without client keys and permits a same-ID Alert only when a Metric Lens exists", () => {
+    const cpu = {
+        ...newMetric("metric-cpu"),
+        id: "cpu",
+        name: "CPU",
+        metric_id: "cpu",
+        source_id: "primary",
+        query: "cpu",
+        unit: "%",
+        analysis_objectives: [],
+        reference_periods: [],
+      },
+      relation = {
+        ...newRelationship("relationship"),
+        id: "cpu_throughput",
+        name: "CPU behavior",
+        participants: ["cpu", "throughput"],
+        conditions: {},
+        expected: {
+          cpu: { trend: { direction: "increasing" } },
+          throughput: { variability: { state: "low" } },
+        },
+      } as DraftRelationship,
+      throughput = {
+        ...newMetric("metric-throughput"),
+        id: "throughput",
+        name: "Throughput",
+        metric_id: "throughput",
+        source_id: "primary",
+        query: "throughput",
+        unit: "rps",
+        analysis_objectives: [],
+        reference_periods: [],
+      },
+      draft: ObservationDraft = {
+        name: "Mixed",
+        description: "",
+        objective: "Observe",
+        lenses: [cpu, throughput],
+        alert_lenses: [
+          {
+            ...newAlert("alert"),
+            id: "cpu",
+            name: "CPU alert",
+            selector: { query: "project=CPU" },
+          },
+        ],
+        relationships: [relation],
+      };
+    expect(
+      validateRelationship(relation, draft.lenses, draft.relationships),
+    ).toEqual({});
+    expect(serializeDraft(draft).relationships).toEqual([
+      {
+        id: "cpu_throughput",
+        name: "CPU behavior",
+        description: null,
+        participants: ["cpu", "throughput"],
+        conditions: {},
+        expected: {
+          cpu: { trend: { direction: "increasing" } },
+          throughput: { variability: { state: "low" } },
+        },
+      },
+    ]);
+  });
+});
 
-describe('Relationship editor',{timeout:15_000},()=>{
-  it('applies conditional and always-applicable relationships locally, keeps opaque key/order on edit, and never writes',async()=>{const user=userEvent.setup(),fetchMock=vi.fn().mockResolvedValue(response(capabilities));vi.stubGlobal('fetch',fetchMock);renderAt();await metric(user,'cpu','CPU');await metric(user,'throughput','Throughput','rps');await relationship(user,true);await relationship(user,false,'cpu_throughput_always','Always applicable');const cards=()=>Array.from(screen.getByRole('heading',{name:'Relationships'}).parentElement!.querySelectorAll('p')).filter(item=>item.querySelector('a'));const href=cards()[0].querySelector('a')?.getAttribute('href');expect(cards().map(card=>card.childNodes[0].textContent?.trim())).toEqual(['CPU and throughput','Always applicable']);await user.click(cards()[0].querySelector('a')!);await user.clear(screen.getByLabelText('Name'));await user.type(screen.getByLabelText('Name'),'Updated relationship');await user.click(screen.getByText('Apply changes'));expect(cards()[0].textContent).toContain('Updated relationship');expect(cards()[0].querySelector('a')?.getAttribute('href')).toBe(href);expect(fetchMock.mock.calls.filter(([,init])=>(init as RequestInit|undefined)?.method==='POST')).toEqual([])})
-  it('cancels local Relationship changes without a draft mutation or a write',async()=>{const user=userEvent.setup(),fetchMock=vi.fn().mockResolvedValue(response(capabilities));vi.stubGlobal('fetch',fetchMock);renderAt();await metric(user,'cpu','CPU');await metric(user,'throughput','Throughput');await relationship(user,true);await user.click(screen.getByRole('heading',{name:'Relationships'}).parentElement!.querySelector('a')!);await user.clear(screen.getByLabelText('Name'));await user.type(screen.getByLabelText('Name'),'Discarded');await user.click(screen.getByText('Cancel'));expect(screen.queryByText('Discarded')).toBeNull();expect(fetchMock.mock.calls.filter(([,init])=>(init as RequestInit|undefined)?.method==='POST')).toEqual([])})
-  it('posts exactly one complete mixed aggregate, corrects retained Relationship data, then retries successfully',async()=>{const user=userEvent.setup();let posts=0;const fetchMock=vi.fn().mockImplementation((url:string,init?:RequestInit)=>url==='/api/v1/observation-definition-capabilities'?Promise.resolve(response(capabilities)):url==='/api/v1/observations'&&init?.method==='POST'?Promise.resolve(++posts===1?response({code:'validation_error',message:'Correct Relationship rule',field:'relationships.0.expected'},422):response(created,201)):Promise.resolve(response(created)));vi.stubGlobal('fetch',fetchMock);renderAt();await user.type(await screen.findByLabelText('Name'),'Mixed topology');await user.type(screen.getByLabelText('Objective'),'Observe related behavior');await metric(user,'cpu','CPU');await metric(user,'throughput','Throughput','rps');await alert(user);await relationship(user,true);await user.click(screen.getAllByRole('button',{name:'Create Observation'})[0]);expect((await screen.findByRole('alert')).textContent).toContain('Correct Relationship rule');await user.click(screen.getByText('Correct Relationship'));expect((screen.getByLabelText('Relationship ID') as HTMLInputElement).value).toBe('cpu_throughput');expect((screen.getByLabelText('Name') as HTMLInputElement).value).toBe('CPU and throughput');expect((screen.getByLabelText('CPU (cpu)') as HTMLInputElement).checked).toBe(true);expect((screen.getByLabelText('Throughput (throughput)') as HTMLInputElement).checked).toBe(true);expect((screen.getByLabelText('When — conditions value') as HTMLSelectElement).value).toBe('increasing');expect((screen.getByLabelText('Expect — evaluated when applicable value') as HTMLSelectElement).value).toBe('decreasing');await user.selectOptions(screen.getByLabelText('Expect — evaluated when applicable value'),'stable');await user.click(screen.getByText('Apply changes'));await user.click(screen.getAllByRole('button',{name:'Create Observation'})[0]);expect(await screen.findByText(/created successfully/i)).toBeTruthy();const calls=fetchMock.mock.calls.filter(([url,init])=>url==='/api/v1/observations'&&(init as RequestInit).method==='POST');expect(calls).toHaveLength(2);const first=JSON.parse(String((calls[0][1] as RequestInit).body)),second=JSON.parse(String((calls[1][1] as RequestInit).body));expect(first.relationships[0].expected.throughput.trend.direction).toBe('decreasing');expect(second).toEqual({...first,relationships:[{...first.relationships[0],expected:{throughput:{trend:{direction:'stable'}}}}]});expect(fetchMock.mock.calls.filter(([url])=>String(url).includes('/lenses/')||String(url).includes('preflight'))).toEqual([])})
-  it('posts one exact aggregate with two ordered Relationships and no child or preflight traffic',async()=>{const user=userEvent.setup();const fetchMock=vi.fn().mockImplementation((url:string,init?:RequestInit)=>url==='/api/v1/observation-definition-capabilities'?Promise.resolve(response(capabilities)):url==='/api/v1/observations'&&init?.method==='POST'?Promise.resolve(response(created,201)):url===`/api/v1/observations/${observationId}`?Promise.resolve(response(created)):Promise.reject(new Error(`Unexpected request: ${url}`)));vi.stubGlobal('fetch',fetchMock);renderAt();await user.type(await screen.findByLabelText('Name'),'Two relationships');await user.type(screen.getByLabelText('Objective'),'Observe complete topology');await metric(user,'cpu','CPU');await metric(user,'throughput','Throughput','rps');await alert(user);await relationship(user,true);await relationship(user,false,'cpu_throughput_always','Always applicable');await user.click(screen.getAllByRole('button',{name:'Create Observation'})[0]);await screen.findByText(/created successfully/i);const posts=fetchMock.mock.calls.filter(([url,init])=>url==='/api/v1/observations'&&(init as RequestInit).method==='POST');expect(posts).toHaveLength(1);expect(JSON.parse(String((posts[0][1] as RequestInit).body))).toEqual({name:'Two relationships',description:null,objective:'Observe complete topology',lenses:[{id:'cpu',name:'CPU',description:null,type:'metric',metric_id:'cpu_metric',adapter_type:'prometheus',source_id:'primary',query:'cpu_query',unit:'%',analysis_objectives:['spike'],reference_periods:[]},{id:'throughput',name:'Throughput',description:null,type:'metric',metric_id:'throughput_metric',adapter_type:'prometheus',source_id:'primary',query:'throughput_query',unit:'rps',analysis_objectives:['spike'],reference_periods:[]}],alert_lenses:[{id:'cpu',name:'CPU alert',description:null,type:'alert',source:'jira_track_and_release',selector:{query:'project=CPU'},analysis_objectives:[],reference_periods:[]}],relationships:[{id:'cpu_throughput',name:'CPU and throughput',description:null,participants:['cpu','throughput'],conditions:{cpu:{trend:{direction:'increasing'}}},expected:{throughput:{trend:{direction:'decreasing'}}}},{id:'cpu_throughput_always',name:'Always applicable',description:null,participants:['cpu','throughput'],conditions:{},expected:{throughput:{trend:{direction:'decreasing'}},cpu:{trend:{direction:'increasing'}}}}]});await waitFor(()=>expect(fetchMock.mock.calls.map(([url,init])=>[url,(init as RequestInit|undefined)?.method??'GET'])).toEqual([['/api/v1/observation-definition-capabilities','GET'],['/api/v1/observations','POST'],[`/api/v1/observations/${observationId}`,'GET']]))})
-  it('uses real browser history back without mutating an existing Relationship or writing',async()=>{const user=userEvent.setup(),fetchMock=vi.fn().mockResolvedValue(response(capabilities));vi.stubGlobal('fetch',fetchMock);renderBrowserAt();await metric(user,'cpu','CPU');await metric(user,'throughput','Throughput','rps');await relationship(user,true);await relationship(user,false,'cpu_throughput_always','Always applicable');const relationships=()=>Array.from(screen.getByRole('heading',{name:'Relationships'}).parentElement!.querySelectorAll('p')).filter(item=>item.querySelector('a'));const originalHref=relationships()[0].querySelector('a')?.getAttribute('href'),secondHref=relationships()[1].querySelector('a')?.getAttribute('href');await user.click(relationships()[0].querySelector('a')!);await user.clear(screen.getByLabelText('Relationship ID'));await user.type(screen.getByLabelText('Relationship ID'),'changed_relationship');await user.clear(screen.getByLabelText('Name'));await user.type(screen.getByLabelText('Name'),'Changed relationship');await user.selectOptions(screen.getByLabelText('When — conditions value'),'stable');window.history.back();await waitFor(()=>expect(screen.getByRole('heading',{name:'Create Observation'})).toBeTruthy());expect(relationships().map(item=>item.childNodes[0].textContent?.trim())).toEqual(['CPU and throughput','Always applicable']);expect(relationships().map(item=>item.querySelector('a')?.getAttribute('href'))).toEqual([originalHref,secondHref]);await user.click(relationships()[0].querySelector('a')!);expect((screen.getByLabelText('Relationship ID') as HTMLInputElement).value).toBe('cpu_throughput');expect((screen.getByLabelText('When — conditions value') as HTMLSelectElement).value).toBe('increasing');expect(fetchMock.mock.calls.filter(([,init])=>(init as RequestInit|undefined)?.method==='POST')).toEqual([])})
-  it('rejects duplicate descriptor assignment before map overwrite and preserves the draft',async()=>{const user=userEvent.setup(),fetchMock=vi.fn().mockResolvedValue(response(capabilities));vi.stubGlobal('fetch',fetchMock);renderAt();await metric(user,'cpu','CPU');await metric(user,'throughput','Throughput');await relationship(user,true);const card=()=>Array.from(screen.getByRole('heading',{name:'Relationships'}).parentElement!.querySelectorAll('p')).find(item=>item.querySelector('a'))!;await user.click(card().querySelector('a')!);await user.click(screen.getByText('+ Add condition'));const conditionParticipants=screen.getAllByLabelText('When — conditions participant');expect(conditionParticipants).toHaveLength(2);await user.selectOptions(conditionParticipants[1],'cpu');await user.selectOptions(screen.getAllByLabelText('When — conditions property')[1],'trend.direction');await user.click(screen.getByText('Apply changes'));expect((await screen.findByRole('alert')).textContent).toContain('Assign each participant property at most once');expect(screen.getByRole('heading',{name:'Relationship Configuration'})).toBeTruthy();await user.click(screen.getByText('Cancel'));await user.click(card().querySelector('a')!);expect(screen.getAllByLabelText('When — conditions participant')).toHaveLength(1);expect((screen.getByLabelText('When — conditions value') as HTMLSelectElement).value).toBe('increasing');expect(fetchMock.mock.calls.filter(([,init])=>(init as RequestInit|undefined)?.method==='POST')).toEqual([])})
-  it('focuses Relationship summaries and keeps descriptor, topology, and empty-expectation feedback on their own groups',async()=>{const user=userEvent.setup(),fetchMock=vi.fn().mockResolvedValue(response(capabilities));vi.stubGlobal('fetch',fetchMock);renderAt();await metric(user,'cpu','CPU');await metric(user,'throughput','Throughput');await user.click(screen.getByText('Add Relationship'));await user.type(screen.getByLabelText('Relationship ID'),'cpu_throughput');await user.type(screen.getByLabelText('Name'),'CPU and throughput');await user.click(screen.getByLabelText('CPU (cpu)'));await user.click(screen.getByLabelText('Throughput (throughput)'));await user.click(screen.getByText('+ Add condition'));await user.selectOptions(screen.getByLabelText('When — conditions participant'),'cpu');await user.click(screen.getByText('+ Add condition'));await user.selectOptions(screen.getAllByLabelText('When — conditions participant')[1],'throughput');await user.click(screen.getByText('Apply changes'))
-    const emptyExpected=await screen.findByRole('alert',{name:'Relationship changes cannot be applied'});expect(document.activeElement).toBe(emptyExpected);const conditionGroup=screen.getByRole('heading',{name:'When — conditions'}).parentElement!.querySelector('fieldset')!,expectationGroup=screen.getByRole('heading',{name:'Expect — evaluated when applicable'}).parentElement!.querySelector('fieldset')!,participantGroup=screen.getByRole('heading',{name:'Participants'}).parentElement!.querySelector('fieldset')!;expect(conditionGroup.getAttribute('aria-invalid')).toBe('false');expect(expectationGroup.getAttribute('aria-invalid')).toBe('true');expect(participantGroup.getAttribute('aria-invalid')).toBe('false');expect(expectationGroup.className).toContain('border-[var(--color-error-border)]');expect(document.getElementById('relationship-descriptor-error')?.textContent).toContain('Add at least one expected descriptor.')
-    await user.click(screen.getAllByRole('button',{name:'Remove When — conditions row'})[1]);await user.click(screen.getByText('+ Add expectation'));await user.selectOptions(screen.getByLabelText('Expect — evaluated when applicable participant'),'cpu');await user.click(screen.getByText('Apply changes'));const topology=await screen.findByRole('alert',{name:'Relationship changes cannot be applied'});expect(document.activeElement).toBe(topology);expect(participantGroup.getAttribute('aria-invalid')).toBe('true');expect(participantGroup.className).toContain('border-[var(--color-error-border)]');expect(conditionGroup.getAttribute('aria-invalid')).toBe('false');expect(expectationGroup.getAttribute('aria-invalid')).toBe('false');expect(document.getElementById('relationship-participants-error')?.textContent).toContain('Every participant must appear')
-    await user.click(screen.getByText('+ Add condition'));await user.selectOptions(screen.getAllByLabelText('When — conditions participant')[1],'cpu');await user.click(screen.getByText('+ Add expectation'));await user.selectOptions(screen.getAllByLabelText('Expect — evaluated when applicable participant')[1],'cpu');await user.click(screen.getByText('Apply changes'));const simultaneous=await screen.findByRole('alert',{name:'Relationship changes cannot be applied'});expect(document.activeElement).toBe(simultaneous);expect(document.getElementById('relationship-conditions-error')?.textContent).toContain('Assign each participant property at most once');expect(document.getElementById('relationship-descriptor-error')?.textContent).toContain('Assign each participant property at most once');expect(conditionGroup.getAttribute('aria-describedby')).toBe('relationship-conditions-guidance relationship-conditions-error');expect(expectationGroup.getAttribute('aria-describedby')).toBe('relationship-expectations-guidance relationship-descriptor-error');expect(fetchMock.mock.calls.filter(([,init])=>(init as RequestInit|undefined)?.method==='POST')).toEqual([])
-  })
-  it('renders persistent Relationship guidance and connects participant and descriptor errors accessibly',async()=>{const user=userEvent.setup(),fetchMock=vi.fn().mockResolvedValue(response(capabilities));vi.stubGlobal('fetch',fetchMock);renderAt();await metric(user,'cpu','CPU');await metric(user,'throughput','Throughput');await alert(user);await user.click(screen.getByText('Add Relationship'));for(const heading of ['Relationship identity','Participants','When — conditions','Expect — evaluated when applicable','Rule semantics'])expect(screen.getByRole('heading',{name:heading})).toBeTruthy();expect(screen.getByText('Stable lowercase identifier used inside this Observation.')).toBeTruthy();expect(screen.getByPlaceholderText('pressure_flow')).toBeTruthy();expect(screen.getByText('Select 2 or more distinct current draft Metric Lenses. Alert Lenses cannot participate.')).toBeTruthy();expect(screen.getByRole('button',{name:'Cancel'})).toBeTruthy();expect(screen.getByRole('button',{name:'Apply changes'})).toBeTruthy();expect(screen.getByRole('button',{name:'+ Add condition'})).toBeTruthy();expect(screen.getByRole('button',{name:'+ Add expectation'})).toBeTruthy();expect(screen.queryByLabelText(/CPU alert/)).toBeNull();expect(screen.getByLabelText('CPU (cpu)')).toBeTruthy();expect(screen.getByText('Metric-only deterministic rule. Conditions determine applicability. Expectations are checked only when applicable.')).toBeTruthy();const rulePanel=screen.getByRole('heading',{name:'Rule semantics'}).parentElement!;expect(rulePanel.className).toContain('h-fit');expect(rulePanel.parentElement?.className).toContain('grid');await user.click(screen.getByLabelText('CPU (cpu)'));await user.click(screen.getByText('+ Add condition'));expect(screen.getAllByText(/Each row pairs a selected Metric Lens/)).toHaveLength(2);expect(screen.getByText('Participant')).toBeTruthy();expect(screen.getByText('Required current state')).toBeTruthy();expect(Array.from((screen.getByLabelText('When — conditions property') as HTMLSelectElement).options).map(option=>option.value)).toEqual(['trend.direction','trend.rate','variability.state']);expect(Array.from((screen.getByLabelText('When — conditions value') as HTMLSelectElement).options).map(option=>option.value)).toEqual(['increasing','decreasing','stable']);expect(screen.queryByText(/DSL/i)).toBeNull();await user.selectOptions(screen.getByLabelText('When — conditions participant'),'cpu');await user.type(screen.getByLabelText('Relationship ID'),'cpu_relation');await user.type(screen.getByLabelText('Name'),'CPU relation');await user.click(screen.getByText('+ Add expectation'));await user.selectOptions(screen.getByLabelText('Expect — evaluated when applicable participant'),'cpu');await user.click(screen.getByText('Apply changes'));const participant=screen.getByLabelText('CPU (cpu)');expect(participant.getAttribute('aria-invalid')).toBe('true');expect(participant.getAttribute('aria-describedby')).toBe('relationship-participants-guidance relationship-participants-error');expect(document.getElementById('relationship-participants-error')?.textContent).toContain('Select 2 or more distinct');await user.click(screen.getByLabelText('Throughput (throughput)'));await user.click(screen.getByText('Apply changes'));const descriptor=screen.getByLabelText('Expect — evaluated when applicable participant');expect(descriptor.getAttribute('aria-invalid')).toBe('false');expect(descriptor.getAttribute('aria-describedby')).toBe('relationship-expectations-guidance');expect(document.getElementById('relationship-participants-error')?.textContent).toContain('Every participant must appear')})
-  it('shows Alert Lens input guidance and retains helper/error links for repeatable fields',async()=>{const user=userEvent.setup(),fetchMock=vi.fn().mockResolvedValue(response(capabilities));vi.stubGlobal('fetch',fetchMock);renderAt();await user.click(screen.getByText('Add Alert Lens'));expect(screen.getByText('Stable lowercase identifier used inside this Observation.')).toBeTruthy();expect(screen.getByPlaceholderText('release_alerts')).toBeTruthy();expect(screen.getByText(/provider-native selector exactly as the provider expects/)).toBeTruthy();expect(screen.getByPlaceholderText('project = REL')).toBeTruthy();expect(screen.getByText(/Add concise analytical intents in the order they should guide analysis/)).toBeTruthy();expect(screen.getByText(/equal-duration earlier window using a unique positive offset/)).toBeTruthy();await user.click(screen.getByText('Add reference period'));const period=screen.getByLabelText('Reference period 1');expect(period.getAttribute('placeholder')).toBe('1d');expect(period.getAttribute('aria-describedby')).toBe('reference-periods-guidance');await user.type(screen.getByLabelText('Lens ID'),'release_alerts');await user.type(screen.getByLabelText('Name'),'Release alerts');await user.type(screen.getByLabelText('Provider selector'),'project = REL');await user.type(period,'0d');await user.click(screen.getByText('Apply changes'));const summary=await screen.findByRole('alert',{name:'Alert Lens changes cannot be applied'});expect(document.activeElement).toBe(summary);expect(period.getAttribute('aria-describedby')).toBe('reference-periods-guidance reference-periods-error');expect(document.getElementById('reference-periods-error')?.textContent).toContain('unique positive offsets')})
-})
+describe("Relationship editor", { timeout: 15_000 }, () => {
+  it("applies conditional and always-applicable relationships locally, keeps opaque key/order on edit, and never writes", async () => {
+    const user = userEvent.setup(),
+      fetchMock = vi.fn().mockResolvedValue(response(capabilities));
+    vi.stubGlobal("fetch", fetchMock);
+    renderAt();
+    await metric(user, "cpu", "CPU");
+    await metric(user, "throughput", "Throughput", "rps");
+    await relationship(user, true);
+    await relationship(
+      user,
+      false,
+      "cpu_throughput_always",
+      "Always applicable",
+    );
+    const cards = () =>
+      Array.from(
+        screen
+          .getByRole("heading", { name: "Relationships" })
+          .parentElement!.querySelectorAll("p"),
+      ).filter((item) => item.querySelector("a"));
+    const href = cards()[0].querySelector("a")?.getAttribute("href");
+    expect(
+      cards().map((card) => card.childNodes[0].textContent?.trim()),
+    ).toEqual(["CPU and throughput", "Always applicable"]);
+    await user.click(cards()[0].querySelector("a")!);
+    await user.clear(screen.getByLabelText("Name"));
+    await user.type(screen.getByLabelText("Name"), "Updated relationship");
+    await user.click(screen.getByText("Apply changes"));
+    expect(cards()[0].textContent).toContain("Updated relationship");
+    expect(cards()[0].querySelector("a")?.getAttribute("href")).toBe(href);
+    expect(
+      fetchMock.mock.calls.filter(
+        ([, init]) => (init as RequestInit | undefined)?.method === "POST",
+      ),
+    ).toEqual([]);
+  });
+  it("cancels local Relationship changes without a draft mutation or a write", async () => {
+    const user = userEvent.setup(),
+      fetchMock = vi.fn().mockResolvedValue(response(capabilities));
+    vi.stubGlobal("fetch", fetchMock);
+    renderAt();
+    await metric(user, "cpu", "CPU");
+    await metric(user, "throughput", "Throughput");
+    await relationship(user, true);
+    await user.click(
+      screen
+        .getByRole("heading", { name: "Relationships" })
+        .parentElement!.querySelector("a")!,
+    );
+    await user.clear(screen.getByLabelText("Name"));
+    await user.type(screen.getByLabelText("Name"), "Discarded");
+    await user.click(screen.getByText("Cancel"));
+    expect(screen.queryByText("Discarded")).toBeNull();
+    expect(
+      fetchMock.mock.calls.filter(
+        ([, init]) => (init as RequestInit | undefined)?.method === "POST",
+      ),
+    ).toEqual([]);
+  });
+  it("posts exactly one complete mixed aggregate, corrects retained Relationship data, then retries successfully", async () => {
+    const user = userEvent.setup();
+    let posts = 0;
+    const fetchMock = vi
+      .fn()
+      .mockImplementation((url: string, init?: RequestInit) =>
+        url === "/api/v1/observation-definition-capabilities"
+          ? Promise.resolve(response(capabilities))
+          : url === "/api/v1/observations" && init?.method === "POST"
+            ? Promise.resolve(
+                ++posts === 1
+                  ? response(
+                      {
+                        code: "validation_error",
+                        message: "Correct Relationship rule",
+                        field: "relationships.0.expected",
+                      },
+                      422,
+                    )
+                  : response(created, 201),
+              )
+            : Promise.resolve(response(created)),
+      );
+    vi.stubGlobal("fetch", fetchMock);
+    renderAt();
+    await user.type(await screen.findByLabelText("Name"), "Mixed topology");
+    await user.type(
+      screen.getByLabelText("Objective"),
+      "Observe related behavior",
+    );
+    await metric(user, "cpu", "CPU");
+    await metric(user, "throughput", "Throughput", "rps");
+    await alert(user);
+    await relationship(user, true);
+    await user.click(
+      screen.getAllByRole("button", { name: "Create Observation" })[0],
+    );
+    expect((await screen.findByRole("alert")).textContent).toContain(
+      "Correct Relationship rule",
+    );
+    await user.click(screen.getByText("Correct Relationship"));
+    expect(
+      (screen.getByLabelText("Relationship ID") as HTMLInputElement).value,
+    ).toBe("cpu_throughput");
+    expect((screen.getByLabelText("Name") as HTMLInputElement).value).toBe(
+      "CPU and throughput",
+    );
+    expect(
+      (screen.getByLabelText("CPU (cpu)") as HTMLInputElement).checked,
+    ).toBe(true);
+    expect(
+      (screen.getByLabelText("Throughput (throughput)") as HTMLInputElement)
+        .checked,
+    ).toBe(true);
+    expect(
+      (screen.getByLabelText("When — conditions value") as HTMLSelectElement)
+        .value,
+    ).toBe("increasing");
+    expect(
+      (
+        screen.getByLabelText(
+          "Expect — evaluated when applicable value",
+        ) as HTMLSelectElement
+      ).value,
+    ).toBe("decreasing");
+    await user.selectOptions(
+      screen.getByLabelText("Expect — evaluated when applicable value"),
+      "stable",
+    );
+    await user.click(screen.getByText("Apply changes"));
+    await user.click(
+      screen.getAllByRole("button", { name: "Create Observation" })[0],
+    );
+    expect(await screen.findByText(/created successfully/i)).toBeTruthy();
+    const calls = fetchMock.mock.calls.filter(
+      ([url, init]) =>
+        url === "/api/v1/observations" &&
+        (init as RequestInit).method === "POST",
+    );
+    expect(calls).toHaveLength(2);
+    const first = JSON.parse(String((calls[0][1] as RequestInit).body)),
+      second = JSON.parse(String((calls[1][1] as RequestInit).body));
+    expect(first.relationships[0].expected.throughput.trend.direction).toBe(
+      "decreasing",
+    );
+    expect(second).toEqual({
+      ...first,
+      relationships: [
+        {
+          ...first.relationships[0],
+          expected: { throughput: { trend: { direction: "stable" } } },
+        },
+      ],
+    });
+    expect(
+      fetchMock.mock.calls.filter(
+        ([url]) =>
+          String(url).includes("/lenses/") || String(url).includes("preflight"),
+      ),
+    ).toEqual([]);
+  });
+  it("posts one exact aggregate with two ordered Relationships and no child or preflight traffic", async () => {
+    const user = userEvent.setup();
+    const fetchMock = vi
+      .fn()
+      .mockImplementation((url: string, init?: RequestInit) =>
+        url === "/api/v1/observation-definition-capabilities"
+          ? Promise.resolve(response(capabilities))
+          : url === "/api/v1/observations" && init?.method === "POST"
+            ? Promise.resolve(response(created, 201))
+            : url === `/api/v1/observations/${observationId}`
+              ? Promise.resolve(response(created))
+              : Promise.reject(new Error(`Unexpected request: ${url}`)),
+      );
+    vi.stubGlobal("fetch", fetchMock);
+    renderAt();
+    await user.type(await screen.findByLabelText("Name"), "Two relationships");
+    await user.type(
+      screen.getByLabelText("Objective"),
+      "Observe complete topology",
+    );
+    await metric(user, "cpu", "CPU");
+    await metric(user, "throughput", "Throughput", "rps");
+    await alert(user);
+    await relationship(user, true);
+    await relationship(
+      user,
+      false,
+      "cpu_throughput_always",
+      "Always applicable",
+    );
+    await user.click(
+      screen.getAllByRole("button", { name: "Create Observation" })[0],
+    );
+    await screen.findByText(/created successfully/i);
+    const posts = fetchMock.mock.calls.filter(
+      ([url, init]) =>
+        url === "/api/v1/observations" &&
+        (init as RequestInit).method === "POST",
+    );
+    expect(posts).toHaveLength(1);
+    expect(JSON.parse(String((posts[0][1] as RequestInit).body))).toEqual({
+      name: "Two relationships",
+      description: null,
+      objective: "Observe complete topology",
+      lenses: [
+        {
+          id: "cpu",
+          name: "CPU",
+          description: null,
+          type: "metric",
+          metric_id: "cpu_metric",
+          adapter_type: "prometheus",
+          source_id: "primary",
+          query: "cpu_query",
+          unit: "%",
+          analysis_objectives: ["spike"],
+          reference_periods: [],
+        },
+        {
+          id: "throughput",
+          name: "Throughput",
+          description: null,
+          type: "metric",
+          metric_id: "throughput_metric",
+          adapter_type: "prometheus",
+          source_id: "primary",
+          query: "throughput_query",
+          unit: "rps",
+          analysis_objectives: ["spike"],
+          reference_periods: [],
+        },
+      ],
+      alert_lenses: [
+        {
+          id: "cpu",
+          name: "CPU alert",
+          description: null,
+          type: "alert",
+          source: "jira_track_and_release",
+          selector: { query: "project=CPU" },
+          analysis_objectives: [],
+          reference_periods: [],
+        },
+      ],
+      relationships: [
+        {
+          id: "cpu_throughput",
+          name: "CPU and throughput",
+          description: null,
+          participants: ["cpu", "throughput"],
+          conditions: { cpu: { trend: { direction: "increasing" } } },
+          expected: { throughput: { trend: { direction: "decreasing" } } },
+        },
+        {
+          id: "cpu_throughput_always",
+          name: "Always applicable",
+          description: null,
+          participants: ["cpu", "throughput"],
+          conditions: {},
+          expected: {
+            throughput: { trend: { direction: "decreasing" } },
+            cpu: { trend: { direction: "increasing" } },
+          },
+        },
+      ],
+    });
+    await waitFor(() =>
+      expect(
+        fetchMock.mock.calls.map(([url, init]) => [
+          url,
+          (init as RequestInit | undefined)?.method ?? "GET",
+        ]),
+      ).toEqual([
+        ["/api/v1/observation-definition-capabilities", "GET"],
+        ["/api/v1/observations", "POST"],
+        [`/api/v1/observations/${observationId}`, "GET"],
+      ]),
+    );
+  });
+  it("uses real browser history back without mutating an existing Relationship or writing", async () => {
+    const user = userEvent.setup(),
+      fetchMock = vi.fn().mockResolvedValue(response(capabilities));
+    vi.stubGlobal("fetch", fetchMock);
+    renderBrowserAt();
+    await metric(user, "cpu", "CPU");
+    await metric(user, "throughput", "Throughput", "rps");
+    await relationship(user, true);
+    await relationship(
+      user,
+      false,
+      "cpu_throughput_always",
+      "Always applicable",
+    );
+    const relationships = () =>
+      Array.from(
+        screen
+          .getByRole("heading", { name: "Relationships" })
+          .parentElement!.querySelectorAll("p"),
+      ).filter((item) => item.querySelector("a"));
+    const originalHref = relationships()[0]
+        .querySelector("a")
+        ?.getAttribute("href"),
+      secondHref = relationships()[1].querySelector("a")?.getAttribute("href");
+    await user.click(relationships()[0].querySelector("a")!);
+    await user.clear(screen.getByLabelText("Relationship ID"));
+    await user.type(
+      screen.getByLabelText("Relationship ID"),
+      "changed_relationship",
+    );
+    await user.clear(screen.getByLabelText("Name"));
+    await user.type(screen.getByLabelText("Name"), "Changed relationship");
+    await user.selectOptions(
+      screen.getByLabelText("When — conditions value"),
+      "stable",
+    );
+    window.history.back();
+    await waitFor(() =>
+      expect(
+        screen.getByRole("heading", { name: "Create Observation" }),
+      ).toBeTruthy(),
+    );
+    expect(
+      relationships().map((item) => item.childNodes[0].textContent?.trim()),
+    ).toEqual(["CPU and throughput", "Always applicable"]);
+    expect(
+      relationships().map((item) =>
+        item.querySelector("a")?.getAttribute("href"),
+      ),
+    ).toEqual([originalHref, secondHref]);
+    await user.click(relationships()[0].querySelector("a")!);
+    expect(
+      (screen.getByLabelText("Relationship ID") as HTMLInputElement).value,
+    ).toBe("cpu_throughput");
+    expect(
+      (screen.getByLabelText("When — conditions value") as HTMLSelectElement)
+        .value,
+    ).toBe("increasing");
+    expect(
+      fetchMock.mock.calls.filter(
+        ([, init]) => (init as RequestInit | undefined)?.method === "POST",
+      ),
+    ).toEqual([]);
+  });
+  it("rejects duplicate descriptor assignment before map overwrite and preserves the draft", async () => {
+    const user = userEvent.setup(),
+      fetchMock = vi.fn().mockResolvedValue(response(capabilities));
+    vi.stubGlobal("fetch", fetchMock);
+    renderAt();
+    await metric(user, "cpu", "CPU");
+    await metric(user, "throughput", "Throughput");
+    await relationship(user, true);
+    const card = () =>
+      Array.from(
+        screen
+          .getByRole("heading", { name: "Relationships" })
+          .parentElement!.querySelectorAll("p"),
+      ).find((item) => item.querySelector("a"))!;
+    await user.click(card().querySelector("a")!);
+    await user.click(screen.getByRole("button", { name: "Add condition" }));
+    const conditionParticipants = screen.getAllByLabelText(
+      "When — conditions participant",
+    );
+    expect(conditionParticipants).toHaveLength(2);
+    await user.selectOptions(conditionParticipants[1], "cpu");
+    await user.selectOptions(
+      screen.getAllByLabelText("When — conditions property")[1],
+      "trend.direction",
+    );
+    await user.click(screen.getByText("Apply changes"));
+    expect((await screen.findByRole("alert")).textContent).toContain(
+      "Assign each participant property at most once",
+    );
+    expect(
+      screen.getByRole("heading", { name: "Relationship Configuration" }),
+    ).toBeTruthy();
+    await user.click(screen.getByText("Cancel"));
+    await user.click(card().querySelector("a")!);
+    expect(
+      screen.getAllByLabelText("When — conditions participant"),
+    ).toHaveLength(1);
+    expect(
+      (screen.getByLabelText("When — conditions value") as HTMLSelectElement)
+        .value,
+    ).toBe("increasing");
+    expect(
+      fetchMock.mock.calls.filter(
+        ([, init]) => (init as RequestInit | undefined)?.method === "POST",
+      ),
+    ).toEqual([]);
+  });
+  it("focuses Relationship summaries and keeps descriptor, topology, and empty-expectation feedback on their own groups", async () => {
+    const user = userEvent.setup(),
+      fetchMock = vi.fn().mockResolvedValue(response(capabilities));
+    vi.stubGlobal("fetch", fetchMock);
+    renderAt();
+    await metric(user, "cpu", "CPU");
+    await metric(user, "throughput", "Throughput");
+    await user.click(screen.getByText("Add Relationship"));
+    await user.type(screen.getByLabelText("Relationship ID"), "cpu_throughput");
+    await user.type(screen.getByLabelText("Name"), "CPU and throughput");
+    await user.click(screen.getByLabelText("CPU (cpu)"));
+    await user.click(screen.getByLabelText("Throughput (throughput)"));
+    await user.click(screen.getByRole("button", { name: "Add condition" }));
+    await user.selectOptions(
+      screen.getByLabelText("When — conditions participant"),
+      "cpu",
+    );
+    await user.click(screen.getByRole("button", { name: "Add condition" }));
+    await user.selectOptions(
+      screen.getAllByLabelText("When — conditions participant")[1],
+      "throughput",
+    );
+    await user.click(screen.getByText("Apply changes"));
+    const emptyExpected = await screen.findByRole("alert", {
+      name: "Relationship changes cannot be applied",
+    });
+    expect(document.activeElement).toBe(emptyExpected);
+    const conditionGroup = screen
+        .getByRole("heading", { name: "When — conditions" })
+        .parentElement!.querySelector("fieldset")!,
+      expectationGroup = screen
+        .getByRole("heading", { name: "Expect — evaluated when applicable" })
+        .parentElement!.querySelector("fieldset")!,
+      participantGroup = screen
+        .getByRole("heading", { name: "Participants" })
+        .parentElement!.querySelector("fieldset")!;
+    expect(conditionGroup.getAttribute("aria-invalid")).toBe("false");
+    expect(expectationGroup.getAttribute("aria-invalid")).toBe("true");
+    expect(participantGroup.getAttribute("aria-invalid")).toBe("false");
+    expect(expectationGroup.className).toContain(
+      "border-[var(--color-error-border)]",
+    );
+    expect(
+      document.getElementById("relationship-descriptor-error")?.textContent,
+    ).toContain("Add at least one expected descriptor.");
+    await user.click(
+      screen.getAllByRole("button", {
+        name: "Remove When — conditions row",
+      })[1],
+    );
+    await user.click(screen.getByRole("button", { name: "Add expectation" }));
+    await user.selectOptions(
+      screen.getByLabelText("Expect — evaluated when applicable participant"),
+      "cpu",
+    );
+    await user.click(screen.getByText("Apply changes"));
+    const topology = await screen.findByRole("alert", {
+      name: "Relationship changes cannot be applied",
+    });
+    expect(document.activeElement).toBe(topology);
+    expect(participantGroup.getAttribute("aria-invalid")).toBe("true");
+    expect(participantGroup.className).toContain(
+      "border-[var(--color-error-border)]",
+    );
+    expect(conditionGroup.getAttribute("aria-invalid")).toBe("false");
+    expect(expectationGroup.getAttribute("aria-invalid")).toBe("false");
+    expect(
+      document.getElementById("relationship-participants-error")?.textContent,
+    ).toContain("Every participant must appear");
+    await user.click(screen.getByRole("button", { name: "Add condition" }));
+    await user.selectOptions(
+      screen.getAllByLabelText("When — conditions participant")[1],
+      "cpu",
+    );
+    await user.click(screen.getByRole("button", { name: "Add expectation" }));
+    await user.selectOptions(
+      screen.getAllByLabelText(
+        "Expect — evaluated when applicable participant",
+      )[1],
+      "cpu",
+    );
+    await user.click(screen.getByText("Apply changes"));
+    const simultaneous = await screen.findByRole("alert", {
+      name: "Relationship changes cannot be applied",
+    });
+    expect(document.activeElement).toBe(simultaneous);
+    expect(
+      document.getElementById("relationship-conditions-error")?.textContent,
+    ).toContain("Assign each participant property at most once");
+    expect(
+      document.getElementById("relationship-descriptor-error")?.textContent,
+    ).toContain("Assign each participant property at most once");
+    expect(conditionGroup.getAttribute("aria-describedby")).toBe(
+      "relationship-conditions-guidance relationship-conditions-error",
+    );
+    expect(expectationGroup.getAttribute("aria-describedby")).toBe(
+      "relationship-expectations-guidance relationship-descriptor-error",
+    );
+    expect(
+      fetchMock.mock.calls.filter(
+        ([, init]) => (init as RequestInit | undefined)?.method === "POST",
+      ),
+    ).toEqual([]);
+  });
+  it("uses compact accessible icon controls for descriptor removal and buttons for row additions", async () => {
+    const user = userEvent.setup(),
+      fetchMock = vi.fn().mockResolvedValue(response(capabilities));
+    vi.stubGlobal("fetch", fetchMock);
+    renderAt();
+    await metric(user, "cpu", "CPU");
+    await metric(user, "throughput", "Throughput");
+    await user.click(screen.getByText("Add Relationship"));
+
+    await user.click(screen.getByRole("button", { name: "Add condition" }));
+    await user.click(screen.getByRole("button", { name: "Add expectation" }));
+
+    const conditionRemoval = screen.getByRole("button", {
+        name: "Remove When — conditions row",
+      }),
+      expectationRemoval = screen.getByRole("button", {
+        name: "Remove Expect — evaluated when applicable row",
+      });
+    for (const control of [conditionRemoval, expectationRemoval]) {
+      expect(control.className).toContain("size-10");
+      expect(control.textContent).toBe("");
+      expect(control.querySelector("svg[aria-hidden='true']")).toBeTruthy();
+    }
+
+    await user.click(conditionRemoval);
+    await user.click(expectationRemoval);
+    expect(
+      screen.queryByRole("button", { name: "Remove When — conditions row" }),
+    ).toBeNull();
+    expect(
+      screen.queryByRole("button", {
+        name: "Remove Expect — evaluated when applicable row",
+      }),
+    ).toBeNull();
+    expect(
+      fetchMock.mock.calls.filter(
+        ([, init]) => (init as RequestInit | undefined)?.method === "POST",
+      ),
+    ).toEqual([]);
+  });
+  it("renders persistent Relationship guidance and connects participant and descriptor errors accessibly", async () => {
+    const user = userEvent.setup(),
+      fetchMock = vi.fn().mockResolvedValue(response(capabilities));
+    vi.stubGlobal("fetch", fetchMock);
+    renderAt();
+    await metric(user, "cpu", "CPU");
+    await metric(user, "throughput", "Throughput");
+    await alert(user);
+    await user.click(screen.getByText("Add Relationship"));
+    for (const heading of [
+      "Relationship identity",
+      "Participants",
+      "When — conditions",
+      "Expect — evaluated when applicable",
+      "Rule semantics",
+    ])
+      expect(screen.getByRole("heading", { name: heading })).toBeTruthy();
+    expect(
+      screen.getByText(
+        "Stable lowercase identifier used inside this Observation.",
+      ),
+    ).toBeTruthy();
+    expect(screen.getByPlaceholderText("pressure_flow")).toBeTruthy();
+    expect(
+      screen.getByText(
+        "Select 2 or more distinct current draft Metric Lenses. Alert Lenses cannot participate.",
+      ),
+    ).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Cancel" })).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Apply changes" })).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Add condition" })).toBeTruthy();
+    expect(
+      screen.getByRole("button", { name: "Add expectation" }),
+    ).toBeTruthy();
+    expect(screen.queryByLabelText(/CPU alert/)).toBeNull();
+    expect(screen.getByLabelText("CPU (cpu)")).toBeTruthy();
+    expect(
+      screen.getByText(
+        "Metric-only deterministic rule. Conditions determine applicability. Expectations are checked only when applicable.",
+      ),
+    ).toBeTruthy();
+    const rulePanel = screen.getByRole("heading", {
+      name: "Rule semantics",
+    }).parentElement!;
+    const rail = rulePanel.parentElement!.parentElement!;
+    expect(rail.className).toContain("lg:sticky");
+    expect(rail.contains(screen.getByRole("button", { name: "Cancel" }))).toBe(
+      true,
+    );
+    expect(
+      rail.contains(screen.getByRole("button", { name: "Apply changes" })),
+    ).toBe(true);
+    await user.click(screen.getByLabelText("CPU (cpu)"));
+    await user.click(screen.getByRole("button", { name: "Add condition" }));
+    expect(
+      screen.getAllByText(/Each row pairs a selected Metric Lens/),
+    ).toHaveLength(2);
+    expect(screen.getByText("Participant")).toBeTruthy();
+    expect(screen.getByText("Required current state")).toBeTruthy();
+    expect(
+      Array.from(
+        (
+          screen.getByLabelText(
+            "When — conditions property",
+          ) as HTMLSelectElement
+        ).options,
+      ).map((option) => option.value),
+    ).toEqual(["trend.direction", "trend.rate", "variability.state"]);
+    expect(
+      Array.from(
+        (screen.getByLabelText("When — conditions value") as HTMLSelectElement)
+          .options,
+      ).map((option) => option.value),
+    ).toEqual(["increasing", "decreasing", "stable"]);
+    expect(screen.queryByText(/DSL/i)).toBeNull();
+    await user.selectOptions(
+      screen.getByLabelText("When — conditions participant"),
+      "cpu",
+    );
+    await user.type(screen.getByLabelText("Relationship ID"), "cpu_relation");
+    await user.type(screen.getByLabelText("Name"), "CPU relation");
+    await user.click(screen.getByRole("button", { name: "Add expectation" }));
+    await user.selectOptions(
+      screen.getByLabelText("Expect — evaluated when applicable participant"),
+      "cpu",
+    );
+    await user.click(screen.getByText("Apply changes"));
+    const participant = screen.getByLabelText("CPU (cpu)");
+    expect(participant.getAttribute("aria-invalid")).toBe("true");
+    expect(participant.getAttribute("aria-describedby")).toBe(
+      "relationship-participants-guidance relationship-participants-error",
+    );
+    expect(
+      document.getElementById("relationship-participants-error")?.textContent,
+    ).toContain("Select 2 or more distinct");
+    await user.click(screen.getByLabelText("Throughput (throughput)"));
+    await user.click(screen.getByText("Apply changes"));
+    const descriptor = screen.getByLabelText(
+      "Expect — evaluated when applicable participant",
+    );
+    expect(descriptor.getAttribute("aria-invalid")).toBe("false");
+    expect(descriptor.getAttribute("aria-describedby")).toBe(
+      "relationship-expectations-guidance",
+    );
+    expect(
+      document.getElementById("relationship-participants-error")?.textContent,
+    ).toContain("Every participant must appear");
+  });
+  it("shows Alert Lens input guidance and retains helper/error links for repeatable fields", async () => {
+    const user = userEvent.setup(),
+      fetchMock = vi.fn().mockResolvedValue(response(capabilities));
+    vi.stubGlobal("fetch", fetchMock);
+    renderAt();
+    await user.click(screen.getByText("Add Alert Lens"));
+    expect(
+      screen.getByText(
+        "Stable lowercase identifier used inside this Observation.",
+      ),
+    ).toBeTruthy();
+    expect(screen.getByPlaceholderText("release_alerts")).toBeTruthy();
+    expect(
+      screen.getByText(
+        /provider-native selector exactly as the provider expects/,
+      ),
+    ).toBeTruthy();
+    expect(screen.getByPlaceholderText("project = REL")).toBeTruthy();
+    expect(
+      screen.getByText(
+        /Add concise analytical intents in the order they should guide analysis/,
+      ),
+    ).toBeTruthy();
+    expect(
+      screen.getByText(
+        /equal-duration earlier window using a unique positive offset/,
+      ),
+    ).toBeTruthy();
+    await user.click(screen.getByText("Add reference period"));
+    const period = screen.getByLabelText("Reference period 1");
+    expect(period.getAttribute("placeholder")).toBe("1d");
+    expect(period.getAttribute("aria-describedby")).toBe(
+      "reference-periods-guidance",
+    );
+    await user.type(screen.getByLabelText("Lens ID"), "release_alerts");
+    await user.type(screen.getByLabelText("Name"), "Release alerts");
+    await user.type(
+      screen.getByLabelText("Provider selector"),
+      "project = REL",
+    );
+    await user.type(period, "0d");
+    await user.click(screen.getByText("Apply changes"));
+    const summary = await screen.findByRole("alert", {
+      name: "Alert Lens changes cannot be applied",
+    });
+    expect(document.activeElement).toBe(summary);
+    expect(period.getAttribute("aria-describedby")).toBe(
+      "reference-periods-guidance reference-periods-error",
+    );
+    expect(
+      document.getElementById("reference-periods-error")?.textContent,
+    ).toContain("unique positive offsets");
+  });
+});
