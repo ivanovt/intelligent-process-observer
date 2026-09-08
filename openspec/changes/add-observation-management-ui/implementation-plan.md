@@ -316,7 +316,7 @@ Mutable Coordinator-owned execution metadata only. Do not place new requirements
 | Item | Current value |
 |---|---|
 | Coordinator status | EXECUTING |
-| Active assignment | VS-02 |
+| Active assignment | VS-02-C01 bounded correction |
 | Last accepted slice | VS-01 |
-| Bounded correction | none |
+| Bounded correction | VS-02-C01 — surface backend field paths and retained correction flow, render successful-create confirmation, add the complete rendered draft/editor/POST lifecycle evidence, and restore frame 10 configuration/content/summary hierarchy with header create action. Expected risk: high-risk (external aggregate error/success handling). |
 | Stop/escalation reason | none |
