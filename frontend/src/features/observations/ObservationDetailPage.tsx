@@ -9,7 +9,7 @@ import { DefinitionInspection } from './DefinitionReview'
 /** Renders the supported read-only configuration inspection route. */
 export function ObservationDetailPage() {
   const {observationId=''}=useParams(),location=useLocation(),{state,retry}=useRequest(signal=>getObservation(observationId,signal),[observationId])
-  const confirmation=location.state?.created?<div className="mb-5"><InlineNotice>Observation definition created successfully. You are viewing its read-only configuration.</InlineNotice></div>:null
+  const confirmation=location.state?.created?<div className="mb-5"><InlineNotice tone="success">Observation definition created successfully. You are viewing its read-only configuration.</InlineNotice></div>:null
   if(state.status==='loading')return <DetailFrame>{confirmation}<Panel title="Loading definition" detail="Retrieving the Observation definition…"/></DetailFrame>
   if(state.status==='error'){const notFound=(state.error as {status?:number}).status===404;return <DetailFrame>{confirmation}{notFound?<Panel title="Definition not found" detail="This Observation definition is unavailable or no longer exists."/>:<InlineNotice tone="error">Unable to load this Observation definition. <button className="font-semibold underline" onClick={retry}>Try again</button></InlineNotice>}</DetailFrame>}
   const observation=state.data

@@ -1,18 +1,121 @@
-import { useEffect, useState } from 'react'
-import { Link, useLocation, useNavigate } from 'react-router-dom'
-import { Button, Field, InlineNotice, Input, Textarea } from '../../components/ui'
+import { Activity, BellRing, CheckCircle2, CircleAlert, GitFork, Pencil, Plus, SlidersHorizontal, TriangleAlert } from 'lucide-react'
+import { Children, useEffect, useRef, useState, type ReactNode } from 'react'
+import { useLocation, useNavigate } from 'react-router-dom'
+import { ActionLink, Button, Field, FormSideRail, InlineNotice, Input, PageHeader, Textarea, ValidationSummary, type ValidationIssue } from '../../components/ui'
 import { createObservation } from './api'
-import { serializeDraft, useObservationDraft, validateDraft, type DraftErrors } from './draft'
-import { ApiError } from './types'
+import { serializeDraft, useObservationDraft, validateDraft, type DraftErrors, type ObservationDraft } from './draft'
 import { DefinitionReview } from './DefinitionReview'
+import { ApiError } from './types'
+
+const configurationSections = [['general', 'General'], ['metric-lenses', 'Metric lenses'], ['alert-lenses', 'Alert lenses'], ['relationships', 'Relationships'], ['review', 'Review']] as const
+type ConfigurationSectionId = (typeof configurationSections)[number][0]
+type NormalizedIssue = ValidationIssue & { path: string; section: ConfigurationSectionId }
+const sectionActivationOffset = 160
+
+function sectionForPath(path: string): ConfigurationSectionId {
+  if (['name', 'description', 'objective'].includes(path)) return 'general'
+  if (path.startsWith('lenses.')) return 'metric-lenses'
+  if (path.startsWith('alert_lenses.')) return 'alert-lenses'
+  if (path.startsWith('relationships.')) return 'relationships'
+  return 'review'
+}
+
+function normalizeIssues(errors: DraftErrors, draft: ObservationDraft): NormalizedIssue[] {
+  return Object.entries(errors).map(([path, message]) => {
+    const section = sectionForPath(path)
+    if (['name', 'description', 'objective'].includes(path)) return { path, message, section, to: `#general-${path}`, linkLabel: `Correct ${path}` }
+    const match = /^(lenses|alert_lenses|relationships)\.(\d+)(?:\.|$)/.exec(path)
+    if (!match) return { path, message, section, to: `#${section}`, linkLabel: `Go to ${section === 'review' ? 'Review' : section}` }
+    const index = Number(match[2])
+    const item = match[1] === 'lenses' ? draft.lenses[index] : match[1] === 'alert_lenses' ? draft.alert_lenses[index] : draft.relationships[index]
+    if (!item) return { path, message, section, to: `#${section}`, linkLabel: `Go to ${section}` }
+    const kind = match[1] === 'lenses' ? 'Metric Lens' : match[1] === 'alert_lenses' ? 'Alert Lens' : 'Relationship'
+    return { path, message: `${kind} “${item.name || item.id || 'unnamed'}”: ${message}`, section, to: `${section}/${item.clientKey}`, linkLabel: `Correct ${kind}` }
+  })
+}
 
 /** Renders the aggregate-owned Observation creation and validation flow. */
 export function CreateObservationPage() {
-  const {draft,fresh,clear,updateGeneral}=useObservationDraft(),navigate=useNavigate(),location=useLocation()
-  const [errors,setErrors]=useState<DraftErrors>({}),[failure,setFailure]=useState(''),[pending,setPending]=useState(false)
-  useEffect(()=>{if(!draft)fresh()},[draft,fresh])
-  if(!draft)return null
-  const submit=async()=>{if(pending)return;const next=validateDraft(draft);setErrors(next);setFailure('');if(Object.keys(next).length)return;setPending(true);try{const created=await createObservation(serializeDraft(draft));clear();navigate(`/observations/${created.id}`,{replace:true,state:{created:true}})}catch(error){const api=error instanceof ApiError?error:null;if(api?.field)setErrors({[api.field]:api.message});else setFailure(api?.message??'Unable to create the Observation definition.')}finally{setPending(false)}}
-  const fields=Object.entries(errors).filter(([path])=>!['name','description','objective','aggregate'].includes(path));const child=fields.flatMap(([path,message])=>{const alertMatch=/^alert_lenses\.(\d+)(?:\.|$)/.exec(path),metricMatch=/^lenses\.(\d+)(?:\.|$)/.exec(path),relationshipMatch=/^relationships\.(\d+)(?:\.|$)/.exec(path),alert=alertMatch?draft.alert_lenses[Number(alertMatch[1])]:undefined,metric=metricMatch?draft.lenses[Number(metricMatch[1])]:undefined,relationship=relationshipMatch?draft.relationships[Number(relationshipMatch[1])]:undefined;return alert?[{path,message,name:alert.name||alert.id||'unnamed',to:`alert-lenses/${alert.clientKey}`,kind:'Alert Lens'}]:metric?[{path,message,name:metric.name||metric.id||'unnamed',to:`metric-lenses/${metric.clientKey}`,kind:'Metric Lens'}]:relationship?[{path,message,name:relationship.name||relationship.id||'unnamed',to:`relationships/${relationship.clientKey}`,kind:'Relationship'}]:[]});const fallback=fields.filter(([path])=>!child.some(item=>item.path===path)),reviewErrors=validateDraft(draft)
-  return <section className="mx-auto max-w-6xl"><header className="mb-8 flex flex-wrap justify-between gap-4"><div><p className="text-sm text-[var(--color-text-secondary)]">Observations / Create</p><h1 className="mt-1 text-[28px] font-semibold tracking-tight">Create Observation</h1><p className="mt-2 text-[var(--color-text-secondary)]">Configure one validated Observation Definition.</p></div><div className="flex gap-3"><Button variant="secondary" disabled={pending} onClick={()=>{clear();navigate('/observations')}}>Cancel</Button><Button onClick={submit} disabled={pending}>{pending?'Creating…':'Create Observation'}</Button></div></header>{location.state?.draftLost?<InlineNotice>Your previous draft is unavailable. Start with a new Observation draft.</InlineNotice>:null}{failure?<InlineNotice tone="error">{failure}</InlineNotice>:null}{child.length?<InlineNotice tone="error">{child.map(item=><p key={item.path}>{item.kind} “{item.name}”: {item.message} <Link className="font-semibold underline" to={item.to}>Correct {item.kind}</Link></p>)}</InlineNotice>:null}{fallback.length?<InlineNotice tone="error">{fallback.map(([path,message])=><p key={path}>Field {path}: {message}</p>)}</InlineNotice>:null}<div className="mt-5 grid gap-5 lg:grid-cols-[160px_minmax(0,1fr)_340px]"><nav aria-label="Configuration sections" className="hidden h-fit rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] p-3 lg:block">Configuration<br/>General<br/>Metric lenses<br/>Alert lenses<br/>Relationships<br/>Review</nav><div className="space-y-5"><section className="rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] p-6"><h2>General</h2><Field label="Name" message={errors.name}><Input value={draft.name} onChange={event=>updateGeneral({...draft,name:event.target.value})}/></Field><Field label="Description (optional)" message={errors.description}><Textarea value={draft.description} onChange={event=>updateGeneral({...draft,description:event.target.value})}/></Field><Field label="Objective" message={errors.objective}><Textarea value={draft.objective} onChange={event=>updateGeneral({...draft,objective:event.target.value})}/></Field></section><section className="rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] p-6"><h2>Metric lenses</h2><Link to="metric-lenses/new">Add Metric Lens</Link>{draft.lenses.map(metric=><p key={metric.clientKey}>{metric.name} <Link to={`metric-lenses/${metric.clientKey}`}>Edit</Link></p>)}</section><section className="rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] p-6"><h2>Alert lenses</h2><Link to="alert-lenses/new">Add Alert Lens</Link>{draft.alert_lenses.map(alert=><p key={alert.clientKey}>{alert.name} <Link to={`alert-lenses/${alert.clientKey}`}>Edit</Link></p>)}</section><section className="rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] p-6"><h2>Relationships</h2><p className="text-sm text-[var(--color-text-secondary)]">Engineer-defined current-state rules over Metric Lenses only.</p><Link to="relationships/new">Add Relationship</Link>{draft.relationships.map(relationship=><p key={relationship.clientKey}>{relationship.name} <Link to={`relationships/${relationship.clientKey}`}>Edit</Link></p>)}</section><DefinitionReview definition={draft} errors={reviewErrors}/></div><aside className="h-fit rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] p-6"><h2>Definition Summary</h2><p>Metric lenses: {draft.lenses.length}</p><p>Alert lenses: {draft.alert_lenses.length}</p><p>Relationships: {draft.relationships.length}</p>{errors.aggregate?<p>{errors.aggregate}</p>:null}<Button onClick={submit} disabled={pending}>{pending?'Creating…':'Create Observation'}</Button></aside></div></section>
+  const { draft, explicitErrors: errors, fresh, clear, setExplicitErrors, updateGeneral } = useObservationDraft()
+  const navigate = useNavigate()
+  const location = useLocation()
+  const [failure, setFailure] = useState('')
+  const [pending, setPending] = useState(false)
+  const [activeSection, setActiveSection] = useState<ConfigurationSectionId>('general')
+  const animationFrame = useRef<number | null>(null)
+  const summaryRef = useRef<HTMLDivElement>(null)
+
+  useEffect(() => { if (!draft) fresh() }, [draft, fresh])
+  useEffect(() => {
+    if (!draft) return
+    const setCurrentSection = (next: ConfigurationSectionId) => setActiveSection((current) => current === next ? current : next)
+    const updateActiveSection = () => {
+      animationFrame.current = null
+      if (window.scrollY <= 0) return setCurrentSection('general')
+      if (window.scrollY + window.innerHeight >= document.documentElement.scrollHeight - 1) return setCurrentSection('review')
+      setCurrentSection(configurationSections.reduce<ConfigurationSectionId>((last, [id]) => {
+        const section = document.getElementById(id)
+        return section && section.getBoundingClientRect().top <= sectionActivationOffset ? id : last
+      }, 'general'))
+    }
+    const scheduleUpdate = () => { if (animationFrame.current === null) animationFrame.current = window.requestAnimationFrame(updateActiveSection) }
+    scheduleUpdate()
+    window.addEventListener('scroll', scheduleUpdate, { passive: true })
+    window.addEventListener('resize', scheduleUpdate)
+    return () => { window.removeEventListener('scroll', scheduleUpdate); window.removeEventListener('resize', scheduleUpdate); if (animationFrame.current !== null) window.cancelAnimationFrame(animationFrame.current) }
+  }, [draft])
+  useEffect(() => { if (Object.keys(errors).length) summaryRef.current?.focus() }, [errors])
+  if (!draft) return null
+
+  const submit = async () => {
+    if (pending) return
+    const next = validateDraft(draft)
+    setExplicitErrors(next)
+    setFailure('')
+    if (Object.keys(next).length) return
+    setPending(true)
+    try {
+      const created = await createObservation(serializeDraft(draft))
+      clear()
+      navigate(`/observations/${created.id}`, { replace: true, state: { created: true } })
+    } catch (error) {
+      const api = error instanceof ApiError ? error : null
+      if (api?.field) setExplicitErrors({ [api.field]: api.message })
+      else setFailure(api?.message ?? 'Unable to create the Observation definition.')
+    } finally { setPending(false) }
+  }
+
+  const issues = normalizeIssues(errors, draft)
+  const issueCounts = issues.reduce<Partial<Record<ConfigurationSectionId, number>>>((counts, issue) => ({ ...counts, [issue.section]: (counts[issue.section] ?? 0) + 1 }), {})
+  const liveErrors = validateDraft(draft)
+  const hasLens = draft.lenses.length + draft.alert_lenses.length > 0
+  return <section className="mx-auto max-w-6xl"><div className="grid gap-5 lg:grid-cols-[minmax(0,1fr)_300px]">
+    <PageHeader className="mb-3" eyebrow="Observations / Create" title="Create Observation" description="Configure one validated Observation Definition." />
+    <FormSideRail className="lg:col-start-2 lg:row-span-2 lg:row-start-1" actions={<><Button variant="secondary" disabled={pending} onClick={() => { clear(); navigate('/observations') }}>Cancel</Button><Button onClick={submit} disabled={pending}><CheckCircle2 size={17} aria-hidden="true" />{pending ? 'Creating…' : 'Create Observation'}</Button></>}>
+      <DefinitionSummary metricCount={draft.lenses.length} alertCount={draft.alert_lenses.length} relationshipCount={draft.relationships.length} explicitIssueCount={issues.length} hasLens={hasLens} isReady={!Object.keys(liveErrors).length} />
+    </FormSideRail>
+    <div className="min-w-0">
+      {location.state?.draftLost ? <InlineNotice tone="info">Your previous draft is unavailable. Start with a new Observation draft.</InlineNotice> : null}
+      {failure ? <div className="mb-5"><InlineNotice tone="error">{failure}</InlineNotice></div> : null}
+      {issues.length ? <div className="mb-5"><ValidationSummary ref={summaryRef} issues={issues} title="Observation cannot be created" /></div> : null}
+      <div className="grid min-w-0 gap-5 lg:grid-cols-[180px_minmax(0,1fr)]"><ConfigurationNav activeSection={activeSection} onActivate={setActiveSection} issueCounts={issueCounts} /><div className="space-y-5">
+        <section id="general" className="rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] p-6"><SectionHeading icon={<SlidersHorizontal size={18} aria-hidden="true" />} title="General" description="Name the Observation and state the outcome it should observe." /><div className="mt-5 space-y-4">
+          <Field label="Name" description="Human-readable name for this Observation Definition." error={errors.name}><Input id="general-name" placeholder="Cooling system health" value={draft.name} onChange={(event) => updateGeneral({ ...draft, name: event.target.value })} /></Field>
+          <Field label="Description (optional)" description="Optional context that explains this Observation." error={errors.description}><Textarea id="general-description" placeholder="Monitors cooling-system operating conditions." value={draft.description} onChange={(event) => updateGeneral({ ...draft, description: event.target.value })} /></Field>
+          <Field label="Objective" description="Outcome this Observation should evaluate." error={errors.objective}><Textarea id="general-objective" placeholder="Detect unexpected cooling pressure changes." value={draft.objective} onChange={(event) => updateGeneral({ ...draft, objective: event.target.value })} /></Field>
+        </div></section>
+        <ConfigurationSection id="metric-lenses" icon={<Activity size={18} aria-hidden="true" />} title="Metric lenses" description="Configure the individual metrics this Observation evaluates." addTo="metric-lenses/new" addLabel="Add Metric Lens">{draft.lenses.map((metric, index) => <DraftRow key={metric.clientKey} name={metric.name || 'Unnamed Metric Lens'} to={`metric-lenses/${metric.clientKey}`} errors={childErrors(errors, 'lenses', index)} />)}</ConfigurationSection>
+        <ConfigurationSection id="alert-lenses" icon={<BellRing size={18} aria-hidden="true" />} title="Alert lenses" description="Configure provider-native alert selectors for this Observation." addTo="alert-lenses/new" addLabel="Add Alert Lens">{draft.alert_lenses.map((alert, index) => <DraftRow key={alert.clientKey} name={alert.name || 'Unnamed Alert Lens'} to={`alert-lenses/${alert.clientKey}`} errors={childErrors(errors, 'alert_lenses', index)} />)}</ConfigurationSection>
+        <ConfigurationSection id="relationships" icon={<GitFork size={18} aria-hidden="true" />} title="Relationships" description="Engineer-defined current-state rules over Metric Lenses only." addTo="relationships/new" addLabel="Add Relationship">{draft.relationships.map((relationship, index) => <DraftRow key={relationship.clientKey} name={relationship.name || 'Unnamed Relationship'} to={`relationships/${relationship.clientKey}`} errors={childErrors(errors, 'relationships', index)} />)}</ConfigurationSection>
+        <div id="review"><DefinitionReview definition={draft} liveErrors={liveErrors} explicitErrors={errors} /></div>
+      </div></div>
+    </div>
+  </div></section>
 }
+
+function ConfigurationNav({ activeSection, onActivate, issueCounts }: { activeSection: ConfigurationSectionId; onActivate: (section: ConfigurationSectionId) => void; issueCounts: Partial<Record<ConfigurationSectionId, number>> }) { return <nav aria-label="Configuration sections" className="hidden h-fit self-start rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] p-3 lg:sticky lg:top-6 lg:block"><p className="px-3 pb-2 text-sm font-semibold">Configuration</p><div className="grid gap-1">{configurationSections.map(([target, label]) => { const isActive = activeSection === target; const count = issueCounts[target]; return <a key={target} href={`#${target}`} aria-current={isActive ? 'location' : undefined} onClick={() => onActivate(target)} className={`flex items-center justify-between gap-2 rounded-lg px-3 py-2 text-sm transition-colors focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--color-focus)] ${isActive ? 'bg-[color-mix(in_srgb,var(--color-primary)_12%,transparent)] font-semibold text-[var(--color-primary)]' : 'text-[var(--color-text-secondary)] hover:bg-[var(--color-surface-muted)] hover:text-[var(--color-text-primary)]'}`}><span>{label}</span>{count ? <span aria-label={`${count} issue${count === 1 ? '' : 's'}`} className="rounded-full bg-[var(--color-error-surface)] px-1.5 py-0.5 text-xs font-semibold text-[var(--color-error)]">{count}</span> : null}</a> })}</div></nav> }
+function childErrors(errors: DraftErrors, collection: 'lenses' | 'alert_lenses' | 'relationships', index: number) { const root=`${collection}.${index}`; return Object.entries(errors).filter(([path]) => path === root || path.startsWith(`${root}.`)).map(([, message]) => message) }
+function SectionHeading({ icon, title, description }: { icon: ReactNode; title: string; description?: string }) { return <><h2 className="flex items-center gap-2 font-semibold text-[var(--color-text-primary)]"><span className="text-[var(--color-primary)]">{icon}</span>{title}</h2>{description ? <p className="mt-1 text-sm text-[var(--color-text-secondary)]">{description}</p> : null}</> }
+function ConfigurationSection({ id, icon, title, description, addTo, addLabel, children }: { id: string; icon: ReactNode; title: string; description: string; addTo: string; addLabel: string; children: ReactNode }) { return <section id={id} className="rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] p-6"><SectionHeading icon={icon} title={title} description={description} /><ActionLink to={addTo} variant="secondary" className="mt-5 w-fit"><Plus size={17} aria-hidden="true" />{addLabel}</ActionLink>{Children.count(children) > 0 ? <div className="mt-4 space-y-2">{children}</div> : null}</section> }
+function DraftRow({ errors, name, to }: { errors: string[]; name: string; to: string }) { const errorId=`${to.replace(/[^a-z0-9]/gi,'-')}-error`; return <><p className={`flex min-h-12 items-center justify-between gap-3 rounded-lg border py-1 pl-3 pr-1 text-sm ${errors.length?'border-[var(--color-error-border)] bg-[var(--color-error-surface)]':'border-[var(--color-border)] bg-[var(--color-surface-muted)]'}`}><span className="min-w-0 truncate font-medium text-[var(--color-text-primary)]" title={name}>{name}</span><ActionLink aria-describedby={errors.length?errorId:undefined} to={to} variant="ghost" className="px-3"><Pencil size={16} aria-hidden="true" />Edit</ActionLink></p>{errors.length?<p id={errorId} className="-mt-1 mb-2 flex items-center gap-1 text-xs text-[var(--color-error)]"><CircleAlert size={14} aria-hidden="true"/>{errors.join(' ')}</p>:null}</> }
+function DefinitionSummary({ metricCount, alertCount, relationshipCount, explicitIssueCount, hasLens, isReady }: { metricCount: number; alertCount: number; relationshipCount: number; explicitIssueCount: number; hasLens: boolean; isReady: boolean }) { const status = explicitIssueCount ? { icon: <CircleAlert size={17} aria-hidden="true" />, message: `${explicitIssueCount} issue${explicitIssueCount === 1 ? '' : 's'} need attention.`, tone: 'text-[var(--color-error)]' } : !hasLens ? { icon: <TriangleAlert size={17} aria-hidden="true" />, message: 'Add at least one Lens to continue.', tone: 'text-[var(--color-warning)]' } : isReady ? { icon: <CheckCircle2 size={17} aria-hidden="true" />, message: 'Ready to create.', tone: 'text-[var(--color-success)]' } : { icon: <TriangleAlert size={17} aria-hidden="true" />, message: 'Complete required details.', tone: 'text-[var(--color-warning)]' }; const rows = [{ icon: <Activity size={17} aria-hidden="true" />, label: 'Metric lenses', count: metricCount }, { icon: <BellRing size={17} aria-hidden="true" />, label: 'Alert lenses', count: alertCount }, { icon: <GitFork size={17} aria-hidden="true" />, label: 'Relationships', count: relationshipCount }]; return <aside aria-label="Definition Summary" className="h-fit rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] p-6"><h2 className="font-semibold">Definition Summary</h2><dl className="mt-4 divide-y divide-[var(--color-border)] border-y border-[var(--color-border)]">{rows.map((row) => <div key={row.label} className="flex items-center justify-between gap-3 py-3"><dt className="flex items-center gap-2 text-sm text-[var(--color-text-secondary)]">{row.icon}{row.label}<span className="sr-only">{`${row.label}: ${row.count}`}</span></dt><dd className="font-semibold tabular-nums">{row.count}</dd></div>)}</dl><div role="status" className={`mt-4 flex items-start gap-2 text-sm font-medium ${status.tone}`}>{status.icon}<p>{status.message}</p></div></aside> }

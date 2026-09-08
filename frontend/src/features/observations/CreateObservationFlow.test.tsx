@@ -1,4 +1,4 @@
-import { cleanup, render, screen } from '@testing-library/react'
+import { act, cleanup, render, screen, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { BrowserRouter, MemoryRouter } from 'react-router-dom'
 import { afterEach, describe, expect, it, vi } from 'vitest'
@@ -70,7 +70,101 @@ describe('Observation create routes',()=>{
 
   it('blocks locally invalid submits with no POST and retains the draft',async()=>{
     const user=userEvent.setup(),fetchMock=vi.fn();vi.stubGlobal('fetch',fetchMock);renderAt('/observations/new')
-    await user.click(screen.getAllByRole('button',{name:'Create Observation'})[0]);expect(await screen.findByText('Name is required.')).toBeTruthy();expect(screen.getByText('Configure at least one Lens.')).toBeTruthy();expect(fetchMock).not.toHaveBeenCalled()
+    expect(screen.getAllByRole('button',{name:'Create Observation'})).toHaveLength(1)
+    await user.click(screen.getAllByRole('button',{name:'Create Observation'})[0]);const summary=await screen.findByRole('alert',{name:'Observation cannot be created'});expect(summary.textContent).toContain('Name is required.');expect(document.activeElement).toBe(summary);expect(screen.getAllByText('Configure at least one Lens.')).toHaveLength(1);expect(fetchMock).not.toHaveBeenCalled()
+  })
+
+  it('retains an exact server child error through local correction until Create revalidates it',async()=>{
+    const user=userEvent.setup(),fetchMock=vi.fn().mockResolvedValueOnce(response({code:'validation_error',message:'Correct the provider selector.',field:'alert_lenses.0.selector.query'},422)).mockResolvedValueOnce(response(created,201)).mockResolvedValueOnce(response(created));vi.stubGlobal('fetch',fetchMock);renderAt('/observations/new');await populateValidDraft(user)
+    await user.click(screen.getByRole('button',{name:'Create Observation'}));const summary=await screen.findByRole('alert',{name:'Observation cannot be created'});expect(document.activeElement).toBe(summary);expect(summary.textContent).toContain('Alert Lens “Release alerts”: Correct the provider selector.')
+    const alertSection=screen.getByRole('heading',{name:'Alert lenses'}).closest('section')!;const row=Array.from(alertSection.querySelectorAll('p')).find(item=>item.textContent?.includes('Release alerts')&&item.querySelector('a'))!;expect(row.className).toContain('border-[var(--color-error-border)]');expect(row.nextElementSibling?.textContent).toContain('Correct the provider selector.')
+    const navigation=within(screen.getByRole('navigation',{name:'Configuration sections'}));const alertNav=navigation.getAllByRole('link').find(link=>link.textContent?.includes('Alert lenses'))!;expect(alertNav.textContent).toContain('1');expect(alertNav.getAttribute('aria-current')).toBeNull()
+    await user.click(screen.getByRole('link',{name:'Correct Alert Lens'}));await user.clear(screen.getByLabelText('Provider selector'));await user.type(screen.getByLabelText('Provider selector'),'project = RELEASE');await user.click(screen.getByRole('button',{name:'Apply changes'}));
+    const retained=screen.getByRole('alert',{name:'Observation cannot be created'}),retainedAlertSection=screen.getByRole('heading',{name:'Alert lenses'}).closest('section')!,retainedNavigation=within(screen.getByRole('navigation',{name:'Configuration sections'})),retainedAlertNav=retainedNavigation.getAllByRole('link').find(link=>link.textContent?.includes('Alert lenses'))!;expect(document.activeElement).toBe(retained);expect(retained.textContent).toContain('Correct the provider selector.');expect(Array.from(retainedAlertSection.querySelectorAll('p')).find(item=>item.textContent?.includes('Release alerts')&&item.querySelector('a'))?.className).toContain('border-[var(--color-error-border)]');expect(retainedAlertNav.textContent).toContain('1');expect(screen.getByLabelText('Definition Summary').textContent).toContain('1 issue need attention.');const review=screen.getByRole('heading',{name:'Review'}).closest('section')!;expect(review.textContent).toContain('Values appear complete. Create again to confirm them.');expect(review.textContent).not.toContain('Ready to create')
+    await user.click(screen.getByRole('button',{name:'Create Observation'}));expect(await screen.findByText(/created successfully/i)).toBeTruthy();expect(fetchMock.mock.calls.filter(([url,init])=>url==='/api/v1/observations'&&(init as RequestInit).method==='POST')).toHaveLength(2)
+  })
+
+  it('marks the exact child-root server error on its DraftRow and connects its Edit action to the local message',async()=>{
+    const user=userEvent.setup(),fetchMock=vi.fn().mockResolvedValueOnce(response({code:'validation_error',message:'Correct this Alert Lens.',field:'alert_lenses.0'},422));vi.stubGlobal('fetch',fetchMock);renderAt('/observations/new');await populateValidDraft(user)
+    await user.click(screen.getByRole('button',{name:'Create Observation'}));const summary=await screen.findByRole('alert',{name:'Observation cannot be created'});expect(summary.textContent).toContain('Alert Lens “Release alerts”: Correct this Alert Lens.')
+    const alertSection=screen.getByRole('heading',{name:'Alert lenses'}).closest('section')!,row=Array.from(alertSection.querySelectorAll('p')).find(item=>item.textContent?.includes('Release alerts')&&item.querySelector('a'))!,edit=row.querySelector('a')!;expect(row.className).toContain('border-[var(--color-error-border)]');expect(row.className).toContain('bg-[var(--color-error-surface)]');const errorId=edit.getAttribute('aria-describedby');expect(errorId).toBeTruthy();expect(row.nextElementSibling?.id).toBe(errorId);expect(row.nextElementSibling?.querySelector('.lucide-circle-alert')).toBeTruthy();expect(row.nextElementSibling?.textContent).toContain('Correct this Alert Lens.');expect(fetchMock.mock.calls.filter(([,init])=>(init as RequestInit|undefined)?.method==='POST')).toHaveLength(1)
+  })
+
+  it('keeps general-field guidance visible and associates validation feedback with its control',async()=>{
+    const user=userEvent.setup();vi.stubGlobal('fetch',vi.fn());renderAt('/observations/new')
+    expect(screen.getByText('Human-readable name for this Observation Definition.')).toBeTruthy()
+    expect(screen.getByText('Optional context that explains this Observation.')).toBeTruthy()
+    expect(screen.getByText('Outcome this Observation should evaluate.')).toBeTruthy()
+    expect(screen.getByPlaceholderText('Cooling system health')).toBeTruthy()
+    expect(screen.getByPlaceholderText('Monitors cooling-system operating conditions.')).toBeTruthy()
+    expect(screen.getByPlaceholderText('Detect unexpected cooling pressure changes.')).toBeTruthy()
+    await user.click(screen.getByRole('button',{name:'Create Observation'}))
+    const name=screen.getByLabelText('Name')
+    expect(name.getAttribute('aria-invalid')).toBe('true')
+    const descriptions=name.getAttribute('aria-describedby')?.split(' ')??[]
+    expect(descriptions).toHaveLength(2)
+    expect(descriptions.map(id=>document.getElementById(id)?.textContent)).toEqual(expect.arrayContaining(['Human-readable name for this Observation Definition.','Name is required.']))
+  })
+
+  it('tracks the active configuration section from anchors and viewport geometry',async()=>{
+    const user=userEvent.setup()
+    const frames:FrameRequestCallback[]=[]
+    let scrollTop=0
+    let viewportHeight=600
+    let documentHeight=3000
+    vi.stubGlobal('requestAnimationFrame',(callback:FrameRequestCallback)=>{frames.push(callback);return frames.length})
+    vi.stubGlobal('cancelAnimationFrame',vi.fn())
+    vi.spyOn(window,'scrollY','get').mockImplementation(()=>scrollTop)
+    vi.spyOn(window,'innerHeight','get').mockImplementation(()=>viewportHeight)
+    vi.spyOn(document.documentElement,'scrollHeight','get').mockImplementation(()=>documentHeight)
+    vi.stubGlobal('fetch',vi.fn())
+    renderAt('/observations/new')
+    await screen.findByLabelText('Name')
+    const flushFrames=()=>{while(frames.length)act(()=>frames.shift()?.(0))}
+    const setSectionTop=(id:string,top:number)=>vi.spyOn(document.getElementById(id)!,'getBoundingClientRect').mockReturnValue({x:0,y:top,width:0,height:500,top,right:0,bottom:top+500,left:0,toJSON:()=>({})})
+    flushFrames()
+    const navigation=within(screen.getByRole('navigation',{name:'Configuration sections'}))
+    const current=()=>navigation.getAllByRole('link').filter((link)=>link.getAttribute('aria-current')==='location')
+
+    expect(current()).toHaveLength(1)
+    expect(current()[0].textContent).toBe('General')
+    const alertLink=navigation.getByRole('link',{name:'Alert lenses'})
+    expect(alertLink.getAttribute('href')).toBe('#alert-lenses')
+    alertLink.addEventListener('click',(event)=>event.preventDefault(),{once:true})
+
+    await user.click(alertLink)
+    expect(current()).toHaveLength(1)
+    expect(current()[0].textContent).toBe('Alert lenses')
+
+    setSectionTop('general',-600)
+    setSectionTop('metric-lenses',-100)
+    setSectionTop('alert-lenses',300)
+    setSectionTop('relationships',700)
+    setSectionTop('review',1100)
+    scrollTop=500
+    window.dispatchEvent(new Event('scroll'))
+    flushFrames()
+    expect(current()[0].textContent).toBe('Metric lenses')
+
+    setSectionTop('alert-lenses',-100)
+    window.dispatchEvent(new Event('resize'))
+    flushFrames()
+    expect(current()[0].textContent).toBe('Alert lenses')
+
+    scrollTop=0
+    window.dispatchEvent(new Event('scroll'))
+    flushFrames()
+    expect(current()).toHaveLength(1)
+    expect(current()[0].textContent).toBe('General')
+
+    scrollTop=2400
+    viewportHeight=600
+    documentHeight=3000
+    window.dispatchEvent(new Event('scroll'))
+    flushFrames()
+    expect(current()).toHaveLength(1)
+    expect(current()[0].textContent).toBe('Review')
+    expect(current()[0].getAttribute('aria-current')).toBe('location')
   })
 
   it('posts one exact Alert-only aggregate, protects a pending double submit, then keeps confirmation while the detail request is pending and fails',async()=>{
@@ -84,7 +178,7 @@ describe('Observation create routes',()=>{
 
   it('re-enables top-level Cancel after a create failure and retains the draft',async()=>{const user=userEvent.setup(),fetchMock=vi.fn().mockResolvedValueOnce(response({code:'unavailable',message:'Create unavailable'},503)).mockResolvedValueOnce(response([]));vi.stubGlobal('fetch',fetchMock);renderAt('/observations/new');await populateValidDraft(user);await user.click(screen.getAllByRole('button',{name:'Create Observation'})[0]);expect(await screen.findByText('Create unavailable')).toBeTruthy();expect((screen.getByRole('button',{name:'Cancel'}) as HTMLButtonElement).disabled).toBe(false);expect((screen.getByLabelText('Name') as HTMLInputElement).value).toBe('Release health');await user.click(screen.getByRole('button',{name:'Cancel'}));expect(await screen.findByText('No Observation definitions yet')).toBeTruthy()})
 
-  it('renders a live Review with readiness feedback and ordered draft summaries without writes',async()=>{const user=userEvent.setup(),fetchMock=vi.fn();vi.stubGlobal('fetch',fetchMock);renderAt('/observations/new');expect(screen.getByRole('heading',{name:'Review'})).toBeTruthy();expect(screen.getByText(/item.*need attention/i)).toBeTruthy();await user.type(await screen.findByLabelText('Name'),'Review health');await user.type(screen.getByLabelText('Objective'),'Objective is distinct');expect(screen.getAllByText('Objective is distinct')).toHaveLength(2);await createAlert(user,{id:'first',name:'First alert',query:'  raw = query  ',objectives:['First objective','Second objective'],references:['1d','7d']});await createAlert(user,{id:'second',name:'Second alert',query:'project=SECOND'});const review=screen.getByRole('heading',{name:'Review'}).closest('section')!;expect(review.textContent).toContain('Ready to create');expect(review.textContent).toContain('1. First alert · Alert');expect(review.textContent).toContain('2. Second alert · Alert');expect(review.textContent).toContain('Selector query:   raw = query  ');expect(fetchMock).not.toHaveBeenCalled()})
+  it('renders neutral pre-submit Review guidance and ordered draft summaries without writes',async()=>{const user=userEvent.setup(),fetchMock=vi.fn();vi.stubGlobal('fetch',fetchMock);renderAt('/observations/new');expect(screen.getByRole('heading',{name:'Review'})).toBeTruthy();expect(screen.getByText('Complete required details')).toBeTruthy();expect(screen.queryByRole('alert',{name:'Observation cannot be created'})).toBeNull();await user.type(await screen.findByLabelText('Name'),'Review health');await user.type(screen.getByLabelText('Objective'),'Objective is distinct');expect(screen.getAllByText('Objective is distinct')).toHaveLength(2);await createAlert(user,{id:'first',name:'First alert',query:'  raw = query  ',objectives:['First objective','Second objective'],references:['1d','7d']});await createAlert(user,{id:'second',name:'Second alert',query:'project=SECOND'});const review=screen.getByRole('heading',{name:'Review'}).closest('section')!;expect(review.textContent).toContain('Ready to create');expect(review.textContent).toContain('1. First alert · Alert');expect(review.textContent).toContain('2. Second alert · Alert');expect(review.textContent).toContain('Selector query:   raw = query  ');expect(fetchMock).not.toHaveBeenCalled()})
 
   it('keeps creation confirmation on the loaded read-only destination returned by the aggregate create',async()=>{
     const user=userEvent.setup(),fetchMock=vi.fn().mockResolvedValueOnce(response(created,201)).mockResolvedValueOnce(response(created));vi.stubGlobal('fetch',fetchMock);renderAt('/observations/new');await populateValidDraft(user,{id:'release_alerts',name:'Release alerts',query:' project = REL  AND status != Done ',objectives:['Assess recurrence','Compare recurrence'],references:['1d','7d']})
@@ -98,7 +192,7 @@ describe('Observation create routes',()=>{
 
   it('shows mapped and fallback server errors, retains values, provides child correction, and retries successfully',async()=>{
     const user=userEvent.setup();const errors=[{field:'description',message:'Description is invalid'},{field:'alert_lenses.0',message:'Aggregate child error'},{field:'alert_lenses.0.selector.query',message:'Nested child error'},{field:'alert_lenses.99.name',message:'Out of range'},{field:'unknown.field',message:'Unknown field'},{message:'Aggregate failure'}];const fetchMock=vi.fn();for(const error of errors)fetchMock.mockResolvedValueOnce(response({code:'validation_error',...error},422));fetchMock.mockResolvedValueOnce(response(created,201)).mockResolvedValueOnce(response(created));vi.stubGlobal('fetch',fetchMock);renderAt('/observations/new');await user.type(await screen.findByLabelText(/^Description \(optional\)/),'Retained description');await populateValidDraft(user)
-    for(const error of errors){await user.click(screen.getAllByRole('button',{name:'Create Observation'})[0]);if(error.field==='description')expect(await screen.findByText(error.message)).toBeTruthy();else expect((await screen.findByRole('alert')).textContent).toContain(error.message);expect((screen.getByLabelText('Name') as HTMLInputElement).value).toBe('Release health');expect((screen.getByLabelText(/^Description \(optional\)/) as HTMLTextAreaElement).value).toBe('Retained description');if(error.field?.startsWith('alert_lenses.0'))expect(screen.getByText('Correct Alert Lens')).toBeTruthy()}
+    for(const error of errors){await user.click(screen.getAllByRole('button',{name:'Create Observation'})[0]);if(error.field==='description')expect((await screen.findByRole('alert',{name:'Observation cannot be created'})).textContent).toContain(error.message);else expect((await screen.findByRole('alert')).textContent).toContain(error.message);expect((screen.getByLabelText('Name') as HTMLInputElement).value).toBe('Release health');expect((screen.getByLabelText(/^Description \(optional\)/) as HTMLTextAreaElement).value).toBe('Retained description');if(error.field?.startsWith('alert_lenses.0'))expect(screen.getByText('Correct Alert Lens')).toBeTruthy()}
     await user.click(screen.getAllByRole('button',{name:'Create Observation'})[0]);expect(await screen.findByText(/created successfully/i)).toBeTruthy();expect(fetchMock).toHaveBeenCalledTimes(8)
   })
   it('posts one exact Metric-only aggregate, retains its draft after a metric failure, and succeeds on retry',async()=>{const user=userEvent.setup();let postCount=0;const fetchMock=vi.fn().mockImplementation((url:string,init?:RequestInit)=>{if(url==='/api/v1/observation-definition-capabilities')return Promise.resolve(response(metricCapabilities));if(url==='/api/v1/observations'&&init?.method==='POST'){postCount+=1;return Promise.resolve(postCount===1?response({code:'validation_error',message:'Correct Metric query',field:'lenses.0.query'},422):response(metricCreated,201))}return Promise.resolve(response(metricCreated))});vi.stubGlobal('fetch',fetchMock);renderAt('/observations/new');await user.type(await screen.findByLabelText('Name'),'Metric health');await user.type(screen.getByLabelText('Objective'),'Observe metrics');await createMetric(user)
