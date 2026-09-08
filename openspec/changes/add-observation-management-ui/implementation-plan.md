@@ -316,7 +316,7 @@ Mutable Coordinator-owned execution metadata only. Do not place new requirements
 | Item | Current value |
 |---|---|
 | Coordinator status | EXECUTING |
-| Active assignment | VS-02-C04 bounded correction |
+| Active assignment | VS-02-C05 bounded correction |
 | Last accepted slice | VS-01 |
-| Bounded correction | VS-02-C04 — surface top-level backend `description` errors and tighten routed proof for same-position opaque-key replacement, contract-faithful 201 response, and create confirmation through 404 and loaded-success states. Expected risk: high-risk (external error/success handling). |
+| Bounded correction | VS-02-C05 — replace the invalid non-UUID routed 201 fixture identity with a backend-valid UUID and align expected detail URLs/hrefs. Test-only, expected risk: normal. |
 | Stop/escalation reason | none |
