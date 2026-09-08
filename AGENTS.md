@@ -262,11 +262,14 @@ Before planning, implementing, or reviewing frontend/UI changes, read:
 3. `docs/ui/ui_implementation_handoff_v1.md`
 4. relevant domain/runtime contracts under `docs/architecture/`
 
-### Frozen UI direction
+### Current UI direction
 
-UI Direction v1.1 is frozen. The MagicPath project referenced from
-`docs/ui/README.md` is the visual/UX source of truth; accepted architecture/contracts
-remain authoritative for domain and API semantics.
+UI Direction v1.2 is the accepted current direction. ADR-167 establishes the authority
+order: accepted architecture/runtime contracts and public contracts govern domain
+semantics and API boundaries; accepted `docs/ui/` direction/handoff plus approved
+OpenSpec changes govern UI behavior, information architecture, and intentional visual
+evolution. MagicPath is an informative visual reference and optional synchronization
+target, not a parity requirement or implementation/acceptance gate.
 
 Do not silently change:
 
@@ -368,7 +371,7 @@ architecture/UI decision.
 - Treat `docs/ui/ui_implementation_handoff_v1.md` as the implementation reference.
 - Prefer project-owned semantic components over one-off Tailwind markup.
 - Use semantic design tokens for domain states instead of scattering raw colors.
-- Third-party UI primitives must adapt to the frozen design, not redefine it.
+- Third-party UI primitives must adapt to the accepted UI direction, not redefine it.
 - Keep generic primitives separate from ObserveAI domain components.
 
 Examples of project-owned semantic components include:
