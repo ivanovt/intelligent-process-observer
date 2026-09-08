@@ -316,7 +316,7 @@ Mutable Coordinator-owned execution metadata only. Do not place new requirements
 | Item | Current value |
 |---|---|
 | Coordinator status | EXECUTING |
-| Active assignment | VS-02-C03 bounded correction |
+| Active assignment | VS-02-C04 bounded correction |
 | Last accepted slice | VS-01 |
-| Bounded correction | VS-02-C03 — add the complete routed draft/editor/POST lifecycle test suite and restore the accepted VS-01 read-only detail content, styling, and accessibility regressed by C02 while retaining creation confirmation in all detail request states. Expected risk: normal implementation delta; cumulative C02/C03 requires fresh high-risk review. |
+| Bounded correction | VS-02-C04 — surface top-level backend `description` errors and tighten routed proof for same-position opaque-key replacement, contract-faithful 201 response, and create confirmation through 404 and loaded-success states. Expected risk: high-risk (external error/success handling). |
 | Stop/escalation reason | none |
