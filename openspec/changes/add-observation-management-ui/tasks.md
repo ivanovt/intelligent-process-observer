@@ -4,7 +4,7 @@
 - [x] 1.2 Raise the frontend engine and documented development minimum to Node `>=24.15.0`, add the explicitly approved Tailwind 4, Base UI, Lucide, shadcn-support, React Router, Vitest, Testing Library, and jsdom dependencies at the proposal ranges, and update the npm lockfile without adding table, chart, form, cache, or global-state libraries.
 - [x] 1.3 Configure Tailwind through Vite, the same-origin `/api` development proxy, Vitest/jsdom setup, frontend test scripts, and root `make test`/`make check` coverage while preserving the existing lint and production-build gates.
 - [x] 1.4 Implement semantic CSS variables, Tailwind theme integration, responsive base styles, and the minimal project-owned Button/Input/Textarea/Select/Field/notice primitives needed by the management screens.
-- [ ] 1.5 Implement the routed ObserveAI shell, active Observations navigation, page header patterns, create-route draft provider boundary, and safe direct/refresh fallback for nested editor routes.
+- [x] 1.5 Implement the routed ObserveAI shell, active Observations navigation, page header patterns, create-route draft provider boundary, and safe direct/refresh fallback for nested editor routes.
 
 ## 2. Public Contract and Draft Core
 
@@ -23,16 +23,16 @@
 
 ## 4. Aggregate Create Experience
 
-- [ ] 4.1 Implement the Create Observation route with distinct name, optional description, and objective fields plus General, Metric lenses, Alert lenses, Relationships, and Review sections anchored to frozen frame 10.
-- [ ] 4.2 Implement reusable `ConfigurationSection`, child summary/card, and `DefinitionSummary` components that preserve ordered draft composition and expose add/edit navigation without persisting children.
-- [ ] 4.3 Implement top-level Cancel/discard behavior, invalid-draft review feedback, and neutral draft-loss handling for direct or refreshed nested editor routes.
+- [x] 4.1 Implement the Create Observation route with distinct name, optional description, and objective fields plus General, Metric lenses, Alert lenses, Relationships, and Review sections anchored to frozen frame 10.
+- [x] 4.2 Implement reusable `ConfigurationSection`, child summary/card, and `DefinitionSummary` components that preserve ordered draft composition and expose add/edit navigation without persisting children.
+- [x] 4.3 Implement top-level Cancel/discard behavior, invalid-draft review feedback, and neutral draft-loss handling for direct or refreshed nested editor routes.
 - [ ] 4.4 Add rendered tests proving nested Cancel/browser-back preserves the aggregate draft, valid Apply performs exactly one ordered local mutation with no HTTP write, top-level Cancel clears a fully populated draft, returns to `/observations`, and leaves the next create flow neutral, and direct/refresh entry to every nested editor without a live draft redirects to `/observations/new` with neutral feedback, a neutral draft, and no HTTP write.
 
 ## 5. Lens Editors
 
 - [ ] 5.1 Implement shared inline `AnalysisObjectivesField` and `ReferencePeriodsField` interactions with add/remove, stable order, blank/duplicate feedback, and no modal or tool-selection semantics.
 - [ ] 5.2 Implement Metric capabilities pending, retryable-failure, empty-source, and supported-source states, then implement Metric Lens add/edit against the complete current API shape; prevent Metric Apply while capabilities are unavailable, never invent a source, keep Alert-only creation usable, restrict objectives to `spike | drift | oscillation`, support valid ordered reference offsets, omit preflight, and omit/disable history policy with a backend-dependency explanation.
-- [ ] 5.3 Implement Alert Lens add/edit with exact supported source, owned-child semantics, ordered free-text objectives/offsets, and a selector field whose original opaque query is never trimmed, parsed, normalized, rewritten, or extended.
+- [x] 5.3 Implement Alert Lens add/edit with exact supported source, owned-child semantics, ordered free-text objectives/offsets, and a selector field whose original opaque query is never trimmed, parsed, normalized, rewritten, or extended.
 - [ ] 5.4 Add focused Metric/Alert editor tests for capabilities pending/failure/retry/empty/success and continued Alert-only creation, current shape mapping, ordered values, type-local ID rules, preflight and unsupported Metric objective/history exclusion, exact Alert selector preservation, Cancel/Apply behavior, and absence of standalone Lens requests.
 
 ## 6. Relationship Editor
