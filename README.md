@@ -13,7 +13,7 @@ The repository is a monorepo. Architectural decisions are maintained separately 
 - Docker Engine running directly in WSL2
 - Python >= 3.13, managed with `uv`
 - FastAPI, Pydantic, SQLAlchemy async, Alembic, PostgreSQL, Psycopg 3
-- React, TypeScript, Vite, npm
+- Node.js >=24.15.0, React, TypeScript, Vite, Tailwind CSS 4, npm
 - OpenSpec core workflows plus the optional `verify` workflow
 - Codex as the primary coding agent, with OpenCode also supported
 
@@ -49,6 +49,10 @@ Run the complete local verification gate before a pull request:
 ```bash
 make check
 ```
+
+The frontend requires Node.js `>=24.15.0`. Its Vite development server proxies
+relative `/api` requests to the local backend; run frontend tests with
+`cd frontend && npm run test` (or use `make test` for both test suites).
 
 ## OpenSpec bootstrap
 

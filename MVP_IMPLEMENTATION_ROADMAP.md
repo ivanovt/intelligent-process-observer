@@ -40,12 +40,13 @@ Keep the checkbox and the status aligned:
 | [x] | 5 | `add-metrics-analysis-pipeline` | DONE | End-to-end provider-neutral Metrics Analysis Pipeline with deterministic core, bounded Metrics Agent, reference periods, History, strict result contract, and persistence. |
 | [x] | 6 | `add-alert-lens-definition` | DONE | Merged through PR #7. Adds persisted Alert Lens definitions, type-local identity, validation, migration, and type-aware LensRun uniqueness. |
 | [x] | 7 | `add-alerts-analysis-pipeline` | DONE | Merged through PR #7. Adds the provider-neutral Alert pipeline, deterministic evidence, bounded Alert Agent/tools, strict `AlertAnalysisResult`, and atomic runtime persistence. |
+| [x] | — | `document-frontend-ui-direction` | DONE | Merged through PR #16. Freezes UI Direction v1.1, the MVP visual stack, screen contracts, and the implementation sequence beginning with Observation Management. |
 
 ---
 
 ## 2. Current work
 
-No critical-path feature is active. The next planned item is `add-report-generation`.
+No critical-path feature is active. The next planned item is `add-observation-run-ui`.
 
 ---
 
@@ -78,7 +79,7 @@ No critical-path feature is active. The next planned item is `add-report-generat
 | Done | # | Feature / Change | Status | Depends on | Purpose / Exit condition |
 |---|---:|---|---|---|---|
 | [x] | 12 | `add-observation-reasoning` | DONE | #5, #7, #10, #11 | PR #14. Produce structured Observation-level findings, grounded hypotheses, limitations, and `overall_state` from usable Metric/Alert results and Relationship evaluations. |
-| [ ] | 13 | `add-report-generation` | PLANNED | #12 | Convert `ObservationAnalysisResult` into a human-readable Markdown `ObservationReport` without new analysis or retrieval. |
+| [x] | 13 | `add-report-generation` | DONE | #12 | Merged through PR #15. Converts `ObservationAnalysisResult` into a validated human-readable Markdown `ObservationReport` without new analysis or retrieval. |
 
 **Phase C milestone:** The analytical backend can produce a complete structured Observation interpretation and a human-readable report.
 
@@ -88,7 +89,7 @@ No critical-path feature is active. The next planned item is `add-report-generat
 
 | Done | # | Feature / Change | Status | Depends on | Purpose / Exit condition |
 |---|---:|---|---|---|---|
-| [ ] | 14 | `add-observation-execution` | PLANNED | #7–#13 | Deterministic top-level Observation workflow: create runs, bounded Lens fan-out, strict JOIN, usable-results gate, Relationship Evaluation, Observation Reasoning, Report Generation, and terminal lifecycle. |
+| [x] | 14 | `add-observation-execution` | DONE | #7–#13 | Merged through PR #17. Deterministic top-level Observation workflow with correlated runs, bounded Lens fan-out, strict JOIN, usable-results gate, Relationship Evaluation, Observation Reasoning, Report Generation, cancellation, and terminal lifecycle. |
 
 **Phase D milestone:** One Observation can execute end-to-end over real Metric and Alert sources and produce persisted analytical results plus a final report.
 
@@ -98,8 +99,8 @@ No critical-path feature is active. The next planned item is `add-report-generat
 
 | Done | # | Feature / Change | Status | Depends on | Purpose / Exit condition |
 |---|---:|---|---|---|---|
-| [ ] | 15 | `add-observation-management-ui` | PLANNED | #6, #9, #14 API stability | Minimal UI for creating, listing, and inspecting Observation Definitions, Metric/Alert Lens configuration, and Relationships. |
-| [ ] | 16 | `add-observation-run-ui` | PLANNED | #14, #15 | UI for starting/inspecting runs, LensRun status, Metric/Alert results, Relationship evaluations, Observation analysis, and final report. |
+| [x] | 15 | `add-observation-management-ui` | DONE | #6, #9, #14 API stability | PR #18. Establishes the reusable frontend foundation and supports listing, creating, and inspecting Observation Definitions with draft-based Metric/Alert Lens and Relationship configuration. |
+| [ ] | 16 | `add-observation-run-ui` | PLANNED | #14, #15 | Implement the frozen monitoring and investigation views for starting/inspecting runs, LensRun status, Metric/Alert results, Relationship evaluations, Observation analysis, and final report. |
 
 **Phase E milestone — FIRST DEMONSTRABLE MVP:**  
 A user can configure an Observation, run it against real Prometheus and Jira data, inspect Metric and Alert analysis, see deterministic Relationship results, review Observation-level reasoning, and read the final report through the UI.
@@ -151,10 +152,10 @@ Do not move these into the critical path unless the MVP goal changes:
 Update this section when a feature changes state.
 
 ```text
-Completed runtime/product features: 10 / 14 (merged and accepted)
-Completed engineering/documentation foundations: 2
+Completed runtime/product features: 13 / 14 (implemented and accepted; PR #18 open)
+Completed engineering/documentation foundations: 3
 Current feature: none selected
-First-MVP critical-path remaining: 4 (#13–#16)
+First-MVP critical-path remaining: 1 (#16)
 Deferred feature group: Logs
 ```
 
@@ -192,12 +193,15 @@ DONE
   #10 add-relationship-evaluator
   #11 add-knowledge-retrieval
   #12 add-observation-reasoning
-
-NEXT
   #13 add-report-generation
   #14 add-observation-execution
   #15 add-observation-management-ui
+
+NEXT
   #16 add-observation-run-ui
+
+COMPLETED FOUNDATION (UNNUMBERED)
+  document-frontend-ui-direction
 
 DEFERRED / MVP+
   add-log-lens-definition
