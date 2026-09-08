@@ -1,6 +1,6 @@
 # Implementation Plan — add-observation-management-ui
 
-**Status:** APPROVED
+**Status:** COMPLETE
 **Artifact type:** Non-normative execution plan
 **Approved OpenSpec change:** `add-observation-management-ui`
 **Candidate branch:** `feature/add-observation-management-ui`
@@ -47,7 +47,7 @@ Execution is sequential. VS-02 through VS-04 intentionally extend the same featu
 | VS-02 | Create an Alert-only Observation through local draft semantics | VS-01 | high-risk | COMPLETE | 988aedd (+ accepted corrections) | No handoff (user-directed); high-risk review PASS |
 | VS-03 | Create Metric-only Observations from live definition capabilities | VS-02 | high-risk | COMPLETE | 24748c3 (+ accepted corrections) | No handoff (user-directed); high-risk review PASS |
 | VS-04 | Add constrained Relationships and complete mixed aggregates | VS-03 | high-risk | COMPLETE | 4498eb6 (+ accepted corrections) | No handoff (user-directed); high-risk review PASS |
-| FINAL | Verify the complete approved UI and repository compatibility | VS-04 | normal | IN_PROGRESS | - | Sol critical review corrections in progress (IR-001..IR-003) |
+| FINAL | Verify the complete approved UI and repository compatibility | VS-04 | normal | COMPLETE | 824feab | No handoff (user-directed); Sol verification READY FOR ARCHIVE; REG-001 LOW non-blocking |
 
 ## Slice definitions
 
@@ -315,8 +315,8 @@ Mutable Coordinator-owned execution metadata only. Do not place new requirements
 
 | Item | Current value |
 |---|---|
-| Coordinator status | EXECUTING ACCEPTED REVIEW CORRECTIONS |
-| Active assignment | FINAL-C01 bounded correction |
-| Last accepted slice | VS-04 |
-| Bounded correction | FINAL-C01 — disable top-level Cancel while aggregate POST is pending; render complete supported Metric/Alert/Relationship configuration in read-only inspection; provide a substantive live Review section with general values, ordered children, and validation readiness. Expected risk: high-risk because IR-001 changes pending external-transport lifecycle behavior; IR-002/IR-003 are normal UI corrections. |
+| Coordinator status | COMPLETE |
+| Active assignment | none |
+| Last accepted slice | FINAL |
+| Bounded correction | none |
 | Stop/escalation reason | none |
