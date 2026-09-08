@@ -47,7 +47,7 @@ Execution is sequential. VS-02 through VS-04 intentionally extend the same featu
 | VS-02 | Create an Alert-only Observation through local draft semantics | VS-01 | high-risk | COMPLETE | 988aedd (+ accepted corrections) | No handoff (user-directed); high-risk review PASS |
 | VS-03 | Create Metric-only Observations from live definition capabilities | VS-02 | high-risk | COMPLETE | 24748c3 (+ accepted corrections) | No handoff (user-directed); high-risk review PASS |
 | VS-04 | Add constrained Relationships and complete mixed aggregates | VS-03 | high-risk | COMPLETE | 4498eb6 (+ accepted corrections) | No handoff (user-directed); high-risk review PASS |
-| FINAL | Verify the complete approved UI and repository compatibility | VS-04 | normal | PLANNED | - | - |
+| FINAL | Verify the complete approved UI and repository compatibility | VS-04 | normal | IN_PROGRESS | - | - |
 
 ## Slice definitions
 
@@ -316,7 +316,7 @@ Mutable Coordinator-owned execution metadata only. Do not place new requirements
 | Item | Current value |
 |---|---|
 | Coordinator status | EXECUTING |
-| Active assignment | none |
+| Active assignment | FINAL verification and whole-change review |
 | Last accepted slice | VS-04 |
 | Bounded correction | none |
 | Stop/escalation reason | none |
