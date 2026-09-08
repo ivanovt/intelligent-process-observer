@@ -1,9 +1,9 @@
 ## 1. Frontend Foundation
 
 - [x] 1.1 Start implementation on a clean `feature/add-observation-management-ui` branch based on `main` and verify that the unrelated `MVP_IMPLEMENTATION_ROADMAP.md` worktree change is not included.
-- [ ] 1.2 Raise the frontend engine and documented development minimum to Node `>=24.15.0`, add the explicitly approved Tailwind 4, Base UI, Lucide, shadcn-support, React Router, Vitest, Testing Library, and jsdom dependencies at the proposal ranges, and update the npm lockfile without adding table, chart, form, cache, or global-state libraries.
-- [ ] 1.3 Configure Tailwind through Vite, the same-origin `/api` development proxy, Vitest/jsdom setup, frontend test scripts, and root `make test`/`make check` coverage while preserving the existing lint and production-build gates.
-- [ ] 1.4 Implement semantic CSS variables, Tailwind theme integration, responsive base styles, and the minimal project-owned Button/Input/Textarea/Select/Field/notice primitives needed by the management screens.
+- [x] 1.2 Raise the frontend engine and documented development minimum to Node `>=24.15.0`, add the explicitly approved Tailwind 4, Base UI, Lucide, shadcn-support, React Router, Vitest, Testing Library, and jsdom dependencies at the proposal ranges, and update the npm lockfile without adding table, chart, form, cache, or global-state libraries.
+- [x] 1.3 Configure Tailwind through Vite, the same-origin `/api` development proxy, Vitest/jsdom setup, frontend test scripts, and root `make test`/`make check` coverage while preserving the existing lint and production-build gates.
+- [x] 1.4 Implement semantic CSS variables, Tailwind theme integration, responsive base styles, and the minimal project-owned Button/Input/Textarea/Select/Field/notice primitives needed by the management screens.
 - [ ] 1.5 Implement the routed ObserveAI shell, active Observations navigation, page header patterns, create-route draft provider boundary, and safe direct/refresh fallback for nested editor routes.
 
 ## 2. Public Contract and Draft Core
@@ -16,10 +16,10 @@
 
 ## 3. Observation List and Read-Only Inspection
 
-- [ ] 3.1 Implement the Observation definitions list from `GET /api/v1/observations` with project-owned rows, composition counts, case-insensitive name/description substring search, `New Observation`, and `Open`, omitting runtime columns/filters and Edit/Delete controls.
-- [ ] 3.2 Implement distinct list loading, retryable error, collection-empty, populated, and successful-no-search-matches states whose copy does not imply analytical normality or absence when data failed to load; the no-match state must clear the search without using the collection-empty presentation.
-- [ ] 3.3 Implement the lightweight read-only definition route from `GET /api/v1/observations/{id}` with metadata and ordered child summaries plus loading/not-found/error/retry behavior, without monitoring/run-analysis controls.
-- [ ] 3.4 Add rendered tests for list loading/error/empty/search/no-match, exact searchable-field boundaries, supported row fields, absence of unsupported controls, and definition inspection success, loading, 404, retryable non-404 failure, retry of the same identity, and back-to-list behavior.
+- [x] 3.1 Implement the Observation definitions list from `GET /api/v1/observations` with project-owned rows, composition counts, case-insensitive name/description substring search, `New Observation`, and `Open`, omitting runtime columns/filters and Edit/Delete controls.
+- [x] 3.2 Implement distinct list loading, retryable error, collection-empty, populated, and successful-no-search-matches states whose copy does not imply analytical normality or absence when data failed to load; the no-match state must clear the search without using the collection-empty presentation.
+- [x] 3.3 Implement the lightweight read-only definition route from `GET /api/v1/observations/{id}` with metadata and ordered child summaries plus loading/not-found/error/retry behavior, without monitoring/run-analysis controls.
+- [x] 3.4 Add rendered tests for list loading/error/empty/search/no-match, exact searchable-field boundaries, supported row fields, absence of unsupported controls, and definition inspection success, loading, 404, retryable non-404 failure, retry of the same identity, and back-to-list behavior.
 
 ## 4. Aggregate Create Experience
 
@@ -50,6 +50,6 @@
 ## 8. Visual and Repository Verification
 
 - [ ] 8.1 Compare the implemented shell, list, create flow, and three editors against MagicPath frames 09–13 at the reference desktop size and a narrower viewport; correct hierarchy, spacing, focus, keyboard, overflow, and semantic-token issues without adding out-of-scope screens or controls.
-- [ ] 8.2 Update `docs/development-guide.md` and any affected README command/prerequisite text for Node `>=24.15.0`, the production frontend stack, same-origin Vite API proxy, frontend test command, and frontend coverage in `make test`/`make check`; leave architecture documentation unchanged.
+- [x] 8.2 Update `docs/development-guide.md` and any affected README command/prerequisite text for Node `>=24.15.0`, the production frontend stack, same-origin Vite API proxy, frontend test command, and frontend coverage in `make test`/`make check`; leave architecture documentation unchanged.
 - [ ] 8.3 Run the focused frontend test suite, frontend ESLint, and frontend production build; resolve failures and verify no backend production file, architecture document, unsupported endpoint, or unrelated dependency changed.
 - [ ] 8.4 Run `make check` as the final local verification step and report any failure accurately before archive or pull-request preparation.

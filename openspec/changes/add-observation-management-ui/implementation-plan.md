@@ -43,7 +43,7 @@ Execution is sequential. VS-02 through VS-04 intentionally extend the same featu
 
 | Slice | Behavioral increment | Depends on | Risk | Status | Commit | Handoff/review |
 |---|---|---|---|---|---|---|
-| VS-01 | Browse, search, and inspect definitions in the production shell | COORD-PREP | high-risk | IN_PROGRESS | - | - |
+| VS-01 | Browse, search, and inspect definitions in the production shell | COORD-PREP | high-risk | COMPLETE | 8409405 (+ accepted corrections) | No handoff (user-directed); high-risk review PASS |
 | VS-02 | Create an Alert-only Observation through local draft semantics | VS-01 | high-risk | PLANNED | - | - |
 | VS-03 | Create Metric-only Observations from live definition capabilities | VS-02 | high-risk | PLANNED | - | - |
 | VS-04 | Add constrained Relationships and complete mixed aggregates | VS-03 | high-risk | PLANNED | - | - |
@@ -316,7 +316,7 @@ Mutable Coordinator-owned execution metadata only. Do not place new requirements
 | Item | Current value |
 |---|---|
 | Coordinator status | EXECUTING |
-| Active assignment | VS-01-C02 bounded correction |
-| Last accepted slice | none |
-| Bounded correction | VS-01-C02 — add the remaining controllable-request regression evidence for list retry/supersession late success and failure plus detail late success rejection. Test-only, expected risk: normal. |
+| Active assignment | none |
+| Last accepted slice | VS-01 |
+| Bounded correction | none |
 | Stop/escalation reason | none |
