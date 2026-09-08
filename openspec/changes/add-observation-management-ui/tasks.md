@@ -9,7 +9,7 @@
 ## 2. Public Contract and Draft Core
 
 - [ ] 2.1 Define narrow TypeScript representations of the current Observation summary/detail/create, Metric Lens, Alert Lens, Relationship, capabilities, and API error contracts without adding runtime, preflight, or UI-only fields to transport types.
-- [ ] 2.2 Implement the relative-URL Observation API client for list, detail, capabilities, and aggregate create, including abort-safe loading and structured field/aggregate error handling; do not add preflight or child write methods.
+- [x] 2.2 Implement the relative-URL Observation API client for list, detail, capabilities, and aggregate create, including abort-safe loading and structured field/aggregate error handling; do not add preflight or child write methods.
 - [ ] 2.3 Implement the route-scoped Observation draft reducer with opaque client child keys, ordered add/replace operations, and editor-local copy helpers that commit only on Apply; do not add an unspecified child-removal action.
 - [ ] 2.4 Implement pure contract-aligned validators and the explicit `ObservationDraft` to `ObservationCreate` serializer, covering identifier/offset syntax, ordered duplicate rules, type-local IDs, Alert query preservation, and Relationship topology/vocabulary.
 - [ ] 2.5 Add unit tests for reducer immutability, validation edge cases, exact ordered serialization, cross-type Lens ID allowance, Metric-only Relationship resolution, and exclusion of UI-only/unsupported fields.
@@ -30,10 +30,10 @@
 
 ## 5. Lens Editors
 
-- [ ] 5.1 Implement shared inline `AnalysisObjectivesField` and `ReferencePeriodsField` interactions with add/remove, stable order, blank/duplicate feedback, and no modal or tool-selection semantics.
-- [ ] 5.2 Implement Metric capabilities pending, retryable-failure, empty-source, and supported-source states, then implement Metric Lens add/edit against the complete current API shape; prevent Metric Apply while capabilities are unavailable, never invent a source, keep Alert-only creation usable, restrict objectives to `spike | drift | oscillation`, support valid ordered reference offsets, omit preflight, and omit/disable history policy with a backend-dependency explanation.
+- [x] 5.1 Implement shared inline `AnalysisObjectivesField` and `ReferencePeriodsField` interactions with add/remove, stable order, blank/duplicate feedback, and no modal or tool-selection semantics.
+- [x] 5.2 Implement Metric capabilities pending, retryable-failure, empty-source, and supported-source states, then implement Metric Lens add/edit against the complete current API shape; prevent Metric Apply while capabilities are unavailable, never invent a source, keep Alert-only creation usable, restrict objectives to `spike | drift | oscillation`, support valid ordered reference offsets, omit preflight, and omit/disable history policy with a backend-dependency explanation.
 - [x] 5.3 Implement Alert Lens add/edit with exact supported source, owned-child semantics, ordered free-text objectives/offsets, and a selector field whose original opaque query is never trimmed, parsed, normalized, rewritten, or extended.
-- [ ] 5.4 Add focused Metric/Alert editor tests for capabilities pending/failure/retry/empty/success and continued Alert-only creation, current shape mapping, ordered values, type-local ID rules, preflight and unsupported Metric objective/history exclusion, exact Alert selector preservation, Cancel/Apply behavior, and absence of standalone Lens requests.
+- [x] 5.4 Add focused Metric/Alert editor tests for capabilities pending/failure/retry/empty/success and continued Alert-only creation, current shape mapping, ordered values, type-local ID rules, preflight and unsupported Metric objective/history exclusion, exact Alert selector preservation, Cancel/Apply behavior, and absence of standalone Lens requests.
 
 ## 6. Relationship Editor
 
