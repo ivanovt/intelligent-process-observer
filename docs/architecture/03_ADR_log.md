@@ -3111,6 +3111,50 @@ The detailed decision and implementation guidance live in
 
 ---
 
+## ADR-167 — UI authority model and informative MagicPath role
+
+**Status:** Accepted
+
+**Context**
+ADR-166 фиксира MVP frontend visual stack и project-owned semantic components, но
+историческият му текст определя frozen UI Direction v1.1 и MagicPath като строг
+visual/UX source of truth. UI Direction v1.2 добавя Data Sources screen и трябва да
+позволява одобрена, versioned UI evolution без да превръща canvas parity или
+synchronization в implementation/acceptance gate.
+
+**Decision**
+ADR-166 остава приет за React, Tailwind CSS 4, shadcn/ui, Base UI primitives, Lucide
+React, Recharts, TanStack Table и project-owned semantic components. Настоящият ADR
+supersede-ва само строгата му клауза за v1.1/MagicPath authority.
+
+За всяка UI работа нормативният ред е:
+
+1. приетите domain/runtime architecture documents и public contracts са authoritative
+   за продуктова семантика и API boundaries;
+2. приетите `docs/ui/` direction/handoff documents и human-approved OpenSpec changes
+   управляват UI behavior, information architecture и intentional visual evolution;
+3. MagicPath е информативна visual reference и optional synchronization target, а не
+   parity requirement, implementation gate или acceptance gate;
+4. meaningful UI промени остават versioned и human-approved; те не възникват от
+   incidental code drift.
+
+Текущият living major-v1 handoff остава на път
+`docs/ui/ui_implementation_handoff_v1.md` и се version-ва вътрешно като v1.2. По-късна
+MagicPath synchronization е допустима, но не определя дали одобрена UI промяна може да
+бъде реализирана или приета.
+
+**Consequences**
+- приетият visual stack и domain-semantic component ownership от ADR-166 остават
+  непроменени;
+- MagicPath продължава да информира look and feel, без да позволява промяна на
+  architecture/contracts или да блокира одобрена реализация;
+- текущите UI docs и OpenSpec approval gates предотвратяват неуправляван visual/UX
+  drift;
+- historical v1.1 documents и записи не се пренаписват; по-новият ADR определя
+  supersession при конфликт.
+
+---
+
 # Open decisions
 
 Актуалният и нормативен backlog е в `10_open_decisions_and_backlog.md`. Отворените въпроси **не** са implicit requirements и трябва да получат нов ADR, когато бъдат решени.

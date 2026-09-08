@@ -20,10 +20,10 @@ export function AppShell() {
           <span>ObserveAI</span>
         </div>
         <nav aria-label="Main navigation" className="flex gap-1 overflow-x-auto pb-1 lg:block lg:space-y-1 lg:overflow-visible">
-          {navigation.map(([label, Icon]) => label === 'Observations' ? (
+          {navigation.map(([label, Icon]) => label === 'Observations' || label === 'Data Sources' ? (
             <NavLink
               key={label}
-              to="/observations"
+              to={label === 'Observations' ? '/observations' : '/data-sources'}
               className={({ isActive }) => `flex h-10 shrink-0 items-center gap-3 rounded-lg px-3 text-sm font-medium transition-colors ${isActive ? 'bg-slate-800 text-white shadow-sm' : 'text-slate-400 hover:bg-slate-900 hover:text-white'}`}
             >
               <Icon size={17} strokeWidth={2} aria-hidden="true" />

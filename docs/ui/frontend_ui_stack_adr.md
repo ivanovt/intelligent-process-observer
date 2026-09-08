@@ -5,7 +5,7 @@
 
 ## Context
 
-UI Direction v1.1 is frozen. The frontend needs a visual implementation stack that preserves the project-owned visual/domain language, supports desktop-first engineering dashboards and forms, and remains mainstream and maintainable.
+UI Direction v1.2 is the accepted current direction. The frontend needs a visual implementation stack that preserves the project-owned visual/domain language, supports desktop-first engineering dashboards and forms, and remains mainstream and maintainable.
 
 ## Decision
 
@@ -25,7 +25,7 @@ Project-owned semantic design tokens use CSS custom properties integrated with T
 
 Third-party primitives do not own ObserveAI domain semantics. Project-owned components encapsulate analytical state, execution state, Lens configuration, findings/hypotheses, and traceability concepts.
 
-Observation Management UX introduced in UI Direction v1.1 uses the same stack and does not introduce a separate admin design system.
+Observation Management and Data Sources UX in UI Direction v1.2 use the same stack and do not introduce a separate admin design system.
 
 ## Tables
 
@@ -45,7 +45,7 @@ Recharts is the default MVP visualization library for Metric time-series, simple
 
 Positive:
 
-- full control over the frozen ObserveAI visual direction;
+- full control over the accepted ObserveAI visual direction;
 - mainstream React ecosystem;
 - reusable accessible primitives;
 - semantic design tokens and project-owned domain components;
@@ -64,6 +64,8 @@ This decision fixes the MVP frontend visual implementation stack. It does not ye
 
 ## Implementation rule
 
-**UI Direction v1.1 is the frozen visual/UX source of truth.**
+**ADR-167 governs UI authority.** Accepted domain/runtime architecture and public contracts govern product semantics and API boundaries. Accepted `docs/ui/` direction/handoff plus approved OpenSpec changes govern UI behavior, information architecture, and intentional visual evolution.
+
+MagicPath is an informative visual reference and optional synchronization target. It is not a parity requirement or an implementation/acceptance gate. Meaningful UI changes remain versioned and human-approved; the canvas does not authorize incidental UI drift.
 
 Third-party libraries must adapt to the design; the design must not be rewritten to match library defaults. Domain semantics and backend lifecycle ownership remain governed by accepted architecture/contracts.

@@ -1,5 +1,17 @@
 # Changelog
 
+## 6.6 — 2026-09-08
+
+- добавен ADR-167, който запазва приетия frontend visual stack от ADR-166, но
+  supersede-ва строгото правило за v1.1/MagicPath като visual/UX source of truth;
+- приетите architecture/runtime contracts остават нормативни за продуктова семантика и
+  API boundaries, а текущите `docs/ui/` handoff/direction и одобрените OpenSpec changes
+  управляват UI behavior, information architecture и целенасочената visual evolution;
+- MagicPath е информативна visual reference и optional synchronization target, а не
+  parity requirement или implementation/acceptance gate;
+- UI Direction v1.2 добавя read-only Data Sources screen за environment-managed
+  Prometheus sources, без да отслабва credential non-exposure boundary.
+
 ## 6.5 — 2026-09-07
 
 - добавен ADR-164: всеки retry, restart или re-run създава нов `ObservationRun` с
