@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from 'react'
 import { Navigate, useNavigate, useParams } from 'react-router-dom'
 import { Button, Field, FormSideRail, InlineNotice, Input, Textarea, ValidationSummary, type ValidationIssue } from '../../components/ui'
 import { AnalysisObjectivesField, ReferencePeriodsField } from './configuration'
-import { newAlert, useObservationDraft, validateAlert, type DraftAlert, type DraftErrors } from './draft'
+import { generateObservationChildId, newAlert, useObservationDraft, validateAlert, type DraftAlert, type DraftErrors } from './draft'
 
 /** Edits an aggregate-owned, provider-native Alert Lens draft. */
 export function AlertLensEditorPage() {
@@ -28,6 +28,9 @@ function AlertLensEditorForm({ routeKey, seed }: { routeKey: string; seed: Draft
   if (!draft) return null
 
   const update = (patch: Partial<DraftAlert>) => setValue((current) => ({ ...current, ...patch }))
+  const generateId = () => {
+    if (!value.id && value.name.trim()) update({ id: generateObservationChildId(value.name, 'alert', draft.alert_lenses.map((item) => item.id), Date.now()) })
+  }
   const issues: ValidationIssue[] = Object.entries(errors).map(([path, message]) => ({ message, to: path === 'objectives' ? '#analysis-objectives' : path === 'references' ? '#reference-periods' : `#alert-${path}` }))
   const apply = () => {
     const next = validateAlert(value, draft.alert_lenses)
@@ -63,11 +66,11 @@ function AlertLensEditorForm({ routeKey, seed }: { routeKey: string; seed: Draft
           {issues.length ? <div className="mb-5"><ValidationSummary ref={summaryRef} issues={issues} title="Alert Lens changes cannot be applied" /></div> : null}
           <h2 className="text-lg font-semibold">Lens identity</h2>
           <div className="mt-5 grid gap-4 md:grid-cols-2">
-            <Field label="Lens ID" description="Stable lowercase identifier used inside this Observation." error={errors.id}>
-              <Input id="alert-id" placeholder="release_alerts" value={value.id} onChange={(event) => update({ id: event.target.value })} />
+            <Field label="Lens ID" description="Generated from the initial name and kept stable inside this Observation." error={errors.id}>
+              <Input id="alert-id" placeholder="Generated after entering a name" value={value.id} readOnly />
             </Field>
             <Field label="Name" description="Human-readable Lens name shown throughout the interface." error={errors.name}>
-              <Input id="alert-name" placeholder="Release alerts" value={value.name} onChange={(event) => update({ name: event.target.value })} />
+              <Input id="alert-name" placeholder="Release alerts" value={value.name} onChange={(event) => update({ name: event.target.value })} onBlur={generateId} />
             </Field>
           </div>
           <div className="mt-4">

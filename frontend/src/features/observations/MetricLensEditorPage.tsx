@@ -3,7 +3,7 @@ import { useEffect, useRef, useState } from 'react'
 import { Navigate, useNavigate, useParams } from 'react-router-dom'
 import { Button, Field, FormSideRail, InlineNotice, Input, Select, Textarea, ValidationSummary, type ValidationIssue } from '../../components/ui'
 import { ReferencePeriodsField } from './configuration'
-import { newMetric, useObservationDraft, validateMetric, type DraftErrors, type DraftMetric } from './draft'
+import { generateObservationChildId, newMetric, useObservationDraft, validateMetric, type DraftErrors, type DraftMetric } from './draft'
 import type { MetricObjective } from './types'
 
 const objectives:MetricObjective[]=['spike','drift','oscillation']
@@ -27,6 +27,9 @@ function MetricLensEditorForm({ routeKey, seed }: { routeKey: string; seed: Draf
 
   const sources = capabilities.capabilities?.metric.flatMap((adapter) => adapter.sources.map((source) => ({ ...source, adapter_type: adapter.adapter_type }))) ?? []
   const update = (patch: Partial<DraftMetric>) => setValue((current) => ({ ...current, ...patch }))
+  const generateId = () => {
+    if (!value.id && value.name.trim()) update({ id: generateObservationChildId(value.name, 'metric', draft.lenses.map((item) => item.id), Date.now()) })
+  }
   const setObjectives = (next: MetricObjective[]) => update({ analysis_objectives: next })
   const apply = () => {
     const next = validateMetric(value, draft.lenses)
@@ -64,11 +67,11 @@ function MetricLensEditorForm({ routeKey, seed }: { routeKey: string; seed: Draf
           {issues.length ? <div className="mb-5"><ValidationSummary ref={summaryRef} issues={issues} title="Metric Lens changes cannot be applied" /></div> : null}
           <h2 className="text-lg font-semibold">Lens identity</h2>
           <div className="mt-5 grid gap-4 md:grid-cols-2">
-            <Field label="Lens ID" description="Lowercase ID, unique among Metric Lenses in this Observation." error={errors.id}>
-              <Input id="metric-id" placeholder="cooling_pressure" value={value.id} onChange={(event) => update({ id: event.target.value })} />
+            <Field label="Lens ID" description="Generated from the initial name and kept stable; unique among Metric Lenses in this Observation." error={errors.id}>
+              <Input id="metric-id" placeholder="Generated after entering a name" value={value.id} readOnly />
             </Field>
             <Field label="Name" description="Human-readable name shown in this Observation." error={errors.name}>
-              <Input id="metric-name" placeholder="Cooling pressure" value={value.name} onChange={(event) => update({ name: event.target.value })} />
+              <Input id="metric-name" placeholder="Cooling pressure" value={value.name} onChange={(event) => update({ name: event.target.value })} onBlur={generateId} />
             </Field>
           </div>
           <div className="mt-4">
