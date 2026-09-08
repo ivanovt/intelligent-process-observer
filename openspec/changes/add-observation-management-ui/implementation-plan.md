@@ -316,7 +316,7 @@ Mutable Coordinator-owned execution metadata only. Do not place new requirements
 | Item | Current value |
 |---|---|
 | Coordinator status | EXECUTING |
-| Active assignment | VS-01 |
+| Active assignment | VS-01-C01 bounded correction |
 | Last accepted slice | none |
-| Bounded correction | none |
+| Bounded correction | VS-01-C01 — make the required New Observation action actionable without implementing the create flow; add the missing list/detail/request-lifecycle completion-gate tests; reconcile frame 09 title/search/action fidelity; verify under Node >=24.15.0. Expected risk: normal. |
 | Stop/escalation reason | none |
