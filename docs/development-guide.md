@@ -14,7 +14,7 @@ This guide starts at repository level. It assumes the host environment already p
 - Git;
 - Docker Engine running directly inside WSL2;
 - `uv`;
-- Node.js 24 LTS and npm;
+- Node.js >=24.15.0 and npm;
 - Codex CLI and/or the VS Code Codex integration;
 - OpenCode if it will be used;
 - the OpenSpec CLI.
@@ -457,7 +457,7 @@ In another terminal:
 make frontend
 ```
 
-The bootstrap frontend is an independent React + TypeScript + Vite application. It does not call the backend yet. No end-to-end smoke path, UI component library, Tailwind setup, or frontend test framework is added during bootstrap.
+The frontend is a React + TypeScript + Vite application using Tailwind CSS 4 and project-owned accessible primitives. Development proxies same-origin `/api` requests to the local backend; production retains relative URLs. Run its focused test suite with `cd frontend && npm run test`.
 
 ### 6.7 Run local verification
 
@@ -472,6 +472,7 @@ backend  → Ruff lint
 backend  → Ruff format check
 backend  → pytest
 frontend → ESLint
+frontend → Vitest
 frontend → production build
 OpenSpec → strict structural validation
 ```
@@ -505,7 +506,7 @@ The root `Makefile` is the canonical interface for common local operations.
 | `make frontend` | Run the Vite development server in WSL. |
 | `make lint` | Run Ruff lint and frontend ESLint. |
 | `make format` | Apply Ruff formatting to Python code. |
-| `make test` | Run backend pytest. |
+| `make test` | Run backend pytest and frontend Vitest. |
 | `make check` | Run the complete local pre-PR verification gate. |
 
 Keep the Makefile thin. If a target begins accumulating substantial logic, reassess whether that logic belongs in the actual tool configuration or a deliberately approved script rather than hiding it in Make recipes.

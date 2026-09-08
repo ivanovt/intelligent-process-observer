@@ -29,11 +29,13 @@ format:
 
 test:
 	cd backend && uv run pytest
+	cd frontend && npm run test
 
 check:
 	cd backend && uv run ruff check .
 	cd backend && uv run ruff format --check .
 	cd backend && uv run pytest
 	cd frontend && npm run lint
+	cd frontend && npm run test
 	cd frontend && npm run build
 	openspec validate --all --strict

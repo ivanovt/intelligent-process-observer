@@ -1,0 +1,5 @@
+import { useCallback, useEffect, useRef, useState } from 'react'
+export type RequestState<T>={status:'loading'}|{status:'success';data:T}|{status:'error';error:unknown}
+/** Runs abortable read requests while rejecting late results from replaced requests. */
+export function useRequest<T>(load:(signal:AbortSignal)=>Promise<T>,dependencies:readonly unknown[]) { const [nonce,setNonce]=useState(0); const [state,setState]=useState<RequestState<T>>({status:'loading'}); const latest=useRef(0); const retry=useCallback(()=>setNonce(value=>value+1),[]); useEffect(()=>{const controller=new AbortController();const requestId=++latest.current;queueMicrotask(()=>{if(latest.current===requestId)setState({status:'loading'})});load(controller.signal).then(data=>{if(latest.current===requestId)setState({status:'success',data})}).catch(error=>{if(error.name!=='AbortError'&&latest.current===requestId)setState({status:'error',error})});return()=>controller.abort()// eslint-disable-next-line react-hooks/exhaustive-deps
+},[...dependencies,nonce]);return {state,retry} }
