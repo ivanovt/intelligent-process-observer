@@ -1,7 +1,7 @@
 ## MODIFIED Requirements
 
 ### Requirement: Place management in the Observations product area
-The system SHALL present Observation management under the existing `Observations` navigation area using the frozen UI Direction v1.2 shell, hierarchy, terminology, and restrained engineering-dashboard visual language. It SHALL provide routes for the definitions list, read-only definition inspection, aggregate creation, and nested Metric Lens, Alert Lens, and Relationship editors without exposing a separate Admin area.
+The system SHALL present Observation management under the existing `Observations` navigation area using the accepted UI Direction v1.3 shell, hierarchy, terminology, and restrained engineering-dashboard visual language. It SHALL provide routes for the definitions list, read-only definition inspection, aggregate creation, and nested Metric Lens, Alert Lens, and Relationship editors without exposing a separate Admin area.
 
 The management capability SHALL NOT expose monitoring/run-analysis screens, Observation update/delete controls, standalone Lens lifecycle controls, Log Lens configuration, dark-mode controls, or unsupported agent, model, prompt, tool-budget, severity, confidence, recommendation, or runtime-relationship configuration.
 

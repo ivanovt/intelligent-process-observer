@@ -4,7 +4,7 @@ See `proposal.md` for motivation and `specs/observation-management-ui/spec.md` f
 
 The public aggregate contract still requires valid, stable string IDs; Metric and Alert uniqueness remains type-local, and Relationship participants refer to applied Metric IDs. The change therefore belongs at the frontend draft/editor boundary and must not alter backend identity, persistence, or routing semantics.
 
-UI Direction v1.1 intentionally exposes manual identifier entry, so this behavior is an approved meaningful UX evolution to UI Direction v1.2 rather than a minor implementation adjustment. The mainline persistence models store Lens and Relationship IDs in 255-character columns even though the public validation contract currently expresses only their syntax; generation must honor the narrower end-to-end boundary.
+UI Direction v1.2 retains manual identifier entry while adding read-only Data Sources visibility, so this behavior is an approved meaningful UX evolution to UI Direction v1.3 rather than a minor implementation adjustment. The mainline persistence models store Lens and Relationship IDs in 255-character columns even though the public validation contract currently expresses only their syntax; generation must honor the narrower end-to-end boundary.
 
 ## Goals / Non-Goals
 
@@ -47,7 +47,7 @@ Alternative considered: rely on existing Apply validation. That could leave the 
 
 ### 4. Version the accepted UI direction with the behavior
 
-Implementation updates the current-direction declarations in `docs/ui/README.md`, `docs/ui/ui_implementation_handoff_v1.md`, `docs/ui/frontend_ui_stack_adr.md`, and `AGENTS.md` from v1.1 to v1.2. The handoff records generated read-only child identity as an intentional exception to the earlier manually editable mock controls. The visual stack, screen set, aggregate draft ownership, and all domain semantics remain unchanged. Historical statements that Observation Management was introduced in v1.1 remain historical and do not need rewriting.
+Implementation updates the current-direction declarations in `docs/ui/README.md`, `docs/ui/ui_implementation_handoff_v1.md`, `docs/ui/frontend_ui_stack_adr.md`, and `AGENTS.md` from v1.2 to v1.3. The handoff records generated read-only child identity as an intentional exception to the earlier manually editable controls. The visual stack, v1.2 screen set including Data Sources, aggregate draft ownership, UI authority order, and all domain semantics remain unchanged. Historical statements about v1.1 and v1.2 remain historical and do not need rewriting.
 
 Alternative considered: treat generation as an accessibility or browser adjustment. It changes who owns identifier choice and is therefore too meaningful to fit the existing minor-adjustment allowance.
 
@@ -66,13 +66,14 @@ Alternative considered: hide the ID. The ID remains useful for Relationship conf
 
 ## Migration Plan
 
-No data or API migration is required. Deploy the UI Direction v1.2 documentation and frontend behavior together with their tests. Rollback restores the v1.1 manual-ID guidance and writable fields; persisted definitions and current drafts remain contract-compatible because their ID shape is unchanged.
+No data or API migration is required. Deploy the UI Direction v1.3 documentation and frontend behavior together with their tests. Rollback restores the v1.2 manual-ID guidance and writable fields; persisted definitions and current drafts remain contract-compatible because their ID shape is unchanged.
 
 ## Architecture References
 
 - `docs/architecture/01_observation_lens_concept.md`: the design preserves stable Lens correlation, type-local Metric/Alert identity, and Metric-only Relationship participation.
 - `docs/architecture/05_relationship_evaluator_concept.md`: Relationship IDs and participant Lens IDs remain unchanged contract values after generation.
 - `docs/architecture/03_ADR_log.md` (ADR-161 and ADR-162): the generator respects accepted type-aware Lens identity and reuses the canonical Lens ID primitive without adding a discriminator to the domain model.
+- `docs/architecture/03_ADR_log.md` (ADR-167): the v1.3 evolution preserves the accepted UI authority order and does not treat MagicPath parity as an implementation gate.
 - `docs/ui/README.md`: the design follows the required explicit UI version evolution for a meaningful UX change.
-- `docs/ui/ui_implementation_handoff_v1.md`: UI Direction v1.2 will retain the nested aggregate workflow while replacing manual child-ID entry with the approved generated, read-only interaction.
-- `docs/ui/frontend_ui_stack_adr.md`: current-direction references will move to v1.2 without changing the ADR's accepted technology decision or its historical statement that Observation Management was introduced in v1.1.
+- `docs/ui/ui_implementation_handoff_v1.md`: UI Direction v1.3 will retain the nested aggregate workflow and v1.2 Data Sources behavior while replacing manual child-ID entry with the approved generated, read-only interaction.
+- `docs/ui/frontend_ui_stack_adr.md`: current-direction references will move to v1.3 without changing the ADR's accepted technology decision or its historical UI-version statements.
