@@ -316,7 +316,7 @@ Mutable Coordinator-owned execution metadata only. Do not place new requirements
 | Item | Current value |
 |---|---|
 | Coordinator status | EXECUTING |
-| Active assignment | VS-03 |
+| Active assignment | VS-03-C01 bounded correction |
 | Last accepted slice | VS-02 |
-| Bounded correction | none |
+| Bounded correction | VS-03-C01 — abort and invalidate in-flight capability reads when the Metric editor is abandoned while preserving settled create-route capability state, and add the missing rendered capability/Metric submission lifecycle suite. Expected risk: high-risk (external transport cancellation and aggregate POST evidence). |
 | Stop/escalation reason | none |
