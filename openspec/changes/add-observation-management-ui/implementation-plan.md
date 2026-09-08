@@ -316,7 +316,7 @@ Mutable Coordinator-owned execution metadata only. Do not place new requirements
 | Item | Current value |
 |---|---|
 | Coordinator status | EXECUTING |
-| Active assignment | VS-02-C02 bounded correction |
+| Active assignment | VS-02-C03 bounded correction |
 | Last accepted slice | VS-01 |
-| Bounded correction | VS-02-C02 — guarantee every field-bearing backend error is visible (including model-level `alert_lenses.N` and unknown paths), keep create-success confirmation visible while follow-up detail loading/error occurs, and add the complete missing rendered draft/editor/POST lifecycle suite. Expected risk: high-risk (external aggregate error/success handling). |
+| Bounded correction | VS-02-C03 — add the complete routed draft/editor/POST lifecycle test suite and restore the accepted VS-01 read-only detail content, styling, and accessibility regressed by C02 while retaining creation confirmation in all detail request states. Expected risk: normal implementation delta; cumulative C02/C03 requires fresh high-risk review. |
 | Stop/escalation reason | none |
