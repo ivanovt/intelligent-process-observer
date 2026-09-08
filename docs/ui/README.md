@@ -9,9 +9,9 @@ This directory contains the frozen UI direction, frontend technology decision, a
 
 ## Status
 
-**UI Direction v1.1 is frozen.**
+**UI Direction v1.2 is frozen.**
 
-v1.1 extends the original monitoring/investigation direction with Observation Management:
+v1.1 extended the original monitoring/investigation direction with Observation Management:
 
 ```text
 09 Observations Management
@@ -20,6 +20,10 @@ v1.1 extends the original monitoring/investigation direction with Observation Ma
 12 Metric Lens Configuration
 13 Alert Lens Configuration
 ```
+
+v1.2 retains that screen set and replaces manual Metric Lens, Alert Lens, and
+Relationship ID entry with generated, read-only IDs derived once from the initial
+name and then kept stable.
 
 The implementation must preserve accepted information architecture, terminology, analytical/execution semantics, aggregate ownership, Lens configuration boundaries, and evidence/knowledge boundaries.
 

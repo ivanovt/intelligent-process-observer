@@ -5,7 +5,7 @@
 
 ## Context
 
-UI Direction v1.1 is frozen. The frontend needs a visual implementation stack that preserves the project-owned visual/domain language, supports desktop-first engineering dashboards and forms, and remains mainstream and maintainable.
+UI Direction v1.2 is frozen. The frontend needs a visual implementation stack that preserves the project-owned visual/domain language, supports desktop-first engineering dashboards and forms, and remains mainstream and maintainable.
 
 ## Decision
 
@@ -64,6 +64,6 @@ This decision fixes the MVP frontend visual implementation stack. It does not ye
 
 ## Implementation rule
 
-**UI Direction v1.1 is the frozen visual/UX source of truth.**
+**UI Direction v1.2 is the frozen visual/UX source of truth.**
 
 Third-party libraries must adapt to the design; the design must not be rewritten to match library defaults. Domain semantics and backend lifecycle ownership remain governed by accepted architecture/contracts.

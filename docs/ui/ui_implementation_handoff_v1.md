@@ -1,14 +1,14 @@
-# UI Implementation Handoff — v1.1
+# UI Implementation Handoff — v1.2
 
 **Project:** ObserveAI / Master Thesis
-**Status:** Frozen implementation handoff for MVP UI Direction v1.1
-**Date:** 2026-09-07
+**Status:** Frozen implementation handoff for MVP UI Direction v1.2
+**Date:** 2026-09-08
 
 ## 1. Purpose
 
 This document translates the frozen UI direction into implementation-oriented rules for the MVP frontend.
 
-UI Direction v1.1 includes both the original monitoring/investigation experience and the Observation Management configuration UX. The frontend must preserve the architecture's semantic boundaries and must not invent new product-level classifications, lifecycle semantics, or administrative capabilities that are not supported by accepted backend contracts.
+UI Direction v1.2 includes the original monitoring/investigation experience and the Observation Management configuration UX. It retains the v1.1 screen set and evolves only Observation child identifier entry. The frontend must preserve the architecture's semantic boundaries and must not invent new product-level classifications, lifecycle semantics, or administrative capabilities that are not supported by accepted backend contracts.
 
 ## 2. Accepted frontend visual stack
 
@@ -41,7 +41,7 @@ https://magicpath.ai/files/447597481925181440
 
 The mock is a visual/UX reference, not permission to invent API fields or backend lifecycle operations. Accepted architecture/contracts remain authoritative for domain semantics.
 
-## 4. Screen set — v1.1
+## 4. Screen set — v1.2
 
 ### Monitoring and investigation
 
@@ -383,6 +383,18 @@ return to Create Observation
 
 Do not implement standalone Lens persistence merely because a nested editor has its own screen.
 
+### Generated child identity
+
+New Metric Lens, Alert Lens, and Relationship editors generate their public-contract
+ID once when the user leaves the initial non-empty name field. The generated ID uses a
+normalized readable name prefix plus a compact timestamp component, remains within the
+255-character persistence boundary, and is shown in a read-only, focusable control.
+
+After generation, later name changes do not change the ID. Reopening an applied draft
+child preserves its ID. Generation remains editor-local until `Apply changes`; Cancel
+does not mutate the aggregate draft. Metric and Alert collision checks remain type-local,
+while Relationship IDs remain unique within their own collection.
+
 ### Metric Lens Configuration
 
 One Metric Lens observes exactly one metric.
@@ -581,7 +593,7 @@ If `add-observation-management-ui` is the first frontend OpenSpec change, it may
 
 ## 15. Freeze rule
 
-**UI Direction v1.1 is frozen.**
+**UI Direction v1.2 is frozen.**
 
 Implementation may make minor technical adjustments for responsive fit, accessibility, browser behavior, real data length and actual API constraints, but must not silently change:
 

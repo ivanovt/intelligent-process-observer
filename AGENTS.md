@@ -264,7 +264,7 @@ Before planning, implementing, or reviewing frontend/UI changes, read:
 
 ### Frozen UI direction
 
-UI Direction v1.1 is frozen. The MagicPath project referenced from
+UI Direction v1.2 is frozen. The MagicPath project referenced from
 `docs/ui/README.md` is the visual/UX source of truth; accepted architecture/contracts
 remain authoritative for domain and API semantics.
 

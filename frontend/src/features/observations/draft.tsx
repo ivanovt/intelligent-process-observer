@@ -8,6 +8,15 @@ export interface DraftRelationship extends RelationshipCreate { clientKey:string
 export interface ObservationDraft { name:string; description:string; objective:string; lenses:DraftMetric[]; alert_lenses:DraftAlert[]; relationships:DraftRelationship[] }
 export type DraftErrors=Record<string,string>
 const blank=():ObservationDraft=>({name:'',description:'',objective:'',lenses:[],alert_lenses:[],relationships:[]})
+const MAX_CHILD_ID_LENGTH=255
+export type ObservationChildKind='metric'|'alert'|'relationship'
+/** Generates one stable, contract-safe ID for an aggregate-owned Observation child. */
+export function generateObservationChildId(name:string,kind:ObservationChildKind,siblingIds:readonly string[],generationTimeMilliseconds:number):string {
+ const normalized=name.normalize('NFKD').replace(/\p{M}+/gu,'').toLowerCase().replace(/[^a-z0-9]+/g,'_').replace(/^_+|_+$/g,'')
+ const prefix=/^[a-z]/.test(normalized)?normalized:kind,timestamp=Math.trunc(generationTimeMilliseconds).toString(36).toLowerCase(),used=new Set(siblingIds)
+ let discriminator=1
+ while(true){const collisionSuffix=discriminator===1?'':`_${discriminator}`,prefixLength=MAX_CHILD_ID_LENGTH-1-timestamp.length-collisionSuffix.length,candidate=`${prefix.slice(0,prefixLength)}_${timestamp}${collisionSuffix}`;if(!used.has(candidate))return candidate;discriminator+=1}
+}
 type Action={type:'fresh'}|{type:'general';value:Pick<ObservationDraft,'name'|'description'|'objective'>}|{type:'upsert-alert';value:DraftAlert;key:'new'|string}|{type:'upsert-metric';value:DraftMetric;key:'new'|string}|{type:'upsert-relationship';value:DraftRelationship;key:'new'|string}|{type:'clear'}
 function replaceAtKey<T extends {clientKey:string}>(items:T[],value:T,key:string):T[] { if(key==='new')return [...items,value];const index=items.findIndex(item=>item.clientKey===key);return index<0?items:items.map((item,i)=>i===index?value:item) }
 function reducer(state:ObservationDraft|null,action:Action):ObservationDraft|null { if(action.type==='fresh')return blank();if(action.type==='clear')return null;if(!state)return state;if(action.type==='general')return {...state,...action.value};if(action.type==='upsert-alert')return {...state,alert_lenses:replaceAtKey(state.alert_lenses,action.value,action.key)};if(action.type==='upsert-metric')return {...state,lenses:replaceAtKey(state.lenses,action.value,action.key)};return {...state,relationships:replaceAtKey(state.relationships,action.value,action.key)} }
