@@ -316,7 +316,7 @@ Mutable Coordinator-owned execution metadata only. Do not place new requirements
 | Item | Current value |
 |---|---|
 | Coordinator status | EXECUTING |
-| Active assignment | VS-02-C01 bounded correction |
+| Active assignment | VS-02-C02 bounded correction |
 | Last accepted slice | VS-01 |
-| Bounded correction | VS-02-C01 — surface backend field paths and retained correction flow, render successful-create confirmation, add the complete rendered draft/editor/POST lifecycle evidence, and restore frame 10 configuration/content/summary hierarchy with header create action. Expected risk: high-risk (external aggregate error/success handling). |
+| Bounded correction | VS-02-C02 — guarantee every field-bearing backend error is visible (including model-level `alert_lenses.N` and unknown paths), keep create-success confirmation visible while follow-up detail loading/error occurs, and add the complete missing rendered draft/editor/POST lifecycle suite. Expected risk: high-risk (external aggregate error/success handling). |
 | Stop/escalation reason | none |
