@@ -3,8 +3,10 @@ import userEvent from '@testing-library/user-event'
 import { BrowserRouter, MemoryRouter } from 'react-router-dom'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import App from '../../App'
+import type { ObservationResponse } from './types'
 
-const created={id:'created',name:'Release health',description:null,objective:'Observe releases',schema_version:1,lenses:[],alert_lenses:[{id:'release_alerts',name:'Release alerts',type:'alert',href:'/api/v1/observations/created/alert-lenses/release_alerts',description:null,source:'jira_track_and_release',selector:{query:' project = REL  AND status != Done '},analysis_objectives:['Assess recurrence','Compare recurrence'],reference_periods:['1d','7d'],observation_href:'/api/v1/observations/created'}],relationships:[],href:'/api/v1/observations/created'}
+const createdId='f47ac10b-58cc-4c6f-91ae-1f8b50b65165'
+const created:ObservationResponse={id:createdId,name:'Release health',description:null,objective:'Observe releases',schema_version:1,lenses:[],alert_lenses:[{id:'release_alerts',name:'Release alerts',type:'alert',href:`/api/v1/observations/${createdId}/alert-lenses/release_alerts`,description:null,source:'jira_track_and_release',selector:{query:' project = REL  AND status != Done '},analysis_objectives:['Assess recurrence','Compare recurrence'],reference_periods:['1d','7d'],observation_href:`/api/v1/observations/${createdId}`}],relationships:[],href:`/api/v1/observations/${createdId}`}
 type AlertValues={id:string;name:string;query:string;objectives?:string[];references?:string[]}
 const renderAt=(path:string)=>render(<MemoryRouter initialEntries={[path]}><App/></MemoryRouter>)
 const renderBrowserAt=(path:string)=>{window.history.pushState({},'',path);return render(<BrowserRouter><App/></BrowserRouter>)}
@@ -73,18 +75,18 @@ describe('Observation create routes',()=>{
     await user.click(screen.getAllByRole('button',{name:'Create Observation'})[0]);await user.click(screen.getAllByRole('button',{name:'Creating…'})[0]);expect(fetchMock).toHaveBeenCalledTimes(1)
     resolvePost(response(created,201));expect(await screen.findByText(/created successfully/i)).toBeTruthy();expect(screen.getByText('Loading definition')).toBeTruthy();resolveDetail(response({},500));expect(await screen.findByText(/Unable to load/i)).toBeTruthy();expect(screen.getByText(/created successfully/i)).toBeTruthy()
     const [url,init]=fetchMock.mock.calls[0] as [string,RequestInit];expect(url).toBe('/api/v1/observations');expect(init.method).toBe('POST');expect(JSON.parse(String(init.body))).toEqual({name:'Release health',description:null,objective:'Observe releases',lenses:[],alert_lenses:[{id:'release_alerts',name:'Release alerts',description:null,type:'alert',source:'jira_track_and_release',selector:{query:' project = REL  AND status != Done '},analysis_objectives:['Assess recurrence','Compare recurrence'],reference_periods:['1d','7d']}],relationships:[]})
-    expect(fetchMock.mock.calls.every(([calledUrl])=>calledUrl==='/api/v1/observations'||calledUrl==='/api/v1/observations/created')).toBe(true)
+    expect(fetchMock.mock.calls.every(([calledUrl])=>calledUrl==='/api/v1/observations'||calledUrl===`/api/v1/observations/${createdId}`)).toBe(true)
     await user.click(screen.getByText('Back to Observations'));expect(await screen.findByText('No Observation definitions yet')).toBeTruthy();await user.click(screen.getAllByText('New Observation')[0]);expect((await screen.findByLabelText('Name') as HTMLInputElement).value).toBe('');expect(screen.getByText('Alert lenses: 0')).toBeTruthy()
   })
 
   it('keeps creation confirmation on the loaded read-only destination returned by the aggregate create',async()=>{
     const user=userEvent.setup(),fetchMock=vi.fn().mockResolvedValueOnce(response(created,201)).mockResolvedValueOnce(response(created));vi.stubGlobal('fetch',fetchMock);renderAt('/observations/new');await populateValidDraft(user,{id:'release_alerts',name:'Release alerts',query:' project = REL  AND status != Done ',objectives:['Assess recurrence','Compare recurrence'],references:['1d','7d']})
-    await user.click(screen.getAllByRole('button',{name:'Create Observation'})[0]);expect(await screen.findByText(/created successfully/i)).toBeTruthy();expect(await screen.findByRole('heading',{name:'Release health'})).toBeTruthy();expect(screen.getByText('Release alerts')).toBeTruthy();expect(screen.getByText('References: 1d, 7d')).toBeTruthy();expect(fetchMock.mock.calls.map(([url])=>url)).toEqual(['/api/v1/observations','/api/v1/observations/created'])
+    await user.click(screen.getAllByRole('button',{name:'Create Observation'})[0]);expect(await screen.findByText(/created successfully/i)).toBeTruthy();expect(await screen.findByRole('heading',{name:'Release health'})).toBeTruthy();expect(screen.getByText('Release alerts')).toBeTruthy();expect(screen.getByText('References: 1d, 7d')).toBeTruthy();expect(fetchMock.mock.calls.map(([url])=>url)).toEqual(['/api/v1/observations',`/api/v1/observations/${createdId}`])
   })
 
   it('keeps creation confirmation when the successful create destination returns 404',async()=>{
     const user=userEvent.setup(),fetchMock=vi.fn().mockResolvedValueOnce(response(created,201)).mockResolvedValueOnce(response({code:'not_found',message:'No definition'},404));vi.stubGlobal('fetch',fetchMock);renderAt('/observations/new');await populateValidDraft(user)
-    await user.click(screen.getAllByRole('button',{name:'Create Observation'})[0]);expect(await screen.findByText('Definition not found')).toBeTruthy();expect(screen.getByText(/created successfully/i)).toBeTruthy();expect(fetchMock.mock.calls.map(([url])=>url)).toEqual(['/api/v1/observations','/api/v1/observations/created'])
+    await user.click(screen.getAllByRole('button',{name:'Create Observation'})[0]);expect(await screen.findByText('Definition not found')).toBeTruthy();expect(screen.getByText(/created successfully/i)).toBeTruthy();expect(fetchMock.mock.calls.map(([url])=>url)).toEqual(['/api/v1/observations',`/api/v1/observations/${createdId}`])
   })
 
   it('shows mapped and fallback server errors, retains values, provides child correction, and retries successfully',async()=>{
