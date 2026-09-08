@@ -1,6 +1,6 @@
 # Implementation Plan — add-observation-management-ui
 
-**Status:** COMPLETE
+**Status:** APPROVED
 **Artifact type:** Non-normative execution plan
 **Approved OpenSpec change:** `add-observation-management-ui`
 **Candidate branch:** `feature/add-observation-management-ui`
@@ -47,7 +47,7 @@ Execution is sequential. VS-02 through VS-04 intentionally extend the same featu
 | VS-02 | Create an Alert-only Observation through local draft semantics | VS-01 | high-risk | COMPLETE | 988aedd (+ accepted corrections) | No handoff (user-directed); high-risk review PASS |
 | VS-03 | Create Metric-only Observations from live definition capabilities | VS-02 | high-risk | COMPLETE | 24748c3 (+ accepted corrections) | No handoff (user-directed); high-risk review PASS |
 | VS-04 | Add constrained Relationships and complete mixed aggregates | VS-03 | high-risk | COMPLETE | 4498eb6 (+ accepted corrections) | No handoff (user-directed); high-risk review PASS |
-| FINAL | Verify the complete approved UI and repository compatibility | VS-04 | normal | COMPLETE | 824feab | No handoff (user-directed); Sol verification READY FOR ARCHIVE; REG-001 LOW non-blocking |
+| FINAL | Verify the complete approved UI and repository compatibility | VS-04 | normal | IN_PROGRESS | 824feab | REG-001 LOW correction in progress |
 
 ## Slice definitions
 
@@ -315,8 +315,8 @@ Mutable Coordinator-owned execution metadata only. Do not place new requirements
 
 | Item | Current value |
 |---|---|
-| Coordinator status | COMPLETE |
-| Active assignment | none |
+| Coordinator status | EXECUTING ACCEPTED LOW CORRECTION |
+| Active assignment | FINAL-C02 bounded correction |
 | Last accepted slice | FINAL |
-| Bounded correction | none |
+| Bounded correction | FINAL-C02 — make the read-only detail test fixture Relationship topology backend-valid by referencing participant `m1` in conditions and assert the rendered non-empty condition descriptor. Test-only, expected risk: normal. |
 | Stop/escalation reason | none |
