@@ -52,4 +52,4 @@
 - [x] 8.1 Compare the implemented shell, list, create flow, and three editors against MagicPath frames 09–13 at the reference desktop size and a narrower viewport; correct hierarchy, spacing, focus, keyboard, overflow, and semantic-token issues without adding out-of-scope screens or controls.
 - [x] 8.2 Update `docs/development-guide.md` and any affected README command/prerequisite text for Node `>=24.15.0`, the production frontend stack, same-origin Vite API proxy, frontend test command, and frontend coverage in `make test`/`make check`; leave architecture documentation unchanged.
 - [x] 8.3 Run the focused frontend test suite, frontend ESLint, and frontend production build; resolve failures and verify no backend production file, architecture document, unsupported endpoint, or unrelated dependency changed.
-- [ ] 8.4 Run `make check` as the final local verification step and report any failure accurately before archive or pull-request preparation.
+- [x] 8.4 Run `make check` as the final local verification step and report any failure accurately before archive or pull-request preparation.

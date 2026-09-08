@@ -316,7 +316,7 @@ Mutable Coordinator-owned execution metadata only. Do not place new requirements
 | Item | Current value |
 |---|---|
 | Coordinator status | EXECUTING |
-| Active assignment | FINAL verification and whole-change review |
+| Active assignment | FINAL whole-change critical review |
 | Last accepted slice | VS-04 |
 | Bounded correction | none |
 | Stop/escalation reason | none |
