@@ -316,7 +316,7 @@ Mutable Coordinator-owned execution metadata only. Do not place new requirements
 | Item | Current value |
 |---|---|
 | Coordinator status | EXECUTING |
-| Active assignment | VS-03-C02 bounded correction |
+| Active assignment | VS-03-C03 bounded correction |
 | Last accepted slice | VS-02 |
-| Bounded correction | VS-03-C02 — add the complete missing rendered capability lifecycle and Metric-only/mixed aggregate POST suite, plus explicit frame-12 accessibility/fidelity assertions; no handoff file per user direction. Test-only unless evidence exposes an in-scope defect; expected risk: normal. |
+| Bounded correction | VS-03-C03 — strengthen the mixed same-ID rendered POST proof to assert the complete exact ordered Metric+Alert payload and unsupported-field absence. Test-only, expected risk: normal. Concurrent pending Retry is not user-reachable; approved navigation/unmount stale-result paths are already covered. |
 | Stop/escalation reason | none |
