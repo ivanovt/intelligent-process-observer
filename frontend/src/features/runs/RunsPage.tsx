@@ -2,10 +2,12 @@ import { ExternalLink, RefreshCw } from 'lucide-react'
 import { useMemo, useState, type ReactNode } from 'react'
 import { ActionLink, Button, Field, InlineNotice, PageHeader, Select } from '../../components/ui'
 import { AnalyticalStateBadge, ExecutionStatusBadge } from '../../components/domain/RunStatusBadges'
-import { listObservationRuns } from './api'
+import { launchObservationRun, listObservationRuns } from './api'
 import { emptyRunFilters, filterRuns, observationChoices, unavailableAnalyticalState, type RunFilters } from './filters'
 import type { AnalyticalState, ExecutionStatus, ObservationRunSummary } from './types'
-import { useRequest } from '../observations/useRequest'
+import { RunObservationDialog } from './RunObservationDialog'
+import { useSequentialPolling } from './useSequentialPolling'
+import { hasActiveRuns, insertAcceptanceSnapshot, mergeRunHistory } from './runHistory'
 
 const executionStatuses: readonly ExecutionStatus[] = ['pending', 'running', 'completed', 'failed', 'cancelled']
 const analyticalStates: readonly AnalyticalState[] = ['no_significant_findings', 'uncertain', 'significant_findings_present']
@@ -14,11 +16,21 @@ const noRuns: readonly ObservationRunSummary[] = []
 /** Renders complete newest-first runtime history with local primary-dimension filters. */
 export function RunsPage() {
   const [filters, setFilters] = useState<RunFilters>(emptyRunFilters)
-  const { state, retry } = useRequest(listObservationRuns, [])
-  const runs = state.status === 'success' ? state.data : noRuns
+  const [showLaunchDialog, setShowLaunchDialog] = useState(false)
+  const [launchConfirmation, setLaunchConfirmation] = useState<string | null>(null)
+  const { state, refresh, replaceData } = useSequentialPolling({ load: listObservationRuns, isActive: hasActiveRuns, merge: mergeRunHistory })
+  const runs = state.data ?? noRuns
   const visibleRuns = useMemo(() => filterRuns(runs, filters), [runs, filters])
   const choices = useMemo(() => observationChoices(runs), [runs])
   const hasFilters = filters.observationId !== '' || filters.status !== '' || filters.analyticalState !== ''
+
+  async function launch(payload: { observation_id: string; analysis_window: { from: string; to: string } }) {
+    const accepted = await launchObservationRun(payload)
+    replaceData((previous) => insertAcceptanceSnapshot(previous, accepted))
+    setShowLaunchDialog(false)
+    setLaunchConfirmation(`Observation run ${accepted.id} was accepted and is now being monitored.`)
+    refresh()
+  }
 
   return (
     <section className="mx-auto max-w-6xl">
@@ -26,16 +38,19 @@ export function RunsPage() {
         eyebrow="Runtime history"
         title="Runs"
         description="Monitor active and historical Observation runs. Execution status and analytical state remain independent."
-        actions={<Button variant="secondary" type="button" onClick={retry}><RefreshCw size={17} aria-hidden="true" />Refresh</Button>}
+        actions={<><Button type="button" onClick={() => setShowLaunchDialog(true)}>Run Observation</Button><Button disabled={state.refreshing} variant="secondary" type="button" onClick={refresh}><RefreshCw size={17} aria-hidden="true" />Refresh</Button></>}
       />
 
+      {launchConfirmation ? <div className="mb-6"><InlineNotice tone="success">{launchConfirmation}</InlineNotice></div> : null}
       <RunFiltersForm choices={choices} filters={filters} hasFilters={hasFilters} onChange={setFilters} onClear={() => setFilters(emptyRunFilters)} />
 
-      {state.status === 'loading' ? <StatePanel title="Loading runs" detail="Retrieving complete Observation run history…" /> : null}
-      {state.status === 'error' ? <InlineNotice tone="error">Unable to load run history. <button className="font-semibold underline underline-offset-2" type="button" onClick={retry}>Retry</button></InlineNotice> : null}
-      {state.status === 'success' && runs.length === 0 ? <StatePanel title="No Observation runs yet" detail="Run history will appear here after an Observation is launched." /> : null}
-      {state.status === 'success' && runs.length > 0 && visibleRuns.length === 0 ? <StatePanel title="No runs match these filters" detail="The loaded run history has no entries matching every selected filter." action={<Button variant="secondary" type="button" onClick={() => setFilters(emptyRunFilters)}>Clear filters</Button>} /> : null}
-      {state.status === 'success' && visibleRuns.length > 0 ? <RunsList runs={visibleRuns} /> : null}
+      {state.loading && state.data === null ? <StatePanel title="Loading runs" detail="Retrieving complete Observation run history…" /> : null}
+      {state.error && state.data === null ? <InlineNotice tone="error">Unable to load run history. <button className="font-semibold underline underline-offset-2" type="button" onClick={refresh}>Retry</button></InlineNotice> : null}
+      {state.error && state.data !== null ? <div className="mb-6"><InlineNotice tone="warning">Showing the last successful run history. Automatic refresh could not reach the server. <button className="font-semibold underline underline-offset-2" type="button" onClick={refresh}>Retry now</button></InlineNotice></div> : null}
+      {state.data !== null && runs.length === 0 ? <StatePanel title="No Observation runs yet" detail="Run history will appear here after an Observation is launched." /> : null}
+      {state.data !== null && runs.length > 0 && visibleRuns.length === 0 ? <StatePanel title="No runs match these filters" detail="The loaded run history has no entries matching every selected filter." action={<Button variant="secondary" type="button" onClick={() => setFilters(emptyRunFilters)}>Clear filters</Button>} /> : null}
+      {state.data !== null && visibleRuns.length > 0 ? <RunsList runs={visibleRuns} /> : null}
+      {showLaunchDialog ? <RunObservationDialog activeRuns={runs} onClose={() => setShowLaunchDialog(false)} onLaunch={launch} /> : null}
     </section>
   )
 }

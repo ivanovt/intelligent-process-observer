@@ -58,11 +58,11 @@
 
 ## 8. Add Run Launch and Automatic Refresh
 
-- [ ] 8.1 Add the accessible Run Observation dialog with an independent abortable `GET /api/v1/observations` state machine for loading, retryable failure, empty plus New Observation, and ordered success; include never-run definitions, use run history only for known-active disabling, gate confirmation on successful eligible selection, and retain server conflict authority.
-- [ ] 8.2 Implement injected-clock time-range helpers for the ten approved relative presets and exact `now|now-15m|now-1h` expressions, one-instant UTC resolution, concrete preview, ordering/future validation, and rejection of every unsupported expression.
-- [ ] 8.3 Submit exactly one concrete launch request, retain dialog input on rejection/failure, handle `409` with the existing active run, and on `202` close the dialog, remain on `/runs`, insert the running acceptance snapshot, immediately refresh by stable run identity, prevent terminal-to-running regression, and show launch confirmation.
-- [ ] 8.4 Implement sequential five-second polling for active list/detail data with abort cleanup, no overlapping requests, one final terminal refresh, manual refresh, last-successful-data retention, stale feedback, and filter/tab/focus preservation.
-- [ ] 8.5 Add pure and rendered tests for independent definition loading/failure/retry/empty/abort/reopen, a never-run Observation, backend order, confirmation gating, every preset/expression, shared-now resolution, invalid ranges, disabled active Observations, request payload/call count, success/failure/conflict behavior, return-to-list flow, polling timers, stale data, and unmount cleanup.
+- [x] 8.1 Add the accessible Run Observation dialog with an independent abortable `GET /api/v1/observations` state machine for loading, retryable failure, empty plus New Observation, and ordered success; include never-run definitions, use run history only for known-active disabling, gate confirmation on successful eligible selection, and retain server conflict authority.
+- [x] 8.2 Implement injected-clock time-range helpers for the ten approved relative presets and exact `now|now-15m|now-1h` expressions, one-instant UTC resolution, concrete preview, ordering/future validation, and rejection of every unsupported expression.
+- [x] 8.3 Submit exactly one concrete launch request, retain dialog input on rejection/failure, handle `409` with the existing active run, and on `202` close the dialog, remain on `/runs`, insert the running acceptance snapshot, immediately refresh by stable run identity, prevent terminal-to-running regression, and show launch confirmation.
+- [x] 8.4 Implement sequential five-second polling for active list/detail data with abort cleanup, no overlapping requests, one final terminal refresh, manual refresh, last-successful-data retention, stale feedback, and filter/tab/focus preservation.
+- [x] 8.5 Add pure and rendered tests for independent definition loading/failure/retry/empty/abort/reopen, a never-run Observation, backend order, confirmation gating, every preset/expression, shared-now resolution, invalid ranges, disabled active Observations, request payload/call count, success/failure/conflict behavior, return-to-list flow, polling timers, stale data, and unmount cleanup.
 
 ## 9. Build the Initial Run Detail Foundation
 

@@ -1,4 +1,4 @@
-import { render, screen, waitFor } from '@testing-library/react'
+import { render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { MemoryRouter } from 'react-router-dom'
 import { afterEach, describe, expect, it, vi } from 'vitest'
@@ -11,6 +11,8 @@ const runs: ObservationRunSummary[] = [
   { id: 'run-middle-5678', observation: { id: 'ob-a', name: 'Cooling system' }, analysis_window: { from: '2026-09-09T08:00:00Z', to: '2026-09-09T09:00:00Z' }, status: 'completed', reason: null, analytical_state: 'significant_findings_present', created_at: '2026-09-09T09:01:00Z', started_at: '2026-09-09T09:01:00Z', finished_at: '2026-09-09T09:02:00Z', duration_seconds: 61, href: '/api/v1/observation-runs/run-middle-5678' },
   { id: 'run-oldest-9012', observation: { id: 'ob-b', name: 'Feed pump' }, analysis_window: { from: '2026-09-09T07:00:00Z', to: '2026-09-09T08:00:00Z' }, status: 'running', reason: null, analytical_state: 'uncertain', created_at: '2026-09-09T08:01:00Z', started_at: '2026-09-09T08:01:00Z', finished_at: null, duration_seconds: null, href: '/api/v1/observation-runs/run-oldest-9012' },
 ]
+const launchDefinitions = [{ id: 'never-run', name: 'Never run Observation', description: null, objective: 'Observe', schema_version: 1, lenses: [], alert_lenses: [], relationships: [], href: '/api/v1/observations/never-run' }]
+const acceptedRun: ObservationRunSummary = { id: 'accepted-run', observation: { id: 'never-run', name: 'Never run Observation' }, analysis_window: { from: '2026-09-09T11:45:00.000Z', to: '2026-09-09T12:00:00.000Z' }, status: 'running', reason: null, analytical_state: null, created_at: '2026-09-09T12:00:00.000Z', started_at: '2026-09-09T12:00:00.000Z', finished_at: null, duration_seconds: null, href: '/api/v1/observation-runs/accepted-run' }
 
 function renderAt(path = '/runs') { return render(<MemoryRouter initialEntries={[path]}><App /></MemoryRouter>) }
 function response(value: unknown, status = 200) { return new Response(JSON.stringify(value), { status }) }
@@ -105,5 +107,28 @@ describe('RunsPage', () => {
     await waitFor(() => expect(signal).toBeDefined())
     result.unmount()
     expect(signal?.aborted).toBe(true)
+  })
+
+  it('launches exactly one concrete request, inserts its acceptance snapshot, and remains on the Runs list', async () => {
+    let launched = false
+    const fetchMock = vi.fn((url: string, init?: RequestInit) => {
+      if (url.endsWith('/observations')) return Promise.resolve(response(launchDefinitions))
+      if (init?.method === 'POST') { launched = true; return Promise.resolve(response(acceptedRun, 202)) }
+      return Promise.resolve(response(launched ? [acceptedRun] : []))
+    })
+    vi.stubGlobal('fetch', fetchMock)
+    renderAt()
+    await screen.findByText('No Observation runs yet')
+    await userEvent.click(screen.getByRole('button', { name: 'Run Observation' }))
+    const dialog = await screen.findByRole('dialog', { name: 'Run Observation' })
+    await userEvent.selectOptions(within(dialog).getByLabelText('Observation to run'), 'never-run')
+    await userEvent.click(within(dialog).getByRole('button', { name: 'Run Observation' }))
+    expect(await screen.findByText(/was accepted and is now being monitored/)).toBeTruthy()
+    expect(screen.queryByRole('dialog')).toBeNull()
+    expect(screen.getByLabelText('Run ID: accepted-run')).toBeTruthy()
+    const postCall = fetchMock.mock.calls.find(([, init]) => (init as RequestInit | undefined)?.method === 'POST')
+    expect(postCall).toBeDefined()
+    expect(JSON.parse((postCall?.[1] as RequestInit).body as string)).toEqual({ observation_id: 'never-run', analysis_window: { from: expect.any(String), to: expect.any(String) } })
+    expect(fetchMock.mock.calls.filter(([, init]) => (init as RequestInit | undefined)?.method === 'POST')).toHaveLength(1)
   })
 })
