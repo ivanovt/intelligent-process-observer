@@ -93,9 +93,10 @@ async def evaluate_and_persist_relationships(
         persistence_inputs = tuple(
             RelationshipEvaluationInput(
                 relationship_id=evaluation.relationship_id,
+                position=position,
                 payload=evaluation.model_dump(mode="json"),
             )
-            for evaluation in validated_evaluations
+            for position, evaluation in enumerate(validated_evaluations)
         )
     except Exception:
         return await fail_observation_execution(

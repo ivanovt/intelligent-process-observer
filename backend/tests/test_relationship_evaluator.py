@@ -511,9 +511,10 @@ def test_all_evaluation_variants_fit_generic_persistence_input_without_persisten
     inputs = tuple(
         RelationshipEvaluationInput(
             relationship_id=evaluation.relationship_id,
+            position=position,
             payload=evaluation.model_dump(mode="json"),
         )
-        for evaluation in evaluations
+        for position, evaluation in enumerate(evaluations)
     )
 
     assert [item.payload["applicability"] for item in inputs] == [

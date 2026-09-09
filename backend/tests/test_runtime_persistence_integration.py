@@ -55,6 +55,7 @@ from app.infrastructure.persistence.models import (
 )
 from app.infrastructure.persistence.repository import (
     ObservationRepository,
+    RuntimeExecutionStateStore,
     RuntimePersistenceRepository,
 )
 from app.infrastructure.persistence.runtime_contracts import (
@@ -378,6 +379,7 @@ def _observation_analysis_input(
 def _relationship_evaluation() -> RelationshipEvaluationInput:
     return RelationshipEvaluationInput(
         relationship_id="temperature-pressure-link",
+        position=0,
         payload={
             "relationship": {
                 "id": "temperature-pressure-link",
@@ -2584,12 +2586,103 @@ def test_runtime_cardinality_constraints_reject_duplicate_writes(
                 RelationshipEvaluationModel(
                     observation_run_id=observation_run_id,
                     relationship_id="temperature-pressure-link",
+                    position=0,
                     payload={"duplicate": True},
                 )
             )
             with pytest.raises(IntegrityError):
                 await session.flush()
             await session.rollback()
+
+    asyncio.run(scenario())
+
+
+def test_active_run_exclusion_allows_terminal_history_and_different_observations(
+    session_factory: async_sessionmaker[AsyncSession],
+) -> None:
+    async def scenario() -> None:
+        repository = RuntimePersistenceRepository()
+        async with session_factory() as session:
+            observation = await _seed_observation(session)
+            other_observation = await _seed_observation(session)
+            first_run = await repository.create_observation_run(
+                session, ObservationRunInput(observation_id=observation.id)
+            )
+            await repository.create_observation_run(
+                session, ObservationRunInput(observation_id=other_observation.id)
+            )
+            first_run_id = first_run.id
+            await session.commit()
+
+        async with session_factory() as session:
+            session.add(
+                ObservationRunModel(
+                    observation_id=observation.id,
+                    status=ObservationRunStatus.PENDING.value,
+                    provenance={},
+                    execution_context={},
+                )
+            )
+            with pytest.raises(IntegrityError):
+                await session.flush()
+            await session.rollback()
+
+        async with session_factory() as session:
+            first_run = await session.get(ObservationRunModel, first_run_id)
+            assert first_run is not None
+            await repository.cancel_observation_execution(session, first_run)
+            await session.commit()
+
+        async with session_factory() as session:
+            rerun = await repository.create_observation_run(
+                session, ObservationRunInput(observation_id=observation.id)
+            )
+            assert rerun.id != first_run_id
+            await session.commit()
+
+    asyncio.run(scenario())
+
+
+def test_reconciliation_cancels_active_records_and_preserves_terminal_siblings(
+    session_factory: async_sessionmaker[AsyncSession],
+) -> None:
+    async def scenario() -> None:
+        repository = RuntimePersistenceRepository()
+        async with session_factory() as session:
+            observation = await _seed_observation(session)
+            run = await repository.create_observation_run(
+                session, ObservationRunInput(observation_id=observation.id)
+            )
+            await repository.advance_observation_run(session, run, ObservationRunStatus.RUNNING)
+            completed = await repository.create_lens_run(
+                session,
+                run,
+                LensRunInput(lens_id=f"completed-{uuid4()}", lens_type=LensType.METRIC),
+            )
+            active = await repository.create_lens_run(
+                session,
+                run,
+                LensRunInput(lens_id=f"active-{uuid4()}", lens_type=LensType.METRIC),
+            )
+            await repository.advance_lens_run(session, completed, LensRunStatus.RUNNING)
+            await repository.advance_lens_run(session, completed, LensRunStatus.COMPLETED)
+            run_id, completed_id, active_id = run.id, completed.id, active.id
+            await session.commit()
+
+        store = RuntimeExecutionStateStore(session_factory, repository)
+        assert await store.has_active_observation_runs()
+        await store.reconcile_active_observation_runs()
+        assert not await store.has_active_observation_runs()
+        await store.reconcile_active_observation_runs()
+
+        async with session_factory() as session:
+            restored = await repository.get_observation_run(session, run_id)
+            assert restored is not None
+            assert restored.status == ObservationRunStatus.CANCELLED.value
+            assert restored.reason == {"code": "execution_cancelled", "component": None}
+            restored_lenses = {lens.id: lens for lens in restored.lens_runs}
+            assert restored_lenses[completed_id].status == LensRunStatus.COMPLETED.value
+            assert restored_lenses[active_id].status == LensRunStatus.CANCELLED.value
 
     asyncio.run(scenario())
 
@@ -3071,6 +3164,7 @@ def test_final_migration_upgrades_and_guards_unsafe_downgrade(
 
     async def remove_cross_type_duplicate_rows() -> None:
         async with session_factory() as session:
+            await session.execute(text("DELETE FROM relationship_evaluations"))
             await session.execute(
                 text(
                     """
@@ -3110,6 +3204,75 @@ def test_final_migration_upgrades_and_guards_unsafe_downgrade(
                 == 2
             )
 
+    async def insert_legacy_relationship_evaluations() -> tuple[UUID, UUID]:
+        async with session_factory() as session:
+            observation = await _seed_observation(session)
+            run_id = uuid4()
+            await session.execute(
+                text(
+                    """
+                    INSERT INTO observation_runs (
+                        id, observation_id, status, provenance, execution_context
+                    ) VALUES (:run_id, :observation_id, 'completed', '{}'::jsonb, '{}'::jsonb)
+                    """
+                ),
+                {"run_id": run_id, "observation_id": observation.id},
+            )
+            relationship_id = f"legacy-relationship-{uuid4()}"
+            await session.execute(
+                text(
+                    """
+                    INSERT INTO observation_relationship_definitions (
+                        id, observation_id, relationship_id, name, description,
+                        participants, conditions, expected, position
+                    ) VALUES (
+                        :id, :observation_id, :relationship_id, 'Legacy relationship', NULL,
+                        '[]'::jsonb, '{}'::jsonb, '{}'::jsonb, 0
+                    )
+                    """
+                ),
+                {
+                    "id": uuid4(),
+                    "observation_id": observation.id,
+                    "relationship_id": relationship_id,
+                },
+            )
+            valid_evaluation_id = uuid4()
+            unresolved_evaluation_id = uuid4()
+            await session.execute(
+                text(
+                    """
+                    INSERT INTO relationship_evaluations (
+                        id, observation_run_id, relationship_id, payload
+                    ) VALUES (:id, :run_id, :relationship_id, '{}'::jsonb)
+                    """
+                ),
+                {
+                    "id": valid_evaluation_id,
+                    "run_id": run_id,
+                    "relationship_id": relationship_id,
+                },
+            )
+            await session.execute(
+                text(
+                    """
+                    INSERT INTO relationship_evaluations (
+                        id, observation_run_id, relationship_id, payload
+                    ) VALUES (:id, :run_id, 'unresolvable-legacy-relationship', '{}'::jsonb)
+                    """
+                ),
+                {"id": unresolved_evaluation_id, "run_id": run_id},
+            )
+            await session.commit()
+            return valid_evaluation_id, unresolved_evaluation_id
+
+    async def remove_unresolvable_evaluation(evaluation_id: UUID) -> None:
+        async with session_factory() as session:
+            await session.execute(
+                text("DELETE FROM relationship_evaluations WHERE id = :id"), {"id": evaluation_id}
+            )
+            await session.commit()
+
     asyncio.run(
         assert_constraint_and_alert_table(
             expected_constraint=(
@@ -3119,6 +3282,30 @@ def test_final_migration_upgrades_and_guards_unsafe_downgrade(
             alert_table_exists=True,
         )
     )
+    asyncio.run(remove_cross_type_duplicate_rows())
+    command.downgrade(config, "20260901_01")
+    legacy_evaluation_id, unresolved_evaluation_id = asyncio.run(
+        insert_legacy_relationship_evaluations()
+    )
+    with pytest.raises(RuntimeError, match="Cannot backfill RelationshipEvaluation position"):
+        command.upgrade(config, "head")
+    asyncio.run(remove_unresolvable_evaluation(unresolved_evaluation_id))
+    command.upgrade(config, "head")
+
+    async def assert_backfill_and_guards() -> None:
+        async with session_factory() as session:
+            position = await session.scalar(
+                text("SELECT position FROM relationship_evaluations WHERE id = :id"),
+                {"id": legacy_evaluation_id},
+            )
+            connection = await session.connection()
+            indexes = await connection.run_sync(
+                lambda connection: inspect(connection).get_indexes("observation_runs")
+            )
+        assert position == 0
+        assert any(index["name"] == "uq_observation_runs_one_active_per_observation" for index in indexes)
+
+    asyncio.run(assert_backfill_and_guards())
     unsafe_identity = asyncio.run(create_unsafe_same_id_rows())
     with pytest.raises(RuntimeError, match="Cannot downgrade"):
         command.downgrade(config, "20260823_01")

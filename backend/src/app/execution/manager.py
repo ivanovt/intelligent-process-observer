@@ -9,6 +9,8 @@ from enum import StrEnum
 from typing import Protocol
 from uuid import UUID, uuid4
 
+from sqlalchemy.exc import IntegrityError
+
 from app.execution.contracts import (
     ExecutionPolicy,
     ObservationExecutionOutcome,
@@ -17,6 +19,8 @@ from app.execution.contracts import (
     RejectedObservationExecutionOutcome,
 )
 from app.execution.initialization import InitializedObservationExecution
+
+_ACTIVE_RUN_INDEX_NAME = "uq_observation_runs_one_active_per_observation"
 
 
 class ObservationRunManagerState(StrEnum):
@@ -195,6 +199,11 @@ class ObservationRunManager:
             if self._state is not ObservationRunManagerState.SHUTTING_DOWN:
                 self._schedule_recovery()
             raise
+        except IntegrityError as error:
+            if _is_active_run_index_conflict(error):
+                return await self._resolve_defensive_index_loser(admission.observation_id)
+            self._schedule_recovery()
+            return LaunchUnavailable()
         except BaseException:
             self._schedule_recovery()
             return LaunchUnavailable()
@@ -202,6 +211,22 @@ class ObservationRunManager:
             async with self._state_lock:
                 self._initializers.pop(admission.identifier, None)
                 self._admissions.pop(admission.identifier, None)
+
+    async def _resolve_defensive_index_loser(
+        self, observation_id: UUID
+    ) -> LaunchConflict | LaunchUnavailable:
+        """Map one fully rolled-back active-index loser without retrying initialization."""
+
+        try:
+            active_run_id = await self._active_run_lookup.get_active_observation_run_id(
+                observation_id
+            )
+        except BaseException:
+            self._schedule_recovery()
+            return LaunchUnavailable()
+        if active_run_id is not None:
+            return LaunchConflict(active_run_id)
+        return LaunchUnavailable(code="launch_admission_uncertain")
 
     async def _register_continuation(
         self, admission: _Admission, initialized: InitializedObservationExecution
@@ -310,3 +335,10 @@ class ObservationRunManager:
             managed.users -= 1
             if managed.users == 0 and not managed.lock.locked():
                 self._observation_locks.pop(observation_id, None)
+
+
+def _is_active_run_index_conflict(error: IntegrityError) -> bool:
+    """Return whether a database integrity error came from the named active-run index."""
+
+    diagnostic = getattr(getattr(error, "orig", None), "diag", None)
+    return getattr(diagnostic, "constraint_name", None) == _ACTIVE_RUN_INDEX_NAME

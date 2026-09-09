@@ -11,7 +11,11 @@ from pydantic import ValidationError
 from sqlalchemy import UniqueConstraint
 
 from app.infrastructure.persistence.database import Base
-from app.infrastructure.persistence.models import LensRunModel, ObservationRunModel
+from app.infrastructure.persistence.models import (
+    LensRunModel,
+    ObservationRunModel,
+    RelationshipEvaluationModel,
+)
 from app.infrastructure.persistence.repository import RuntimePersistenceRepository
 from app.infrastructure.persistence.runtime_contracts import (
     LensAnalysisResultInput,
@@ -87,6 +91,22 @@ def pending_observation_run() -> ObservationRunModel:
         provenance={},
         execution_context={},
     )
+
+
+def test_runtime_metadata_declares_active_run_and_relationship_ordinal_guards() -> None:
+    active_index = next(
+        index
+        for index in ObservationRunModel.__table__.indexes
+        if index.name == "uq_observation_runs_one_active_per_observation"
+    )
+    assert active_index.unique
+    assert active_index.dialect_options["postgresql"]["where"] is not None
+    assert any(
+        constraint.name == "uq_relationship_evaluations_observation_run_id_position"
+        for constraint in RelationshipEvaluationModel.__table__.constraints
+        if isinstance(constraint, UniqueConstraint)
+    )
+    assert not RelationshipEvaluationModel.__table__.c.position.nullable
 
 
 def pending_lens_run(observation_run: ObservationRunModel, lens_type: LensType) -> LensRunModel:
@@ -668,6 +688,7 @@ def test_observation_level_artifacts_and_early_failure_absence() -> None:
             observation_run,
             RelationshipEvaluationInput(
                 relationship_id="temperature-pressure-link",
+                position=0,
                 payload={
                     "relationship": {
                         "id": "temperature-pressure-link",

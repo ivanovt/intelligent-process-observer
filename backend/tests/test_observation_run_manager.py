@@ -7,6 +7,7 @@ from types import SimpleNamespace
 from uuid import UUID, uuid4
 
 import pytest
+from sqlalchemy.exc import IntegrityError
 
 from app.execution import (
     AnalysisWindow,
@@ -178,6 +179,74 @@ def test_preparation_rejection_settles_admission_without_continuation_or_recover
         assert isinstance(rejected, RejectedObservationExecutionOutcome)
         assert orchestrator.continue_calls == 0
         assert reconciler.reconcile_calls == 0
+        assert manager.state is ObservationRunManagerState.READY
+
+    asyncio.run(run())
+
+
+def test_active_run_index_loser_maps_to_the_one_durable_conflict_lookup() -> None:
+    class IndexDiagnostic:
+        constraint_name = "uq_observation_runs_one_active_per_observation"
+
+    class IndexFailure(Exception):
+        diag = IndexDiagnostic()
+
+    class IndexLosingOrchestrator(_Orchestrator):
+        async def initialize(self, request, policy):
+            self.initialize_calls += 1
+            raise IntegrityError(None, None, IndexFailure())
+
+    class RacingLookup(_Lookup):
+        def __init__(self, active_run_id: UUID) -> None:
+            super().__init__()
+            self.active_run_id = active_run_id
+
+        async def get_active_observation_run_id(self, observation_id: UUID) -> UUID | None:
+            self.calls.append(observation_id)
+            return None if len(self.calls) == 1 else self.active_run_id
+
+    async def run() -> None:
+        request = _request()
+        expected_run_id = uuid4()
+        lookup = RacingLookup(expected_run_id)
+        orchestrator = IndexLosingOrchestrator(lookup)
+        manager = _manager(orchestrator, lookup, _Reconciler())
+
+        outcome = await manager.launch(request)
+
+        assert outcome == LaunchConflict(expected_run_id)
+        assert lookup.calls == [request.observation_id, request.observation_id]
+        assert orchestrator.initialize_calls == 1
+        assert orchestrator.continue_calls == 0
+        assert manager.state is ObservationRunManagerState.READY
+
+    asyncio.run(run())
+
+
+def test_active_run_index_loser_with_no_post_rollback_row_is_uncertain() -> None:
+    class IndexDiagnostic:
+        constraint_name = "uq_observation_runs_one_active_per_observation"
+
+    class IndexFailure(Exception):
+        diag = IndexDiagnostic()
+
+    class IndexLosingOrchestrator(_Orchestrator):
+        async def initialize(self, request, policy):
+            self.initialize_calls += 1
+            raise IntegrityError(None, None, IndexFailure())
+
+    async def run() -> None:
+        lookup = _Lookup()
+        request = _request()
+        orchestrator = IndexLosingOrchestrator(lookup)
+        manager = _manager(orchestrator, lookup, _Reconciler())
+
+        outcome = await manager.launch(request)
+
+        assert outcome == LaunchUnavailable(code="launch_admission_uncertain")
+        assert lookup.calls == [request.observation_id, request.observation_id]
+        assert orchestrator.initialize_calls == 1
+        assert orchestrator.continue_calls == 0
         assert manager.state is ObservationRunManagerState.READY
 
     asyncio.run(run())

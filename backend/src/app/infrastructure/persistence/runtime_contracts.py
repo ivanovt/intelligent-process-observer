@@ -192,7 +192,10 @@ class LensAnalysisResultInput(PersistenceModel):
 
 
 class RelationshipEvaluationInput(PersistenceModel):
+    """One relationship artifact plus its frozen definition ordering metadata."""
+
     relationship_id: str = Field(min_length=1)
+    position: int = Field(ge=0)
     payload: dict[str, Any]
 
 
