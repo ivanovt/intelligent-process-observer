@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+from dataclasses import dataclass
 from datetime import UTC, datetime
 from uuid import UUID
 
@@ -44,6 +45,24 @@ from app.metrics.contracts import (
     MetricLensExecutionContext,
 )
 from app.observations.contracts import ObservationCreate
+
+
+@dataclass(frozen=True, slots=True)
+class ObservationRunSummaryRecord:
+    """One ordered runtime row and the minimum sources for a public summary."""
+
+    observation_run: ObservationRunModel
+    observation_name: str
+    analysis_schema_version: str | None
+    analysis_payload: dict[str, object] | None
+
+
+@dataclass(frozen=True, slots=True)
+class ObservationRunDetailRecord:
+    """One fully eager runtime aggregate paired only with its display name."""
+
+    observation_run: ObservationRunModel
+    observation_name: str
 
 
 class ObservationRepository:
@@ -465,7 +484,6 @@ class RuntimePersistenceRepository:
         await session.flush()
         return model
 
-
     async def persist_observation_analysis_result(
         self,
         session: AsyncSession,
@@ -548,6 +566,70 @@ class RuntimePersistenceRepository:
             )
         )
         return result.unique().one_or_none()
+
+    async def list_observation_run_summaries(
+        self, session: AsyncSession
+    ) -> list[ObservationRunSummaryRecord]:
+        """Load every run summary source in one newest-first SQL statement.
+
+        The analytical payload remains deliberately unprojected here.  The public
+        boundary validates its complete domain contract before it derives the
+        optional analytical state.
+        """
+
+        result = await session.execute(
+            select(
+                ObservationRunModel,
+                ObservationModel.name,
+                ObservationAnalysisResultModel.schema_version,
+                ObservationAnalysisResultModel.payload,
+            )
+            .join(ObservationModel, ObservationModel.id == ObservationRunModel.observation_id)
+            .outerjoin(
+                ObservationAnalysisResultModel,
+                ObservationAnalysisResultModel.observation_run_id == ObservationRunModel.id,
+            )
+            .order_by(ObservationRunModel.created_at.desc(), ObservationRunModel.id.desc())
+        )
+        return [
+            ObservationRunSummaryRecord(
+                observation_run=row[0],
+                observation_name=row[1],
+                analysis_schema_version=row[2],
+                analysis_payload=row[3],
+            )
+            for row in result
+        ]
+
+    async def get_observation_run_detail(
+        self, session: AsyncSession, observation_run_id: UUID
+    ) -> ObservationRunDetailRecord | None:
+        """Load one full runtime graph with its Observation display identity.
+
+        Callers that require a coherent public response must issue this loader
+        inside the PostgreSQL repeatable-read transaction owned by the read
+        boundary.  The select-in eager loads are then pinned to that one MVCC
+        snapshot while retaining the existing aggregate ownership.
+        """
+
+        result = await session.execute(
+            select(ObservationRunModel, ObservationModel.name)
+            .join(ObservationModel, ObservationModel.id == ObservationRunModel.observation_id)
+            .where(ObservationRunModel.id == observation_run_id)
+            .options(
+                selectinload(ObservationRunModel.lens_runs).selectinload(
+                    LensRunModel.analysis_result
+                ),
+                selectinload(ObservationRunModel.relationship_evaluations),
+                selectinload(ObservationRunModel.observation_analysis_result).selectinload(
+                    ObservationAnalysisResultModel.report
+                ),
+            )
+        )
+        row = result.unique().one_or_none()
+        if row is None:
+            return None
+        return ObservationRunDetailRecord(observation_run=row[0], observation_name=row[1])
 
     @staticmethod
     def _reason_payload(reason: StructuredReason | None) -> dict[str, object] | None:
