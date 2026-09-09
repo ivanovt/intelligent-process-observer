@@ -1,0 +1,81 @@
+## 0. Feature Branch Precondition
+
+- [x] 0.1 Create and confirm `feature/add-observation-run-management` from `main` before any architecture, planning, or implementation write; never execute this change directly on `main`.
+
+## 1. Synchronize Approved Architecture and UI Direction
+
+- [x] 1.1 Add accepted ADR entries for single-process on-demand public execution with process-owned `asyncio`, one active run per Observation, restart cancellation, the explicit multi-process exclusion, and the approved `4`/`300s` server execution defaults; update the relevant runtime documents without changing the existing workflow, JOIN, artifact, or cancellation semantics.
+- [x] 1.2 Add the accepted production Metric/Alert OpenRouter/PydanticAI decision with same-model defaults, separate role settings, existing system prompts, `120s` request timeout, `12,288` output-token limit, and the temporary empty KnowledgeRetriever boundary.
+- [x] 1.3 Remove only the execution-policy, overlap, and Metric/Alert production-agent items resolved by this change from `docs/architecture/10_open_decisions_and_backlog.md`; update the architecture README/version and `docs/architecture/12_CHANGELOG.md` consistently.
+- [x] 1.4 Version `docs/ui/README.md` and `docs/ui/ui_implementation_handoff_v1.md` for the global Runs list, launch dialog, initial detail foundation, Copy-only report action, complete execution-status tokens, and updated implementation sequence while preserving all accepted execution/analysis and evidence/knowledge semantics.
+- [x] 1.5 Add ADR-170 for the trusted unauthenticated MVP boundary and synchronize its proposal/design references, root `AGENTS.md`, frontend stack ADR, architecture overview provider statement, and backlog version/date metadata.
+
+## 2. Refactor Execution for Managed Launch
+
+- [x] 2.1 Split `ObservationExecutionOrchestrator` into reusable durable initialization and post-initialization continuation operations while preserving the existing end-to-end `execute` API and all current unit/integration behavior.
+- [x] 2.2 Add positive backend settings for `max_parallel_lens_runs=4` and `lens_deadline_seconds=300`, document them in `.env.example`, and cover defaults, overrides, invalid values, and absence from public contracts.
+- [x] 2.3 Implement an `ObservationRunManager` with locked `ready|recovery_required|shutting_down` state, monotonic recovery generation, pre-persistence initializer admission registry, lazily scoped per-Observation launch locks, post-commit generation fence, detached immutable `status=running` acceptance summary built during initialization, atomic continuation/summary registration, typed accepted/conflict/unavailable outcomes, older-generation initializer/continuation quiescence, session-settlement barrier, sequential five-second cancellation reconciliation, verified recovery, and truthful graceful shutdown.
+- [x] 2.4 Add focused execution/manager tests for known rejection/rollback, cancellation before/during/after commit, indeterminate commit, recovery transition before and after initialization commit, no late continuation/`202`, all older admissions settled before reconciliation, concurrent recovery joining, durable-before-return handoff, exactly-once continuation, persistence failure before/after terminal writes, global admission blocking, retry timing, verified recovery, shutdown persistence outage, and preservation of the synchronous orchestrator contract.
+
+## 3. Enforce and Reconcile Active Runtime State
+
+- [ ] 3.1 Add one Alembic migration and SQLAlchemy metadata for the named active-run partial unique index plus non-negative, per-run-unique RelationshipEvaluation `position`; backfill positions through current immutable definition identity/order, abort on unresolved or non-contiguous mappings, preserve analytical payloads, and make downgrade remove only the added constraint/column/index.
+- [ ] 3.2 Keep the named active-run index as defense in depth: after full loser rollback perform one active lookup, return typed conflict when found or `launch_admission_uncertain` when absent, never auto-retry initialization, and propagate unrelated persistence/integrity errors into their accepted path.
+- [ ] 3.3 Add idempotent startup/runtime reconciliation that starts only after the manager's older-generation initializer/continuation and database-session barrier, atomically cancels every recovered unfinished LensRun and ObservationRun with `execution_cancelled`, preserves terminal siblings/artifacts, propagates transaction failure, and verifies an empty active set before readiness or launch traffic.
+- [ ] 3.4 Add PostgreSQL integration tests for racing same-Observation initialization within the supported process, concurrent different-Observation runs, terminal-history re-run, migration upgrade/downgrade, exact Relationship ordinal backfill and abort preconditions, new batch ordinal constraints/order, orphan reconciliation, commit failure, verification failure, repeated no-op reconciliation, and recovery after transient outage; do not claim cross-process task ownership.
+
+## 4. Complete Production Agent and Pipeline Composition
+
+- [ ] 4.1 Add independent Metric and Alert model, request-timeout, and maximum-output-token settings with approved defaults matching the existing model, `120s`, and `12,288`; update `.env.example` and settings tests without exposing values to browser configuration.
+- [ ] 4.2 Extend the Metric and Alert PydanticAI adapters and OpenRouter composition to apply their existing system prompts and server-owned request limits while retaining framework-neutral ports; enforce Alert's maximum ten admitted tool attempts and eleven counted model requests, a completion-only final request, response-order multi-call admission, no excess registry/ledger entry, and no twelfth request.
+- [ ] 4.3 Add safe unavailable implementations for missing OpenRouter configuration so application startup and launch succeed, model-backed stages follow existing safe failure/degradation mappings, and no credential/configuration detail enters reasons or artifacts.
+- [ ] 4.4 Add the explicit production `EmptyKnowledgeRetriever` returning a validated empty tuple with no external calls or fabricated references, and compose it into Observation Reasoning until a later knowledge feature replaces it.
+- [ ] 4.5 Build one lifespan-owned production execution composition from the existing Prometheus, Jira, relationship, reasoning, report, repository, and agent components; add adapter/composition tests for configured, missing-key, role override, timeout/output limit, prompt, empty retrieval, Alert early completion, ten-tools-plus-final, final-request tool violation, multi-call capacity crossing, ledger bound, and no-twelfth-request paths.
+
+## 5. Add Safe Run Read Projections
+
+- [ ] 5.1 Extend runtime persistence with deterministic one-statement newest-first full-history, active-run lookup, and coherent eager detail retrieval inside one PostgreSQL read-only `REPEATABLE READ` transaction while preserving type-aware Lens ordering and missing-versus-empty artifact distinctions.
+- [ ] 5.2 Define strict public `ObservationRunSummary`, exact LensRun wrapper, and `ObservationRunDetail` response models reusing the named Metric/Alert schema-1.0 unions, unversioned RelationshipEvaluation, ObservationAnalysisResult 1.0, and unversioned ObservationReport contracts with independently optional analytical state.
+- [ ] 5.3 Implement projection/serialization that revalidates and correlates every persisted artifact, fails closed as `runtime_projection_invalid`, derives truthful duration, intentionally exposes only declared CanonicalAlertRecord/provider provenance as untrusted operational data, joins only Observation identity/display name, and excludes raw provider records, execution context, selectors/queries, credentials, prompts, model settings/messages, task state, and diagnostics.
+- [ ] 5.4 Add unit and PostgreSQL integration tests for exact nested variant schemas, normalized Alert title/description/status/importance/source-ref exposure, sentinel secret/query/raw-record/diagnostic non-exposure, invalid stored artifact fail-closed behavior, ordering/tie-breaking, all lifecycle states, failed runs with and without persisted analysis, mixed Lens artifacts, RelationshipEvaluation persisted-ordinal order independent of UUID/timestamp/current definition, absent/empty artifacts, duration, and a terminal writer commit deliberately interleaved between detail-loader queries to prove one coherent snapshot.
+
+## 6. Expose the Observation Run API
+
+- [ ] 6.1 Add strict launch request validation for existing Observation identity and concrete aware UTC `from < to <= now` timestamps, rejecting undeclared client policy/provider/model fields.
+- [ ] 6.2 Implement `POST /api/v1/observation-runs` returning the captured immutable running acceptance summary with no post-registration database await after durable initialization, and map not-found, invalid/unsupported definition, manager conflict with existing run link, vanished defensive-index conflict as `503 launch_admission_uncertain`, request validation, initialization infrastructure failures, and manager `recovery_required` as `503 execution_recovery_pending`.
+- [ ] 6.3 Implement non-mutating `GET /api/v1/observation-runs` full-history and `GET /api/v1/observation-runs/{id}` coherent-detail endpoints and register the router through the lifespan-owned service/manager.
+- [ ] 6.4 Add API tests for successful detached launch, exact acceptance-summary fields, immediately terminal continuation with still-running `202` and terminal next read, no post-registration persistence lookup, initializer generation fencing, no acceptance during recovery, indeterminate commit recovery, exact request/response and nested artifact variants, `runtime_projection_invalid`, all error mappings, same-Observation admission serialization, stable conflict identity after immediate terminalization, defensive-index found/vanished interleavings, no automatic retry, recovery-pending launch rejection, best-effort reads during recovery, newest-first empty/mixed history, active progress reads, complete/partial detail, 404, and repeated read side-effect freedom.
+- [ ] 6.5 Add composed backend integration tests that launch through the API, observe running state, reach a deterministic terminal result, retrieve correlated detail, and verify transient persistence outage, quiescence, recovery retry, blocked/unblocked launch admission, shutdown, and startup readiness with injected providers/agents.
+- [ ] 6.6 Verify the trusted MVP access boundary: run endpoints require no identity/token/role, no permissive CORS or browser secret is added, existing safe error/non-exposure rules hold, and deployment documentation—not overlap policy—is the control against untrusted callers.
+
+## 7. Build Runs List and Primary Filters
+
+- [ ] 7.1 Add `frontend/src/features/runs/` API/domain types and clients for launch, complete history, and detail; activate the Runs shell link and register `/runs` and `/runs/:observationRunId` routes.
+- [ ] 7.2 Add reusable `ExecutionStatusBadge` and `AnalyticalStateBadge` components/tokens that keep lifecycle and analytical state independent, include text/accessibility semantics, and represent unavailable analysis explicitly.
+- [ ] 7.3 Implement the newest-first lightweight Runs list with Observation name, compact run ID, window/time, duration, status, state, Open action, and distinct initial-loading, error/retry, empty, populated, and no-match states.
+- [ ] 7.4 Implement composable local Observation, execution-status, and analytical-state filters with stable ordering, deduplicated Observation choices, unavailable-state selection, persistent filter state during refresh, and one clear-all action.
+- [ ] 7.5 Add rendered tests for navigation, mixed rows, execution/state independence, filters and ordering, empty/no-match/error distinctions, accessibility labels, and detail navigation.
+
+## 8. Add Run Launch and Automatic Refresh
+
+- [ ] 8.1 Add the accessible Run Observation dialog with an independent abortable `GET /api/v1/observations` state machine for loading, retryable failure, empty plus New Observation, and ordered success; include never-run definitions, use run history only for known-active disabling, gate confirmation on successful eligible selection, and retain server conflict authority.
+- [ ] 8.2 Implement injected-clock time-range helpers for the ten approved relative presets and exact `now|now-15m|now-1h` expressions, one-instant UTC resolution, concrete preview, ordering/future validation, and rejection of every unsupported expression.
+- [ ] 8.3 Submit exactly one concrete launch request, retain dialog input on rejection/failure, handle `409` with the existing active run, and on `202` close the dialog, remain on `/runs`, insert the running acceptance snapshot, immediately refresh by stable run identity, prevent terminal-to-running regression, and show launch confirmation.
+- [ ] 8.4 Implement sequential five-second polling for active list/detail data with abort cleanup, no overlapping requests, one final terminal refresh, manual refresh, last-successful-data retention, stale feedback, and filter/tab/focus preservation.
+- [ ] 8.5 Add pure and rendered tests for independent definition loading/failure/retry/empty/abort/reopen, a never-run Observation, backend order, confirmation gating, every preset/expression, shared-now resolution, invalid ranges, disabled active Observations, request payload/call count, success/failure/conflict behavior, return-to-list flow, polling timers, stale data, and unmount cleanup.
+
+## 9. Build the Initial Run Detail Foundation
+
+- [ ] 9.1 Implement `RunHeader` and Summary with identity, exact window, timestamps/duration, independent execution/analysis badges, safe reason, Lens counts/progress, limitations, key findings, Back to Runs, and manual refresh.
+- [ ] 9.2 Add accessible Summary/Metrics/Alerts/Relationships/Analysis/Report navigation that preserves the selected section across refresh and adapts to narrow layouts without changing information architecture.
+- [ ] 9.3 Implement type-specific Metric and Alert Lens result views that show accepted current/reference evidence, data quality/importance, findings, lifecycle/reason, and unavailable states without raw JSON or provider configuration.
+- [ ] 9.4 Implement Relationship evaluation cards and Observation analysis components for applicability versus state, limitations, findings, hypotheses, and distinct Evidence/Relationship/Knowledge traceability chips without severity, confidence, root-cause, or recommendation semantics.
+- [ ] 9.5 Implement the presentation-only preformatted Markdown report view with Copy Markdown and distinct pending, failed-before-report, cancelled, missing, and genuinely empty states; do not add a Markdown/HTML rendering dependency.
+- [ ] 9.6 Add detail tests for progressing; completed with all-completed Lenses; completed with a partial LensRun; Metric `data_quality=degraded`; early-failed; post-analysis-failed; cancelled; empty-section; missing-run; refresh; tab persistence; traceability; and report-copy behavior, asserting no partial/degraded ObservationRun state is invented.
+
+## 10. Documentation and Final Verification
+
+- [ ] 10.1 Update `docs/development-guide.md` and related contributor/API documentation for run endpoints, backend-only settings, single-process managed-task limitation, automatic restart cancellation, no-knowledge fallback, deliberately unauthenticated trusted single-user/internal scope, `0.0.0.0` development-binding risk, and the requirement for authentication before untrusted exposure.
+- [ ] 10.2 Run focused Ruff/pytest suites, frontend ESLint/Vitest/build, migration checks, and `git diff --check`; resolve all failures without expanding approved behavior.
+- [ ] 10.3 Run `npx --yes @fission-ai/openspec@1.9.0 validate add-observation-run-management --strict` (or the installed equivalent) and reconcile every proposal capability, requirement, scenario, and task.
+- [ ] 10.4 Run `make check` as the final local verification before archive and pull-request preparation, and report every failure accurately; do not archive, push, create a pull request, or implement later detail refinements in this task.

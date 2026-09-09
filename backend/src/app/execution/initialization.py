@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from contextlib import AbstractAsyncContextManager
 from dataclasses import dataclass
+from datetime import UTC, datetime
 from typing import Protocol
 from uuid import UUID, uuid4
 
@@ -12,6 +13,7 @@ from app.execution.contracts import (
     ObservationDefinitionLoader,
     ObservationExecutionRequest,
     ObservationExecutionSnapshot,
+    ObservationRunAcceptanceSummary,
     RejectedObservationExecutionOutcome,
     project_observation_execution,
 )
@@ -39,6 +41,7 @@ class InitializedObservationExecution:
     snapshot: ObservationExecutionSnapshot
     observation_run_id: UUID
     assignments: tuple[LensExecutionAssignment, ...]
+    acceptance_summary: ObservationRunAcceptanceSummary
 
 
 async def initialize_observation_execution(
@@ -107,11 +110,35 @@ async def _create_runtime_graph(
         observation_run,
         ObservationRunStatus.RUNNING,
     )
+    refresh = getattr(session, "refresh", None)
+    if refresh is not None:
+        await refresh(observation_run, attribute_names=["created_at", "started_at"])
+    started_at = _utc_timestamp(getattr(observation_run, "started_at", None))
+    created_at = _utc_timestamp(getattr(observation_run, "created_at", None)) or started_at
+    if started_at is None:
+        raise ValueError("initialized ObservationRun is missing its start timestamp")
     return InitializedObservationExecution(
         snapshot=snapshot,
         observation_run_id=observation_run_id,
         assignments=assignments,
+        acceptance_summary=ObservationRunAcceptanceSummary(
+            observation_run_id=observation_run_id,
+            observation_id=snapshot.observation_id,
+            observation_name=snapshot.name,
+            analysis_window=snapshot.analysis_window,
+            created_at=created_at,
+            started_at=started_at,
+            href=f"/api/v1/observation-runs/{observation_run_id}",
+        ),
     )
+
+
+def _utc_timestamp(value: object) -> datetime | None:
+    """Return one concrete UTC timestamp loaded from the runtime graph."""
+
+    if isinstance(value, datetime) and value.tzinfo is UTC:
+        return value
+    return None
 
 
 def _parent_execution_context(snapshot: ObservationExecutionSnapshot) -> dict[str, object]:

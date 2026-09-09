@@ -51,6 +51,8 @@ class Settings(BaseSettings):
     observation_report_max_output_tokens: int = Field(default=8_192, gt=0)
     openrouter_allow_fallbacks: bool = True
     openrouter_provider_order: list[str] = Field(default_factory=list)
+    max_parallel_lens_runs: int = Field(default=4, gt=0)
+    lens_deadline_seconds: float = Field(default=300, gt=0)
 
     model_config = SettingsConfigDict(
         env_file=_REPOSITORY_ROOT / ".env",

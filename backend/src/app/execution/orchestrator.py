@@ -77,15 +77,28 @@ class ObservationExecutionOrchestrator:
     ) -> ObservationExecutionOutcome:
         """Prepare and execute one fresh run, propagating cancellation and persistence errors."""
 
-        initialized = await initialize_observation_execution(
+        initialized = await self.initialize(request, policy)
+        if isinstance(initialized, RejectedObservationExecutionOutcome):
+            return initialized
+        return await self.continue_execution(initialized, policy)
+
+    async def initialize(
+        self, request: ObservationExecutionRequest, policy: ExecutionPolicy
+    ) -> InitializedObservationExecution | RejectedObservationExecutionOutcome:
+        """Durably create a running runtime graph without starting analytical work."""
+
+        return await initialize_observation_execution(
             self._persistence_aware_factory,
             self._definition_loader,
             self._runtime_repository,
             request,
             policy,
         )
-        if isinstance(initialized, RejectedObservationExecutionOutcome):
-            return initialized
+
+    async def continue_execution(
+        self, initialized: InitializedObservationExecution, policy: ExecutionPolicy
+    ) -> ObservationExecutionOutcome:
+        """Run the post-initialization pipeline exactly once for a committed graph."""
 
         stage = "fanout"
         try:

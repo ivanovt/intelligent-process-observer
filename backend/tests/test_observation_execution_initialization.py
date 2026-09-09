@@ -143,6 +143,12 @@ def test_initialization_commits_complete_type_aware_runtime_graph() -> None:
     ]
     assert len({item.lens_run_id for item in initialized.assignments}) == 3
     assert initialized.assignments[1].lens.lens_id == initialized.assignments[2].lens.lens_id
+    assert initialized.acceptance_summary.observation_run_id == initialized.observation_run_id
+    assert initialized.acceptance_summary.observation_id == definition.id
+    assert initialized.acceptance_summary.observation_name == definition.name
+    assert initialized.acceptance_summary.status == "running"
+    assert initialized.acceptance_summary.reason is None
+    assert initialized.acceptance_summary.finished_at is None
 
 
 def test_initialization_correlates_each_assignment_with_its_exact_runtime_child() -> None:
