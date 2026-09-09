@@ -58,6 +58,47 @@ class ObservationRunAnalysisWindow(StrictObservationRunResponse):
         return self
 
 
+class ObservationRunLaunchWindow(BaseModel):
+    """Concrete wire timestamps accepted only for a new Observation run."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+    from_: datetime = Field(alias="from")
+    to: datetime
+
+    @field_validator("from_", "to")
+    @classmethod
+    def require_utc(cls, value: datetime) -> datetime:
+        """Require concrete aware UTC values supplied through JSON."""
+
+        if value.tzinfo is None or value.utcoffset() != UTC.utcoffset(value):
+            raise ValueError("analysis window timestamps must be UTC")
+        return value.astimezone(UTC)
+
+    @model_validator(mode="after")
+    def require_forward_window(self) -> ObservationRunLaunchWindow:
+        """Reject an empty or backward analysis interval."""
+
+        if self.from_ >= self.to:
+            raise ValueError("analysis window must be forward")
+        return self
+
+
+class ObservationRunLaunchRequest(BaseModel):
+    """The only client-controlled inputs admitted at the run launch boundary."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+    observation_id: UUID
+    analysis_window: ObservationRunLaunchWindow
+
+    @model_validator(mode="after")
+    def require_non_future_window(self) -> ObservationRunLaunchRequest:
+        """Reject a future-facing interval before it reaches execution admission."""
+
+        if self.analysis_window.to > datetime.now(UTC):
+            raise ValueError("analysis window end must not be in the future")
+        return self
+
+
 class ObservationRunSummary(StrictObservationRunResponse):
     """Compact immutable lifecycle projection shared by launch and history reads."""
 
