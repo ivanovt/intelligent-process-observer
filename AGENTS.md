@@ -264,7 +264,7 @@ Before planning, implementing, or reviewing frontend/UI changes, read:
 
 ### Current UI direction
 
-UI Direction v1.3 is the accepted current direction. ADR-167 establishes the authority
+UI Direction v1.4 is the accepted current direction. ADR-167 establishes the authority
 order: accepted architecture/runtime contracts and public contracts govern domain
 semantics and API boundaries; accepted `docs/ui/` direction/handoff plus approved
 OpenSpec changes govern UI behavior, information architecture, and intentional visual

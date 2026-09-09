@@ -1,23 +1,21 @@
 # Open decisions и архитектурен backlog
 
 **Статус:** Open / Deferred register  
-**Версия:** 5.1  
-**Актуализирано:** 2026-08-31
+**Версия:** 5.2
+**Актуализирано:** 2026-09-09
 
 Този файл съдържа **само нерешени или съзнателно deferred** въпроси. Нищо тук не трябва да се използва като implicit requirement.
 
 ## 1. Lens configuration
 
-- Exact config location/default hierarchy за `max_parallel_lens_runs`.
-- Exact per-Lens timeout/retry policy.
+- Retry policy beyond the accepted no-resume/fresh-run and type-specific provider rules.
 
 ## 2. Metrics pipeline
 
-- Exact prompt wording и implementation-private serialization на вече фиксирания
-  structured Metrics Agent context; agent-visible data boundary е фиксирана от ADR-156.
-- Production Metrics LLM model/provider и свързаните provider-specific dependencies.
-- Model-dependent request timeout, token и cost limits извън фиксирания domain tool
-  budget от ADR-155.
+- Implementation-private serialization на вече фиксирания structured Metrics Agent
+  context; agent-visible data boundary е фиксирана от ADR-156.
+- Provider cost/admission limits и бъдещо prompt/model evaluation tuning извън
+  фиксираните ADR-169 production defaults и domain tool budget от ADR-155.
 - Production Prometheus Metric Provider transport mapping, authentication, retry и
   timeout policy; analytical provider port остава source/framework-neutral.
 
@@ -35,7 +33,8 @@
 - precedence на primary `reason`, ако един partial result има повече от една едновременна причина (`invalid_records` + `reference_unavailable`);
 - exact validation/build failure reason code;
 - volume/truncation/pagination policy beyond MVP;
-- exact prompt/model/token budget за Alert Analysis Agent;
+- provider cost/admission limits и бъдещо prompt/model evaluation tuning за Alert
+  Analysis Agent извън фиксираните ADR-169 production defaults;
 - exact internal request/response serialization на optional alert tools;
 - exact per-tool timeout values;
 - exact `evidence_refs` mapping за findings, derived от transient optional tool evidence.
@@ -86,9 +85,9 @@
 
 ## 7. Triggering and lifecycle
 
-- Periodic vs on-demand vs event-driven trigger policies/defaults.
+- Periodic и event-driven trigger policies/defaults; on-demand public launch е фиксиран
+  от ADR-168.
 - Scheduling technology.
-- Overlap policy, ако нов trigger пристигне при running ObservationRun.
 - External cancellation API/trigger, automatic-retry trigger policy, idempotency, replay
   и artifact-reuse semantics. ADR-164 фиксира fresh-run retry/restart/re-run behavior, а
   ADR-165 фиксира terminalization при вече наблюдавана top-level cancellation.
@@ -96,8 +95,8 @@
 ## 8. Persistence and infrastructure
 
 - Database technology/schema.
-- Workflow/orchestration framework (custom, graph/workflow engine и др.).
-- Queue/executor model за parallel LensRuns.
+- Multi-process task ownership/claim/lease и distributed worker model; ADR-168 фиксира
+  single-process managed `asyncio` host за on-demand MVP execution.
 - Observability/telemetry на самата multi-agent система.
 - Data retention policy за persisted results.
 

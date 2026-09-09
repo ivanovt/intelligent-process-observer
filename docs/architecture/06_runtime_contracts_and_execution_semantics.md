@@ -1,8 +1,8 @@
 # Runtime contracts и execution semantics
 
 **Статус:** Работна нормативна референция за MVP  
-**Версия:** 5.0  
-**Актуализирано:** 2026-08-19
+**Версия:** 5.1
+**Актуализирано:** 2026-09-09
 
 ## 1. Common Lens Pipeline interface
 
@@ -54,6 +54,65 @@ ALL LensRuns of current ObservationRun are terminal
 При top-level cancellation normal JOIN continuation се прекратява: terminal LensRuns се
 запазват, `pending|running` LensRuns и ObservationRun преминават към `cancelled`, след
 което cancellation се propagate-ва (ADR-165).
+
+On-demand public execution се host-ва от точно един application process/worker за MVP
+(ADR-168). Durable runtime graph и `ObservationRun=running` се commit-ват преди public
+launch да върне identity. Post-initialization workflow-ът продължава в една managed
+`asyncio` task. Graceful shutdown използва ADR-165; orphaned active records след hard
+process interruption се terminalize-ват при startup като
+`cancelled/execution_cancelled` и никога не се resume-ват.
+
+Persistence налага най-много един `pending|running` ObservationRun за едно Observation.
+Това е overlap invariant, не multi-process ownership protocol. Single-process
+deployment е нормативно ограничение, докато няма отделен claim/lease design.
+
+Public admission за едно Observation се сериализира process-locally през durable active
+lookup и initialization commit. Намерен active run дава отделен launch conflict със
+stable run identity. Partial unique index е defense in depth; негов loser прави точно
+един post-rollback lookup. Ако active run вече липсва, API връща
+`launch_admission_uncertain` и не retry-ва initialization без нов client request.
+
+При detached persistence uncertainty manager-ът fail-ва closed: преминава в
+`recovery_required`, спира launch admission, quiesce-ва process-owned tasks и retry-ва
+само durable cancellation/reconciliation веднага и после през `5s`. Analytical stages
+не се retry-ват. `ready` се възстановява само след successful commit и fresh durable
+read без active ObservationRuns. Startup не става ready при failed reconciliation;
+graceful shutdown не claim-ва completion без durable cancellation. Public reads са
+best-effort и показват единствено persist-ната истина.
+
+Initialization admission е tracked преди първия database await и носи monotonic
+recovery generation. След commit continuation + accepted response snapshot се
+register-ват atomic само ако manager остава `ready` на същата generation. Indeterminate
+commit outcome влиза в recovery. Recovery increment-ва generation и чака всички
+older-generation initializer/continuation tasks и transaction/session scopes да се
+затворят преди reconciliation; така final active-state verification не може да бъде
+последван от late initializer commit. Fenced initializer не връща `202` и не се retry-ва.
+
+Accepted response snapshot се materialize-ва от initialization transaction-а и не
+изисква database read след continuation registration. То е explicit point-in-time
+`running` representation с null analytical/finish fields. Ако continuation завърши
+преди HTTP serialization, `202` не се rewrite-ва; следващ list/detail read показва
+актуалния durable terminal state.
+
+Всеки public run-detail response трябва да е coherent database snapshot. Ако ORM load
+използва множество queries, те се изпълняват в една read-only PostgreSQL
+`REPEATABLE READ` transaction. Concurrent atomic Lens terminal transition + artifact
+insert се виждат или изцяло преди, или изцяло след snapshot-а, никога като torn
+status/artifact combination. Summary list response използва една ordered statement.
+
+Persist-натите RelationshipEvaluations пазят zero-based ordinal от frozen Relationship
+definition order. Ordinal-ът е persistence metadata, не domain payload field; той е
+unique и contiguous за run-а и е единственият source за public/detail ordering.
+
+Trusted-MVP public run detail reuse-ва exact strict Metric/Alert schema `1.0`,
+unversioned RelationshipEvaluation, ObservationAnalysisResult `1.0` и unversioned
+ObservationReport contracts. Alert `CanonicalAlertRecord` fields, включително
+provider-originated title/description/source status/provider importance/source_ref, са
+explicit public operational evidence и се render-ват като untrusted text. Raw provider
+records, selectors/queries, credentials, acquisition diagnostics, execution context,
+prompts/model data и transient successful tool outputs не се expose-ват. Invalid stored
+artifact или correlation fail-ва целия detail projection със safe
+`runtime_projection_invalid`, без partial omission.
 
 ## 4. Post-JOIN gate
 

@@ -5,11 +5,11 @@ This directory contains the accepted current UI direction, frontend technology d
 ## Files
 
 - `frontend_ui_stack_adr.md` — accepted frontend visual technology stack and related trade-offs.
-- `ui_implementation_handoff_v1.md` — living major-v1 implementation handoff (currently v1.3) covering monitoring/investigation, Observation Management, and Data Sources UX.
+- `ui_implementation_handoff_v1.md` — living major-v1 implementation handoff (currently v1.4) covering monitoring/investigation, run management, Observation Management, and Data Sources UX.
 
 ## Status
 
-**UI Direction v1.3 is the accepted current direction.**
+**UI Direction v1.4 is the accepted current direction.**
 
 v1.2 retained the monitoring/investigation and Observation Management direction, and added:
 
@@ -25,6 +25,12 @@ v1.2 retained the monitoring/investigation and Observation Management direction,
 v1.3 retains that screen set and replaces manual Metric Lens, Alert Lens, and
 Relationship ID entry with generated, read-only IDs derived once from the initial
 name and then kept stable.
+
+v1.4 adds the global Runs history/launch screen and operationalizes the existing
+Observation Run Summary as a routable detail foundation. It keeps execution status
+independent from analytical state, uses a single-process on-demand launch boundary,
+requires Copy Markdown but defers report export, and treats detailed visual refinement
+as a later versioned change.
 
 The implementation must preserve accepted information architecture, terminology, analytical/execution semantics, aggregate ownership, Lens configuration boundaries, and evidence/knowledge boundaries.
 
@@ -46,7 +52,7 @@ Observation UI - Master Thesis
 https://magicpath.ai/files/447597481925181440
 ```
 
-MagicPath can guide look and feel, but an approved change does not require 1:1 canvas parity or synchronization. Historical v1.1 and v1.2 wording remains historical; ADR-167 and this current v1.3 documentation govern new work.
+MagicPath can guide look and feel, but an approved change does not require 1:1 canvas parity or synchronization. Historical v1.1 through v1.3 wording remains historical; ADR-167 and this current v1.4 documentation govern new work.
 
 ## Usage
 

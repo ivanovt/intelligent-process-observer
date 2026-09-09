@@ -2,7 +2,7 @@
 
 **Проект:** „Интелигентна мулти-агентна система за откриване на аномалии и супервизия на технологични процеси“  
 **Статус на записите:** Accepted, освен ако изрично не е посочено друго  
-**Версия на регистъра:** 6.2
+**Версия на регистъра:** 6.4
 
 ---
 
@@ -3030,7 +3030,8 @@ restart trigger, scheduling, overlap policy, idempotency key, replay protocol и
 - предходните runs и техните артефакти остават immutable historical records;
 - policy за това кога/дали се стартира нов attempt остава отделно решение;
 - cancellation terminalization се фиксира от ADR-165; overlap, idempotency, replay и
-  artifact-reuse semantics остават Open.
+  artifact-reuse semantics остават Open, освен overlap policy, която е фиксирана от
+  ADR-168.
 
 ---
 
@@ -3070,7 +3071,8 @@ ADR-164 и създава нов runtime aggregate.
 - `cancelled` не е usable Lens outcome и не се интерпретира като normal evidence;
 - normal strict-JOIN continuation използва pipeline terminal outcomes
   `completed|partial|failed`; cancellation използва отделен abort path;
-- exact external cancellation API/trigger и overlap/idempotency policy остават Open.
+- exact external cancellation API/trigger и idempotency policy остават Open; overlap
+  policy е фиксирана от ADR-168.
 
 ---
 
@@ -3118,7 +3120,9 @@ The detailed decision and implementation guidance live in
 **Context**
 ADR-166 фиксира MVP frontend visual stack и project-owned semantic components, но
 историческият му текст определя frozen UI Direction v1.1 и MagicPath като строг
-visual/UX source of truth. UI Direction v1.2 добавя Data Sources screen и трябва да
+visual/UX source of truth. UI Direction v1.2 добавя Data Sources screen, v1.3 фиксира
+generated child IDs, а v1.4 добавя Runs History/Launch и initial run-detail foundation;
+living direction трябва да
 позволява одобрена, versioned UI evolution без да превръща canvas parity или
 synchronization в implementation/acceptance gate.
 
@@ -3139,7 +3143,7 @@ supersede-ва само строгата му клауза за v1.1/MagicPath a
    incidental code drift.
 
 Текущият living major-v1 handoff остава на път
-`docs/ui/ui_implementation_handoff_v1.md` и се version-ва вътрешно като v1.2. По-късна
+`docs/ui/ui_implementation_handoff_v1.md` и се version-ва вътрешно като v1.4. По-късна
 MagicPath synchronization е допустима, но не определя дали одобрена UI промяна може да
 бъде реализирана или приета.
 
@@ -3152,6 +3156,178 @@ MagicPath synchronization е допустима, но не определя да
   drift;
 - historical v1.1 documents и записи не се пренаписват; по-новият ADR определя
   supersession при конфликт.
+
+---
+
+## ADR-168 — On-demand Observation execution използва single-process managed asyncio host
+
+**Status:** Accepted
+
+**Context**
+MVP има детерминистичен top-level Observation Orchestrator и durable runtime state, но
+няма приет public trigger, process ownership модел или overlap policy. Runs UI изисква
+бързо връщане на durable run identity, наблюдение на active execution и еднозначно
+поведение при повторно стартиране.
+
+**Decision**
+MVP поддържа on-demand public launch на predefined Metric/Alert Observation чрез един
+application process/worker и process-owned `asyncio` tasks. Public boundary:
+
+- валидира `observation_id` и finite past-facing UTC analysis window;
+- създава и commit-ва целия runtime identity graph и `ObservationRun=running` преди да
+  върне accepted run identity;
+- продължава съществуващия deterministic workflow в точно една managed task;
+- използва server-owned configurable defaults `max_parallel_lens_runs=4` и
+  `lens_deadline_seconds=300`; client не може да ги override-ва;
+- допуска най-много един `pending|running` ObservationRun за едно Observation;
+- serialized admission се пази с process-local per-Observation lock през durable active
+  lookup и initialization commit; при намерен active run manager връща stable identity;
+- partial unique database index остава defense-in-depth overlap invariant;
+- ако defensive index race бъде изгубен, след rollback се прави точно един active
+  lookup: намерен run дава conflict, а липсващ run дава safe
+  `launch_admission_uncertain` без automatic initialization retry;
+- при overlap вторият attempt не оставя runtime residue; различни Observations могат да
+  имат active runs едновременно;
+- при graceful shutdown cancel-ва и await-ва managed tasks чрез ADR-165;
+- при startup на единствения supported process terminalize-ва orphaned
+  `pending|running` records като `cancelled/execution_cancelled`; те не се resume-ват,
+  а следващ attempt следва ADR-164;
+- detached persistence failure или неуспешна cancellation terminalization поставя
+  целия manager в `recovery_required`, блокира всички launches, quiesce-ва останалите
+  managed tasks и retry-ва само cancellation/reconciliation веднага и после през `5s`;
+- manager се връща в `ready` само след commit и durable verification, че няма active
+  ObservationRun; analytical workflow не се retry-ва;
+- startup не става ready, ако initial reconciliation не може да commit-не и verify-не;
+  graceful shutdown не отчита completion, докато durable cancellation е непотвърдена.
+
+Initialization също е manager-owned work:
+
+- initializer се register-ва преди първия persistence await с текущ monotonic recovery
+  generation;
+- indeterminate commit/cancellation outcome влиза в `recovery_required`; known rejection
+  или proven rollback не го прави;
+- след successful commit initializer-ът recheck-ва state/generation под manager lock;
+  само unchanged `ready` може atomic да register-не continuation + immutable accepted
+  snapshot;
+- accepted snapshot се build-ва от committed initialization values без post-registration
+  database await и винаги представя acceptance-time `running` state с null
+  reason/analysis/finish/duration; fast terminal continuation се вижда при следващ read;
+- recovery increment-ва generation, cancel/await-ва всички older-generation
+  initializers/continuations и чака transaction/session teardown преди reconciliation;
+- fenced initializer не връща `202`, не стартира continuation и не се retry-ва;
+  евентуално commit-натият active run се terminalize-ва от reconciliation.
+
+Single-process ограничението е нормативно за този MVP. Partial unique database
+constraint защитава overlap invariant, но не представлява multi-process task ownership.
+Multi-process/multi-worker deployment е unsupported, докато няма отделно приет
+claim/lease/worker coordination модел.
+
+Този ADR не въвежда scheduling, event-driven trigger, public cancellation, automatic
+retry, idempotency key, replay, artifact reuse, authentication/authorization или trusted
+deployment boundary.
+
+**Consequences**
+- UI/API може да показва running и terminal runs без HTTP connection да държи execution;
+- same-Observation overlap е предотвратен и re-run след terminal state създава fresh IDs;
+- conflict response може да посочи durable run identity без да разчита на exception
+  payload; изчезнал defensive race изисква explicit client retry;
+- generation fence предотвратява late initializer commit/continuation след verified
+  recovery и затваря commit-uncertainty boundary fail-closed;
+- `202` остава point-in-time acceptance representation дори при immediate completion;
+  list/detail polling връща по-новата durable истина и UI не допуска terminal regression;
+- hard process interruption не resume-ва работа и се вижда като cancelled historical run;
+- single-process deployment трябва да е изрично документиран;
+- persistence uncertainty fail-ва closed за launch admission; reads показват само
+  durable database truth и никога не infer-ват terminal state от process memory;
+- един public run-detail response се изгражда в read-only PostgreSQL `REPEATABLE READ`
+  transaction, така че multi-query aggregate load вижда един MVCC snapshot;
+- scheduling, multi-process ownership, idempotency и public cancellation остават Open;
+  MVP access boundary без authentication е фиксиран от ADR-170.
+
+---
+
+## ADR-169 — Production Metric и Alert agents използват съществуващия OpenRouter/PydanticAI boundary
+
+**Status:** Accepted
+
+**Context**
+ADR-152 избира PydanticAI като agent framework, а Metric и Alert pipelines вече имат
+framework-neutral ports и PydanticAI adapters с implementation-owned system prompts.
+Production Observation execution се нуждае от конкретна composition, без model/provider
+types или settings да навлизат в domain contracts.
+
+**Decision**
+Production Metric Analysis Agent и Alert Analysis Agent се compose-ват чрез
+съществуващите PydanticAI adapters и OpenRouter infrastructure boundary.
+
+- Metric, Alert, Observation Reasoning и Report roles default-ват към
+  `openai/gpt-5.6-terra`, но пазят отделни server-side model-name settings;
+- Metric и Alert model request default-ите са timeout `120s` и maximum output
+  `12_288` tokens, с отделни positive settings за двата roles;
+- един Alert Agent invocation има max `11` actual model requests и max `10` admitted
+  optional-tool attempts; след clean десетия attempt остава най-много един
+  completion-only request;
+- tool call в единадесетия response или call над оставащия capacity в multi-call
+  response fail-ва policy преди tool execution/ledger append и не допуска request 12;
+- текущите hardcoded Metric и Alert system prompts стават initial production prompts;
+  prompt configuration/version selection не се expose-ва;
+- съществуващите domain-owned request/tool budgets остават независими и по-строги при
+  достигане на своя boundary;
+- липсващ `OPENROUTER_API_KEY` не блокира application startup или launch; inject-ват се
+  unavailable agent adapters и run-ът достига safe existing failure/degradation semantics
+  без secret/configuration detail;
+- докато няма приет production knowledge backend, Observation Reasoning получава
+  explicit empty `KnowledgeRetriever`, който връща празен валиден batch и не измисля
+  knowledge refs или hypotheses.
+
+Model/provider objects, credentials, prompts, token/timeout settings и framework messages
+остават infrastructure-only и не се връщат през public API.
+
+**Consequences**
+- production execution reuse-ва вече приетия agent framework и provider integration;
+- roles могат да се променят независимо в бъдеща одобрена промяна;
+- no-key execution остава durable и audit-able failed/degraded attempt, а не launch
+  rejection;
+- real KnowledgeRetriever, prompt refinement/versioning, provider cost limits и
+  production evaluation tuning остават отделни decisions;
+- Alert hard model-request/tool termination се доказва с boundary tests преди
+  production activation.
+
+---
+
+## ADR-170 — MVP public API е unauthenticated само в trusted single-user/internal deployment
+
+**Status:** Accepted
+
+**Context**
+Run launch използва provider и LLM resources, а run detail expose-ва operational
+evidence. За thesis MVP приоритетът е working end-to-end версия за проверка на подхода,
+без отделен identity/authentication project, но липсата на auth не трябва да се приема
+като безопасна public-network позиция.
+
+**Decision**
+MVP не въвежда application login, authentication token/session, user identity, roles,
+authorization, per-user audit attribution или rate-limit dependency. Всеки caller, който
+може да достигне application API, се третира като един trusted operator.
+
+Deployment boundary е local development или operator-controlled trusted internal
+environment. Backend/frontend не трябва да се expose-ват директно към public internet
+или untrusted network. Host firewall, network policy или externally managed reverse
+proxy носят deployment isolation. Development bind към `0.0.0.0` е convenience за WSL
+host access, не authorization, и трябва да бъде документиран като риск.
+
+Не се разрешава permissive arbitrary-origin CORS и не се добавят browser-visible
+secrets. Терминът public API означава documented HTTP application contract, не
+unrestricted network exposure. One-active-run overlap policy не е access control.
+
+**Consequences**
+- thesis MVP може да валидира end-to-end execution без identity subsystem;
+- всеки network-reachable caller може да стартира cost-incurring work и да чете
+  operational evidence;
+- untrusted/public/multi-user deployment е unsupported;
+- authentication, authorization, identity, audit attribution и untrusted-network
+  admission/rate policy изискват отделна architecture + OpenSpec промяна преди broader
+  exposure.
 
 ---
 

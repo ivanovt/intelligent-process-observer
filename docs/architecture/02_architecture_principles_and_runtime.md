@@ -2,12 +2,12 @@
 
 **Проект:** „Интелигентна мулти-агентна система за откриване на аномалии и супервизия на технологични процеси“  
 **Статус:** Работна нормативна архитектурна референция за MVP  
-**Версия:** 6.0  
-**Актуализирано:** 2026-08-19
+**Версия:** 6.1
+**Актуализирано:** 2026-09-09
 
 ## 1. Предназначение
 
-Документът описва принципите на работа на Observation workflow-а, специализираните Lens pipelines, deterministic и agentic компонентите, междинните артефакти и границите на отговорност. Технологичният orchestration framework, LLM provider, database технологията и конкретният retriever stack остават implementation decisions.
+Документът описва принципите на работа на Observation workflow-а, специализираните Lens pipelines, deterministic и agentic компонентите, междинните артефакти и границите на отговорност. MVP използва plain Python/`asyncio` orchestration и ADR-169 OpenRouter/PydanticAI production agent composition. Multi-process worker ownership, конкретният real KnowledgeRetriever stack и останалите изрично Open infrastructure decisions остават извън текущото решение.
 
 ## 2. Основна архитектурна теза
 
@@ -55,6 +55,11 @@ separate Markdown report generation
 - управлява terminal lifecycle на ObservationRun.
 
 Той **не** анализира данни, не resolve-ва relationship participant semantic fields, не използва RAG, не формулира findings/hypotheses и не генерира narrative report.
+
+On-demand public launch се адаптира към същия Orchestrator чрез single-process managed
+`asyncio` host (ADR-168). Host-ът връща run identity само след durable initialization,
+продължава workflow-а exactly once, и не въвежда втори execution model. Multi-process
+task ownership, scheduling и event-driven triggering не са част от този MVP boundary.
 
 ### 3.2. Reasoning plane
 
@@ -113,7 +118,11 @@ flowchart TD
 
 ### 6.1. Independence and concurrency
 
-LensRuns в един ObservationRun са **логически независими**. Физическият parallelism е execution policy, не архитектурно изискване. Runtime трябва да поддържа configurable `max_parallel_lens_runs` или еквивалентен лимит. Свободен execution slot се използва веднага; няма изискване за batch-by-batch execution.
+LensRuns в един ObservationRun са **логически независими**. Физическият parallelism е execution policy, не архитектурно изискване. Runtime поддържа configurable `max_parallel_lens_runs` с public-launch default `4`; per-Lens deadline default-ът е `300s`. И двете стойности са server-owned и client не може да ги override-ва (ADR-168). Свободен execution slot се използва веднага; няма изискване за batch-by-batch execution.
+
+За едно Observation има най-много един `pending|running` ObservationRun. Нов on-demand
+launch при active run се отхвърля без runtime residue. След terminal state нов launch
+създава fresh ObservationRun/LensRun identities според ADR-164.
 
 ### 6.2. Strict JOIN
 

@@ -1,7 +1,7 @@
 # Relationship Evaluator — концепция и детерминистична семантика
 
 **Статус:** Работна нормативна референция за MVP  
-**Версия:** 3.0
+**Версия:** 3.1
 
 ## 1. Цел
 
@@ -213,6 +213,15 @@ relationship_evaluation:
 ## 7.1. Self-contained relationship identity
 
 `RelationshipEvaluation` трябва да носи достатъчна семантична идентификация (`relationship_id`, по възможност `name`/кратко `description`) плюс evaluated expected/observed evidence. Reasoning context не трябва отделно да дублира целия `RelationshipDefinition`. Пълният rule DSL не е нужно да се копира, ако evaluation evidence показва използваните expectations.
+
+## 7.2. Persisted evaluation order
+
+Всеки persist-нат `RelationshipEvaluation` носи persistence-owned zero-based ordinal,
+равен на позицията на Relationship-а във frozen Observation definition snapshot-а.
+Ordinal-ът не е част от domain payload-а и не добавя schema version, но е required за
+stable retrieval order. В един ObservationRun ordinal-ите са unique и contiguous
+`0..N-1`; retrieval никога не reconstruct-ва order от UUID, timestamp, lexical ID или
+текуща mutable definition.
 
 ## 8. Non-responsibilities
 
