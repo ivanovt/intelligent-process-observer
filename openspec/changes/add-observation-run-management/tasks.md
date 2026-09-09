@@ -66,12 +66,12 @@
 
 ## 9. Build the Initial Run Detail Foundation
 
-- [ ] 9.1 Implement `RunHeader` and Summary with identity, exact window, timestamps/duration, independent execution/analysis badges, safe reason, Lens counts/progress, limitations, key findings, Back to Runs, and manual refresh.
-- [ ] 9.2 Add accessible Summary/Metrics/Alerts/Relationships/Analysis/Report navigation that preserves the selected section across refresh and adapts to narrow layouts without changing information architecture.
-- [ ] 9.3 Implement type-specific Metric and Alert Lens result views that show accepted current/reference evidence, data quality/importance, findings, lifecycle/reason, and unavailable states without raw JSON or provider configuration.
-- [ ] 9.4 Implement Relationship evaluation cards and Observation analysis components for applicability versus state, limitations, findings, hypotheses, and distinct Evidence/Relationship/Knowledge traceability chips without severity, confidence, root-cause, or recommendation semantics.
-- [ ] 9.5 Implement the presentation-only preformatted Markdown report view with Copy Markdown and distinct pending, failed-before-report, cancelled, missing, and genuinely empty states; do not add a Markdown/HTML rendering dependency.
-- [ ] 9.6 Add detail tests for progressing; completed with all-completed Lenses; completed with a partial LensRun; Metric `data_quality=degraded`; early-failed; post-analysis-failed; cancelled; empty-section; missing-run; refresh; tab persistence; traceability; and report-copy behavior, asserting no partial/degraded ObservationRun state is invented.
+- [x] 9.1 Implement `RunHeader` and Summary with identity, exact window, timestamps/duration, independent execution/analysis badges, safe reason, Lens counts/progress, limitations, key findings, Back to Runs, and manual refresh.
+- [x] 9.2 Add accessible Summary/Metrics/Alerts/Relationships/Analysis/Report navigation that preserves the selected section across refresh and adapts to narrow layouts without changing information architecture.
+- [x] 9.3 Implement type-specific Metric and Alert Lens result views that show accepted current/reference evidence, data quality/importance, findings, lifecycle/reason, and unavailable states without raw JSON or provider configuration.
+- [x] 9.4 Implement Relationship evaluation cards and Observation analysis components for applicability versus state, limitations, findings, hypotheses, and distinct Evidence/Relationship/Knowledge traceability chips without severity, confidence, root-cause, or recommendation semantics.
+- [x] 9.5 Implement the presentation-only preformatted Markdown report view with Copy Markdown and distinct pending, failed-before-report, cancelled, missing, and genuinely empty states; do not add a Markdown/HTML rendering dependency.
+- [x] 9.6 Add detail tests for progressing; completed with all-completed Lenses; completed with a partial LensRun; Metric `data_quality=degraded`; early-failed; post-analysis-failed; cancelled; empty-section; missing-run; refresh; tab persistence; traceability; and report-copy behavior, asserting no partial/degraded ObservationRun state is invented.
 
 ## 10. Documentation and Final Verification
 
