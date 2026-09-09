@@ -15,7 +15,10 @@ from app.alerts.contracts import (
     CanonicalAlertRecord,
 )
 from app.alerts.tools import AlertOptionalToolRegistry
-from app.infrastructure.agents.pydantic_ai_alerts import PydanticAIAlertAnalysisAgent
+from app.infrastructure.agents.pydantic_ai_alerts import (
+    AlertAgentPolicyViolation,
+    PydanticAIAlertAnalysisAgent,
+)
 
 START = datetime(2026, 8, 30, tzinfo=UTC)
 
@@ -112,7 +115,7 @@ def test_repeated_calls_through_tenth_use_domain_executor() -> None:
     assert len(calls) == 11
 
 
-def test_forbidden_requests_are_rejected_and_budget_rejection_then_completes() -> None:
+def test_forbidden_requests_before_the_final_request_are_routed_to_the_registry() -> None:
     cases = {
         "unregistered": [
             lambda _: ModelResponse(parts=[ToolCallPart("scope_expansion", {})]),
@@ -124,15 +127,6 @@ def test_forbidden_requests_are_rejected_and_budget_rejection_then_completes() -
             ),
             completion,
         ],
-        "over_budget": [
-            *[
-                lambda _: ModelResponse(
-                    parts=[ToolCallPart("recurrence_concentration_analysis", {})]
-                )
-                for _ in range(11)
-            ],
-            completion,
-        ],
     }
     for reason, responses in cases.items():
         injected, calls = model(responses)
@@ -141,11 +135,56 @@ def test_forbidden_requests_are_rejected_and_budget_rejection_then_completes() -
         assert outcome.overall_importance == "low"
         assert tools.ledger[-1].outcome.reason == reason
         assert tools.ledger[-1].executed is False
-        assert len(calls) == (12 if reason == "over_budget" else 2)
+        assert len(calls) == 2
 
 
 def test_forbidden_request_model_counts_have_no_corrective_retry() -> None:
-    test_forbidden_requests_are_rejected_and_budget_rejection_then_completes()
+    injected, calls = model(
+        [
+            *[
+                lambda _: ModelResponse(
+                    parts=[ToolCallPart("recurrence_concentration_analysis", {})]
+                )
+                for _ in range(10)
+            ],
+            lambda _: ModelResponse(parts=[ToolCallPart("recurrence_concentration_analysis", {})]),
+        ]
+    )
+    tools = registry()
+
+    with pytest.raises(AlertAgentPolicyViolation):
+        run(PydanticAIAlertAnalysisAgent(injected).complete(request(), tools))
+
+    assert len(calls) == 11
+    assert len(tools.ledger) == 10
+
+
+def test_multi_call_response_stops_at_remaining_capacity_without_excess_ledger_entry() -> None:
+    injected, calls = model(
+        [
+            *[
+                lambda _: ModelResponse(
+                    parts=[ToolCallPart("recurrence_concentration_analysis", {})]
+                )
+                for _ in range(9)
+            ],
+            lambda _: ModelResponse(
+                parts=[
+                    ToolCallPart("recurrence_concentration_analysis", {}),
+                    ToolCallPart("duration_outlier_analysis", {}),
+                ]
+            ),
+        ]
+    )
+    tools = registry()
+
+    with pytest.raises(AlertAgentPolicyViolation):
+        run(PydanticAIAlertAnalysisAgent(injected).complete(request(), tools))
+
+    assert len(calls) == 10
+    assert [(item.ordinal, item.requested_name) for item in tools.ledger] == [
+        (ordinal, "recurrence_concentration_analysis") for ordinal in range(1, 11)
+    ]
 
 
 def test_invalid_completion_failure_counts_have_no_corrective_retry() -> None:

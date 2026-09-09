@@ -5,9 +5,11 @@ from __future__ import annotations
 from dataclasses import dataclass, field, replace
 
 from pydantic_ai import Agent, RunContext
+from pydantic_ai.exceptions import UsageLimitExceeded
 from pydantic_ai.messages import ModelResponse, ToolCallPart
 from pydantic_ai.models import Model, ModelRequestParameters, ModelSettings
 from pydantic_ai.models.wrapper import WrapperModel
+from pydantic_ai.usage import UsageLimits
 
 from app.alerts.contracts import (
     AlertAgentCompletion,
@@ -21,6 +23,12 @@ _TOOL_NAMES = (
     "duration_outlier_analysis",
     "reference_pattern_analysis",
 )
+_REQUEST_LIMIT = 11
+_TOOL_ATTEMPT_LIMIT = 10
+
+
+class AlertAgentPolicyViolation(ValueError):
+    """Signal a bounded Alert-agent request or tool-admission violation."""
 
 
 @dataclass
@@ -29,6 +37,8 @@ class _RunState:
 
     tools: AlertOptionalToolExecutor
     tool_outcomes: dict[str, AlertOptionalToolOutcome] = field(default_factory=dict)
+    model_requests: int = 0
+    admitted_tool_attempts: int = 0
 
 
 class _DomainToolObservingModel(WrapperModel):
@@ -44,6 +54,9 @@ class _DomainToolObservingModel(WrapperModel):
         model_settings: ModelSettings | None,
         model_request_parameters: ModelRequestParameters,
     ) -> ModelResponse:
+        if self._state.model_requests >= _REQUEST_LIMIT:
+            raise UsageLimitExceeded("Alert Agent model request limit is eleven")
+        self._state.model_requests += 1
         response = await self.wrapped.request(messages, model_settings, model_request_parameters)
         await self._admit_tool_calls(response, model_request_parameters)
         return self._framework_safe_response(response, model_request_parameters)
@@ -54,13 +67,23 @@ class _DomainToolObservingModel(WrapperModel):
         model_request_parameters: ModelRequestParameters,
     ) -> None:
         output_tool_names = {tool.name for tool in model_request_parameters.output_tools}
-        for part in response.parts:
-            if not isinstance(part, ToolCallPart) or part.tool_name in output_tool_names:
-                continue
+        tool_calls = tuple(
+            part
+            for part in response.parts
+            if isinstance(part, ToolCallPart) and part.tool_name not in output_tool_names
+        )
+        if not tool_calls:
+            return
+        if self._state.model_requests == _REQUEST_LIMIT:
+            raise AlertAgentPolicyViolation("final Alert request cannot request a tool")
+        for part in tool_calls:
+            if self._state.admitted_tool_attempts >= _TOOL_ATTEMPT_LIMIT:
+                raise AlertAgentPolicyViolation("Alert optional-tool attempt limit is ten")
             try:
                 arguments: object = part.args_as_dict(raise_if_invalid=True)
             except (AssertionError, ValueError):
                 arguments = None
+            self._state.admitted_tool_attempts += 1
             self._state.tool_outcomes[part.tool_call_id] = await self._state.tools.execute(
                 part.tool_name, arguments
             )
@@ -88,8 +111,15 @@ class _DomainToolObservingModel(WrapperModel):
 class PydanticAIAlertAnalysisAgent:
     """Implement the Alert agent port using an injected PydanticAI model only."""
 
-    def __init__(self, model: Model) -> None:
+    def __init__(
+        self, model: Model, *, timeout_seconds: float = 120, max_output_tokens: int = 12_288
+    ) -> None:
+        """Configure one injected model with server-owned request limits."""
         self._model = model
+        self._settings: ModelSettings = {
+            "timeout": timeout_seconds,
+            "max_tokens": max_output_tokens,
+        }
 
     async def complete(
         self, request: AlertAgentRequest, tools: AlertOptionalToolExecutor
@@ -97,7 +127,12 @@ class PydanticAIAlertAnalysisAgent:
         """Translate one bounded Alert request through the injected model."""
         state = _RunState(tools=tools)
         agent = self._build_agent(state)
-        result = await agent.run(request.model_dump_json(by_alias=True), deps=state)
+        result = await agent.run(
+            request.model_dump_json(by_alias=True),
+            deps=state,
+            model_settings=self._settings,
+            usage_limits=UsageLimits(request_limit=_REQUEST_LIMIT),
+        )
         return AlertAgentCompletion.model_validate(result.output)
 
     def _build_agent(self, state: _RunState) -> Agent[_RunState, AlertAgentCompletion]:

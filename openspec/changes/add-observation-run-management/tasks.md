@@ -26,11 +26,11 @@
 
 ## 4. Complete Production Agent and Pipeline Composition
 
-- [ ] 4.1 Add independent Metric and Alert model, request-timeout, and maximum-output-token settings with approved defaults matching the existing model, `120s`, and `12,288`; update `.env.example` and settings tests without exposing values to browser configuration.
-- [ ] 4.2 Extend the Metric and Alert PydanticAI adapters and OpenRouter composition to apply their existing system prompts and server-owned request limits while retaining framework-neutral ports; enforce Alert's maximum ten admitted tool attempts and eleven counted model requests, a completion-only final request, response-order multi-call admission, no excess registry/ledger entry, and no twelfth request.
-- [ ] 4.3 Add safe unavailable implementations for missing OpenRouter configuration so application startup and launch succeed, model-backed stages follow existing safe failure/degradation mappings, and no credential/configuration detail enters reasons or artifacts.
-- [ ] 4.4 Add the explicit production `EmptyKnowledgeRetriever` returning a validated empty tuple with no external calls or fabricated references, and compose it into Observation Reasoning until a later knowledge feature replaces it.
-- [ ] 4.5 Build one lifespan-owned production execution composition from the existing Prometheus, Jira, relationship, reasoning, report, repository, and agent components; add adapter/composition tests for configured, missing-key, role override, timeout/output limit, prompt, empty retrieval, Alert early completion, ten-tools-plus-final, final-request tool violation, multi-call capacity crossing, ledger bound, and no-twelfth-request paths.
+- [x] 4.1 Add independent Metric and Alert model, request-timeout, and maximum-output-token settings with approved defaults matching the existing model, `120s`, and `12,288`; update `.env.example` and settings tests without exposing values to browser configuration.
+- [x] 4.2 Extend the Metric and Alert PydanticAI adapters and OpenRouter composition to apply their existing system prompts and server-owned request limits while retaining framework-neutral ports; enforce Alert's maximum ten admitted tool attempts and eleven counted model requests, a completion-only final request, response-order multi-call admission, no excess registry/ledger entry, and no twelfth request.
+- [x] 4.3 Add safe unavailable implementations for missing OpenRouter configuration so application startup and launch succeed, model-backed stages follow existing safe failure/degradation mappings, and no credential/configuration detail enters reasons or artifacts.
+- [x] 4.4 Add the explicit production `EmptyKnowledgeRetriever` returning a validated empty tuple with no external calls or fabricated references, and compose it into Observation Reasoning until a later knowledge feature replaces it.
+- [x] 4.5 Build one lifespan-owned production execution composition from the existing Prometheus, Jira, relationship, reasoning, report, repository, and agent components; add adapter/composition tests for configured, missing-key, role override, timeout/output limit, prompt, empty retrieval, Alert early completion, ten-tools-plus-final, final-request tool violation, multi-call capacity crossing, ledger bound, and no-twelfth-request paths.
 
 ## 5. Add Safe Run Read Projections
 

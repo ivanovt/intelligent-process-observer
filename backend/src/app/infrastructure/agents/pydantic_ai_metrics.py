@@ -97,8 +97,15 @@ class _PolicyObservingModel(WrapperModel):
 class PydanticAIMetricsAnalysisAgent:
     """Injected-model implementation of the framework-neutral MetricsAnalysisAgent port."""
 
-    def __init__(self, model: Model) -> None:
+    def __init__(
+        self, model: Model, *, timeout_seconds: float = 120, max_output_tokens: int = 12_288
+    ) -> None:
+        """Configure one injected model with server-owned request limits."""
         self._model = model
+        self._settings: ModelSettings = {
+            "timeout": timeout_seconds,
+            "max_tokens": max_output_tokens,
+        }
 
     async def complete(
         self,
@@ -116,6 +123,7 @@ class PydanticAIMetricsAnalysisAgent:
                 request.model_dump_json(by_alias=True),
                 deps=state,
                 retries=0,
+                model_settings=self._settings,
                 usage_limits=UsageLimits(request_limit=_REQUEST_LIMIT),
             )
             return MetricAgentCompletion.model_validate(result.output)
