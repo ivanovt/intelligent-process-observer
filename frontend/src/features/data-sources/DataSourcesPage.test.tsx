@@ -28,7 +28,7 @@ describe('DataSourcesPage', () => {
     const dataSources = screen.getByRole('link', { name: 'Data Sources' })
     expect(dataSources.getAttribute('href')).toBe('/data-sources')
     expect(dataSources.getAttribute('aria-current')).toBe('page')
-    expect(screen.queryByRole('link', { name: 'Runs' })).toBeNull()
+    expect(screen.getByRole('link', { name: 'Runs' }).getAttribute('href')).toBe('/runs')
   })
 
   it('shows an explicit loading state before presenting configured sources', async () => {

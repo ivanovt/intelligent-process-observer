@@ -50,11 +50,11 @@
 
 ## 7. Build Runs List and Primary Filters
 
-- [ ] 7.1 Add `frontend/src/features/runs/` API/domain types and clients for launch, complete history, and detail; activate the Runs shell link and register `/runs` and `/runs/:observationRunId` routes.
-- [ ] 7.2 Add reusable `ExecutionStatusBadge` and `AnalyticalStateBadge` components/tokens that keep lifecycle and analytical state independent, include text/accessibility semantics, and represent unavailable analysis explicitly.
-- [ ] 7.3 Implement the newest-first lightweight Runs list with Observation name, compact run ID, window/time, duration, status, state, Open action, and distinct initial-loading, error/retry, empty, populated, and no-match states.
-- [ ] 7.4 Implement composable local Observation, execution-status, and analytical-state filters with stable ordering, deduplicated Observation choices, unavailable-state selection, persistent filter state during refresh, and one clear-all action.
-- [ ] 7.5 Add rendered tests for navigation, mixed rows, execution/state independence, filters and ordering, empty/no-match/error distinctions, accessibility labels, and detail navigation.
+- [x] 7.1 Add `frontend/src/features/runs/` API/domain types and clients for launch, complete history, and detail; activate the Runs shell link and register `/runs` and `/runs/:observationRunId` routes.
+- [x] 7.2 Add reusable `ExecutionStatusBadge` and `AnalyticalStateBadge` components/tokens that keep lifecycle and analytical state independent, include text/accessibility semantics, and represent unavailable analysis explicitly.
+- [x] 7.3 Implement the newest-first lightweight Runs list with Observation name, compact run ID, window/time, duration, status, state, Open action, and distinct initial-loading, error/retry, empty, populated, and no-match states.
+- [x] 7.4 Implement composable local Observation, execution-status, and analytical-state filters with stable ordering, deduplicated Observation choices, unavailable-state selection, persistent filter state during refresh, and one clear-all action.
+- [x] 7.5 Add rendered tests for navigation, mixed rows, execution/state independence, filters and ordering, empty/no-match/error distinctions, accessibility labels, and detail navigation.
 
 ## 8. Add Run Launch and Automatic Refresh
 
