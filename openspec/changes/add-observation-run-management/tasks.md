@@ -75,7 +75,7 @@
 
 ## 10. Documentation and Final Verification
 
-- [ ] 10.1 Update `docs/development-guide.md` and related contributor/API documentation for run endpoints, backend-only settings, single-process managed-task limitation, automatic restart cancellation, no-knowledge fallback, deliberately unauthenticated trusted single-user/internal scope, `0.0.0.0` development-binding risk, and the requirement for authentication before untrusted exposure.
-- [ ] 10.2 Run focused Ruff/pytest suites, frontend ESLint/Vitest/build, migration checks, and `git diff --check`; resolve all failures without expanding approved behavior.
-- [ ] 10.3 Run `npx --yes @fission-ai/openspec@1.9.0 validate add-observation-run-management --strict` (or the installed equivalent) and reconcile every proposal capability, requirement, scenario, and task.
-- [ ] 10.4 Run `make check` as the final local verification before archive and pull-request preparation, and report every failure accurately; do not archive, push, create a pull request, or implement later detail refinements in this task.
+- [x] 10.1 Update `docs/development-guide.md` and related contributor/API documentation for run endpoints, backend-only settings, single-process managed-task limitation, automatic restart cancellation, no-knowledge fallback, deliberately unauthenticated trusted single-user/internal scope, `0.0.0.0` development-binding risk, and the requirement for authentication before untrusted exposure.
+- [x] 10.2 Run focused Ruff/pytest suites, frontend ESLint/Vitest/build, migration checks, and `git diff --check`; resolve all failures without expanding approved behavior.
+- [x] 10.3 Run `npx --yes @fission-ai/openspec@1.9.0 validate add-observation-run-management --strict` (or the installed equivalent) and reconcile every proposal capability, requirement, scenario, and task.
+- [x] 10.4 Run `make check` as the final local verification before archive and pull-request preparation, and report every failure accurately; do not archive, push, create a pull request, or implement later detail refinements in this task.

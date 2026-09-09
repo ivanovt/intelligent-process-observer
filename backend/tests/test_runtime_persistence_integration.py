@@ -2499,7 +2499,12 @@ def test_postgresql_alert_definition_ownership_cascade_and_runtime_restriction(
                     observation_id=restricted_observation_id,
                     status=ObservationRunStatus.PENDING.value,
                     provenance={},
-                    execution_context={},
+                    execution_context={
+                        "analysis_window": {
+                            "from": "2026-09-09T11:00:00+00:00",
+                            "to": "2026-09-09T12:00:00+00:00",
+                        }
+                    },
                 )
             )
             await session.commit()
@@ -3303,7 +3308,9 @@ def test_final_migration_upgrades_and_guards_unsafe_downgrade(
                 lambda connection: inspect(connection).get_indexes("observation_runs")
             )
         assert position == 0
-        assert any(index["name"] == "uq_observation_runs_one_active_per_observation" for index in indexes)
+        assert any(
+            index["name"] == "uq_observation_runs_one_active_per_observation" for index in indexes
+        )
 
     asyncio.run(assert_backfill_and_guards())
     unsafe_identity = asyncio.run(create_unsafe_same_id_rows())

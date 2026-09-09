@@ -301,6 +301,69 @@ so a valid returned series may contain fewer points than the requested grid. The
 Metrics quality policy evaluates the resulting samples, and operators remain responsible
 for choosing suitable queries or recording rules.
 
+### 5.4 Observation run API and trusted deployment boundary
+
+The backend exposes the following run-management endpoints:
+
+```text
+POST /api/v1/observation-runs
+GET  /api/v1/observation-runs
+GET  /api/v1/observation-runs/{observation_run_id}
+```
+
+`POST` accepts only an existing `observation_id` and a concrete UTC analysis window.
+For example:
+
+```json
+{
+  "observation_id": "00000000-0000-0000-0000-000000000000",
+  "analysis_window": {
+    "from": "2026-09-09T08:00:00Z",
+    "to": "2026-09-09T09:00:00Z"
+  }
+}
+```
+
+The window must be forward (`from < to`) and must not end in the future. Time
+expressions, execution policy, providers, model settings, prompts, retry behavior, and
+tool limits are not API inputs. A successful request returns `202 Accepted` with an
+immutable `running` acceptance summary and a relative detail link; use the list or
+detail endpoint for later durable progress. The list is the complete newest-first
+history, and run reads are side-effect free. A same-Observation active run returns
+`409` with the active run identity/link. During verified persistence recovery, launch
+is unavailable (`503 execution_recovery_pending`) while reads remain best-effort.
+
+`MAX_PARALLEL_LENS_RUNS` (default `4`) and `LENS_DEADLINE_SECONDS` (default `300`)
+are positive backend-only settings. They control public-launch Lens concurrency and the
+per-Lens deadline; clients and `VITE_*` configuration cannot read or override them.
+The other backend-only OpenRouter settings in [`.env.example`](../.env.example) control
+future fresh runs only after a backend restart. Do not put the OpenRouter key, model
+configuration, provider routing, database credentials, or any other secret in frontend
+environment files.
+
+Observation runs use process-owned `asyncio` tasks. This MVP must run with exactly one
+application process/worker: it has no durable task claim, lease, scheduler, broker, or
+multi-worker coordination. Graceful shutdown cancels managed work and waits for durable
+cancellation. After an ungraceful restart, startup reconciliation marks unfinished
+runtime records `cancelled` with `execution_cancelled` before accepting launches; it
+never resumes or retries the interrupted run. A later explicit launch creates a fresh
+run identity.
+
+Production Observation Reasoning currently receives an explicit empty knowledge
+retriever. It returns no external knowledge and fabricates neither references nor
+hypotheses. Configure a real knowledge backend only through a separately approved
+architecture and OpenSpec change.
+
+The MVP deliberately has no application login, token, role, or authorization layer for
+these endpoints. It is supported only for a trusted single operator on localhost or an
+operator-controlled internal network. The `make backend` command binds Uvicorn to
+`0.0.0.0` so a development host can reach WSL; that binding is a networking convenience,
+not authorization. Keep the host firewall and network trusted, do not expose this API
+directly to the public internet or an untrusted LAN, and do not treat one-active-run
+admission as an access-control mechanism. Authentication, authorization, and suitable
+admission controls (or an externally managed authenticated reverse proxy) are required
+before any untrusted or multi-user exposure.
+
 ## 6. Initial bootstrap workflow
 
 The repository bootstrap is a one-time workspace change and is not itself an OpenSpec change.

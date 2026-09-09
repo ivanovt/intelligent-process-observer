@@ -29,7 +29,7 @@ _BACKEND_ROOT = Path(__file__).resolve().parents[1]
 
 @pytest.fixture(scope="module")
 def postgres_url() -> str:
-    """Provide an explicitly supplied isolated PostgreSQL URL for this suite."""
+    """Reset and provide an explicitly supplied isolated PostgreSQL URL for this suite."""
 
     database_url = os.environ.get("IPO_TEST_DATABASE_URL")
     if not database_url:
@@ -39,6 +39,16 @@ def postgres_url() -> str:
     config = Config(str(_BACKEND_ROOT / "alembic.ini"))
     config.set_main_option("script_location", str(_BACKEND_ROOT / "migrations"))
     command.upgrade(config, "head")
+
+    async def reset_database() -> None:
+        engine = create_async_engine(database_url)
+        try:
+            async with engine.begin() as session:
+                await session.execute(text("TRUNCATE TABLE observation_definitions CASCADE"))
+        finally:
+            await engine.dispose()
+
+    asyncio.run(reset_database())
     yield database_url
     if previous_url is None:
         os.environ.pop("DATABASE_URL", None)
