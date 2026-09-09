@@ -1,4 +1,4 @@
-import { render, screen, waitFor } from '@testing-library/react'
+import { render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { MemoryRouter, Route, Routes } from 'react-router-dom'
 import { afterEach, describe, expect, it, vi } from 'vitest'
@@ -21,12 +21,28 @@ describe('RunDetailPage', () => {
   it('renders the completed header, independent state, progress, safe reason, and summary findings', async () => {
     renderDetail(detail({ summary: { ...detail().summary, status: 'failed', reason: { code: 'report_failed', component: 'report_generation' } } }))
     expect(await screen.findByRole('heading', { name: 'Cooling plant' })).toBeTruthy()
-    expect(screen.getByLabelText('Execution status: Failed')).toBeTruthy()
-    expect(screen.getByLabelText('Analytical state: Significant findings present')).toBeTruthy()
-    expect(screen.getByText('Reason: report_failed · report_generation')).toBeTruthy()
+    expect(screen.getAllByLabelText('Execution status: Failed')).toHaveLength(2)
+    expect(screen.getAllByLabelText('Analytical state: Significant findings present')).toHaveLength(2)
+    expect(screen.getAllByText('Reason: report_failed · report_generation')).toHaveLength(2)
     expect(screen.getByText('2 of 2 Lens runs completed.')).toBeTruthy()
     expect(screen.getByText('Observed evidence')).toBeTruthy()
     expect(screen.queryByText(/partial ObservationRun/i)).toBeNull()
+  })
+
+  it('keeps run-header execution and analytical truth visible outside Summary', async () => {
+    const current = detail()
+    renderDetail({ ...current, summary: { ...current.summary, status: 'failed', reason: { code: 'report_failed', component: 'report_generation' } } })
+    await screen.findByText('Run summary')
+    await userEvent.click(screen.getByRole('tab', { name: 'Metrics' }))
+    const header = screen.getByRole('heading', { name: 'Cooling plant' }).closest('header')
+    expect(header).not.toBeNull()
+    const headerContent = within(header!)
+    expect(headerContent.getByText(/^Started /)).toBeTruthy()
+    expect(headerContent.getByText(/^Finished /)).toBeTruthy()
+    expect(headerContent.getByText('Duration 1m 1s')).toBeTruthy()
+    expect(headerContent.getByLabelText('Execution status: Failed')).toBeTruthy()
+    expect(headerContent.getByLabelText('Analytical state: Significant findings present')).toBeTruthy()
+    expect(headerContent.getByText('Reason: report_failed · report_generation')).toBeTruthy()
   })
 
   it('keeps tabs accessible and selected after a manual refresh', async () => {
