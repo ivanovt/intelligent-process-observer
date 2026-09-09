@@ -17,6 +17,7 @@ depends_on: str | Sequence[str] | None = None
 
 _ACTIVE_RUN_INDEX = "uq_observation_runs_one_active_per_observation"
 _RELATIONSHIP_POSITION_CONSTRAINT = "uq_relationship_evaluations_observation_run_id_position"
+_RELATIONSHIP_POSITION_CHECK = "ck_relationship_evaluations_position_non_negative"
 
 
 def upgrade() -> None:
@@ -108,6 +109,11 @@ def upgrade() -> None:
         "relationship_evaluations",
         ["observation_run_id", "position"],
     )
+    op.create_check_constraint(
+        _RELATIONSHIP_POSITION_CHECK,
+        "relationship_evaluations",
+        "position >= 0",
+    )
 
 
 def downgrade() -> None:
@@ -117,6 +123,11 @@ def downgrade() -> None:
         _RELATIONSHIP_POSITION_CONSTRAINT,
         "relationship_evaluations",
         type_="unique",
+    )
+    op.drop_constraint(
+        _RELATIONSHIP_POSITION_CHECK,
+        "relationship_evaluations",
+        type_="check",
     )
     op.drop_column("relationship_evaluations", "position")
     op.drop_index(_ACTIVE_RUN_INDEX, table_name="observation_runs")

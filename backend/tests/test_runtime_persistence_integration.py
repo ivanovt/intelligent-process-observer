@@ -3307,9 +3307,19 @@ def test_final_migration_upgrades_and_guards_unsafe_downgrade(
             indexes = await connection.run_sync(
                 lambda connection: inspect(connection).get_indexes("observation_runs")
             )
+            checks = await connection.run_sync(
+                lambda connection: inspect(connection).get_check_constraints(
+                    "relationship_evaluations"
+                )
+            )
         assert position == 0
         assert any(
             index["name"] == "uq_observation_runs_one_active_per_observation" for index in indexes
+        )
+        assert any(
+            check["name"] == "ck_relationship_evaluations_position_non_negative"
+            and check["sqltext"] == "position >= 0"
+            for check in checks
         )
 
     asyncio.run(assert_backfill_and_guards())
@@ -3326,7 +3336,6 @@ def test_final_migration_upgrades_and_guards_unsafe_downgrade(
             alert_table_exists=True,
         )
     )
-
     asyncio.run(remove_cross_type_duplicate_rows())
     command.downgrade(config, "20260823_01")
     asyncio.run(
@@ -3348,3 +3357,44 @@ def test_final_migration_upgrades_and_guards_unsafe_downgrade(
             alert_table_exists=True,
         )
     )
+
+
+def test_postgresql_rejects_negative_relationship_evaluation_position(
+    session_factory: async_sessionmaker[AsyncSession],
+) -> None:
+    async def scenario() -> None:
+        async with session_factory() as session:
+            observation = await _seed_observation(session)
+            run_id = uuid4()
+            await session.execute(
+                text(
+                    """
+                    INSERT INTO observation_runs (
+                        id, observation_id, status, provenance, execution_context
+                    ) VALUES (:run_id, :observation_id, 'completed', '{}'::jsonb, '{}'::jsonb)
+                    """
+                ),
+                {"run_id": run_id, "observation_id": observation.id},
+            )
+            await session.commit()
+
+            with pytest.raises(
+                IntegrityError, match="ck_relationship_evaluations_position_non_negative"
+            ):
+                await session.execute(
+                    text(
+                        """
+                        INSERT INTO relationship_evaluations (
+                            id, observation_run_id, relationship_id, position, payload
+                        ) VALUES (:id, :run_id, :relationship_id, -1, '{}'::jsonb)
+                        """
+                    ),
+                    {
+                        "id": uuid4(),
+                        "run_id": run_id,
+                        "relationship_id": f"negative-position-{uuid4()}",
+                    },
+                )
+            await session.rollback()
+
+    asyncio.run(scenario())

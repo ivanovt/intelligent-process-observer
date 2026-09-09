@@ -6,6 +6,7 @@ from datetime import datetime
 from uuid import UUID, uuid4
 
 from sqlalchemy import (
+    CheckConstraint,
     DateTime,
     ForeignKey,
     Identity,
@@ -231,6 +232,10 @@ class RelationshipEvaluationModel(Base):
             "observation_run_id",
             "position",
             name="uq_relationship_evaluations_observation_run_id_position",
+        ),
+        CheckConstraint(
+            "position >= 0",
+            name="ck_relationship_evaluations_position_non_negative",
         ),
     )
 

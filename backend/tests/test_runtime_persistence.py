@@ -8,7 +8,7 @@ from uuid import uuid4
 
 import pytest
 from pydantic import ValidationError
-from sqlalchemy import UniqueConstraint
+from sqlalchemy import CheckConstraint, UniqueConstraint
 
 from app.infrastructure.persistence.database import Base
 from app.infrastructure.persistence.models import (
@@ -105,6 +105,12 @@ def test_runtime_metadata_declares_active_run_and_relationship_ordinal_guards() 
         constraint.name == "uq_relationship_evaluations_observation_run_id_position"
         for constraint in RelationshipEvaluationModel.__table__.constraints
         if isinstance(constraint, UniqueConstraint)
+    )
+    assert any(
+        constraint.name == "ck_relationship_evaluations_position_non_negative"
+        and str(constraint.sqltext) == "position >= 0"
+        for constraint in RelationshipEvaluationModel.__table__.constraints
+        if isinstance(constraint, CheckConstraint)
     )
     assert not RelationshipEvaluationModel.__table__.c.position.nullable
 
