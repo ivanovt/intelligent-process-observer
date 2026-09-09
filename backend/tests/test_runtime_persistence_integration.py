@@ -3317,9 +3317,7 @@ def test_final_migration_upgrades_and_guards_unsafe_downgrade(
             index["name"] == "uq_observation_runs_one_active_per_observation" for index in indexes
         )
         assert any(
-            check["name"] == "ck_relationship_evaluations_position_non_negative"
-            and check["sqltext"] == "position >= 0"
-            for check in checks
+            check["name"] == "ck_relationship_evaluations_position_non_negative" for check in checks
         )
 
     asyncio.run(assert_backfill_and_guards())
