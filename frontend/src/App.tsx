@@ -8,9 +8,11 @@ import { MetricLensEditorPage } from './features/observations/MetricLensEditorPa
 import { RelationshipEditorPage } from './features/observations/RelationshipEditorPage'
 import { CreateObservationPage } from './features/observations/CreateObservationPage'
 import { ObservationDraftProvider } from './features/observations/draft'
+import { RunDetailPage } from './features/runs/RunDetailPage'
+import { RunsPage } from './features/runs/RunsPage'
 
 /** Defines the currently supported frontend route tree. */
 export default function App() {
-  return <Routes><Route element={<AppShell />}><Route path="/observations" element={<ObservationsPage />} /><Route path="/observations/new" element={<CreateRoutes/>}><Route index element={<CreateObservationPage/>}/><Route path="alert-lenses/:key" element={<AlertLensEditorPage/>}/><Route path="metric-lenses/:key" element={<MetricLensEditorPage/>}/><Route path="relationships/:key" element={<RelationshipEditorPage/>}/></Route><Route path="/observations/:observationId" element={<ObservationDetailPage />} /><Route path="/data-sources" element={<DataSourcesPage />} /><Route path="/" element={<Navigate to="/observations" replace />} /><Route path="*" element={<Navigate to="/observations" replace />} /></Route></Routes>
+  return <Routes><Route element={<AppShell />}><Route path="/observations" element={<ObservationsPage />} /><Route path="/observations/new" element={<CreateRoutes/>}><Route index element={<CreateObservationPage/>}/><Route path="alert-lenses/:key" element={<AlertLensEditorPage/>}/><Route path="metric-lenses/:key" element={<MetricLensEditorPage/>}/><Route path="relationships/:key" element={<RelationshipEditorPage/>}/></Route><Route path="/observations/:observationId" element={<ObservationDetailPage />} /><Route path="/runs" element={<RunsPage />} /><Route path="/runs/:observationRunId" element={<RunDetailPage />} /><Route path="/data-sources" element={<DataSourcesPage />} /><Route path="/" element={<Navigate to="/observations" replace />} /><Route path="*" element={<Navigate to="/observations" replace />} /></Route></Routes>
 }
 function CreateRoutes(){return <ObservationDraftProvider><Outlet/></ObservationDraftProvider>}

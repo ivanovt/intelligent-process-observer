@@ -59,6 +59,38 @@ class ObservationExecutionRequest:
 
 
 @dataclass(frozen=True, slots=True)
+class ObservationRunAcceptanceSummary:
+    """Immutable running snapshot captured with one committed launch handoff."""
+
+    observation_run_id: UUID
+    observation_id: UUID
+    observation_name: str
+    analysis_window: AnalysisWindow
+    created_at: datetime
+    started_at: datetime
+    href: str
+    status: Literal["running"] = "running"
+    reason: None = None
+    analytical_state: None = None
+    finished_at: None = None
+    duration_seconds: None = None
+
+    def __post_init__(self) -> None:
+        """Keep the acceptance snapshot independent from later lifecycle progress."""
+
+        if not isinstance(self.observation_run_id, UUID) or not isinstance(
+            self.observation_id, UUID
+        ):
+            raise ValueError("acceptance summary requires UUID identities")
+        if not isinstance(self.observation_name, str) or not self.observation_name.strip():
+            raise ValueError("acceptance summary requires an Observation name")
+        if not _is_utc(self.created_at) or not _is_utc(self.started_at):
+            raise ValueError("acceptance summary timestamps must be UTC")
+        if self.href != f"/api/v1/observation-runs/{self.observation_run_id}":
+            raise ValueError("acceptance summary requires its canonical detail href")
+
+
+@dataclass(frozen=True, slots=True)
 class ExecutionPolicy:
     """Caller-supplied bounds for one Observation execution."""
 

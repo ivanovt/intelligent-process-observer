@@ -5,7 +5,7 @@
 
 ## Context
 
-UI Direction v1.3 is the accepted current direction. The frontend needs a visual implementation stack that preserves the project-owned visual/domain language, supports desktop-first engineering dashboards and forms, and remains mainstream and maintainable.
+UI Direction v1.4 is the accepted current direction. The frontend needs a visual implementation stack that preserves the project-owned visual/domain language, supports desktop-first engineering dashboards and forms, and remains mainstream and maintainable.
 
 ## Decision
 
@@ -25,7 +25,7 @@ Project-owned semantic design tokens use CSS custom properties integrated with T
 
 Third-party primitives do not own ObserveAI domain semantics. Project-owned components encapsulate analytical state, execution state, Lens configuration, findings/hypotheses, and traceability concepts.
 
-Observation Management and Data Sources UX in UI Direction v1.2 use the same stack and do not introduce a separate admin design system.
+Observation Management, Data Sources, and Runs History/Detail UX in UI Direction v1.4 use the same stack and do not introduce a separate admin design system.
 
 ## Tables
 

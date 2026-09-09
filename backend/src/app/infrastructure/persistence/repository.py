@@ -3,11 +3,12 @@
 from __future__ import annotations
 
 import json
+from dataclasses import dataclass
 from datetime import UTC, datetime
 from uuid import UUID
 
-from sqlalchemy import DateTime, String, cast, select, update
-from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy import DateTime, String, cast, exists, select, update
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from sqlalchemy.orm import selectinload
 
 from app.infrastructure.persistence.models import (
@@ -44,6 +45,24 @@ from app.metrics.contracts import (
     MetricLensExecutionContext,
 )
 from app.observations.contracts import ObservationCreate
+
+
+@dataclass(frozen=True, slots=True)
+class ObservationRunSummaryRecord:
+    """One ordered runtime row and the minimum sources for a public summary."""
+
+    observation_run: ObservationRunModel
+    observation_name: str
+    analysis_schema_version: str | None
+    analysis_payload: dict[str, object] | None
+
+
+@dataclass(frozen=True, slots=True)
+class ObservationRunDetailRecord:
+    """One fully eager runtime aggregate paired only with its display name."""
+
+    observation_run: ObservationRunModel
+    observation_name: str
 
 
 class ObservationRepository:
@@ -347,7 +366,7 @@ class RuntimePersistenceRepository:
         *,
         now: datetime | None = None,
     ) -> ObservationRunModel:
-        """Terminalize one running aggregate without rewriting completed child work.
+        """Terminalize one active aggregate without rewriting completed child work.
 
         The caller owns the surrounding transaction and must roll it back when this
         guarded operation rejects a contradictory parent terminalization.
@@ -360,7 +379,9 @@ class RuntimePersistenceRepository:
             update(ObservationRunModel)
             .where(
                 ObservationRunModel.id == observation_run.id,
-                ObservationRunModel.status == ObservationRunStatus.RUNNING.value,
+                ObservationRunModel.status.in_(
+                    (ObservationRunStatus.PENDING.value, ObservationRunStatus.RUNNING.value)
+                ),
             )
             .values(
                 status=ObservationRunStatus.CANCELLED.value,
@@ -454,7 +475,9 @@ class RuntimePersistenceRepository:
             raise ValueError("An ObservationRun can have at most one evaluation per relationship")
         model = RelationshipEvaluationModel(
             observation_run=observation_run,
+            observation_run_id=observation_run.id,
             relationship_id=evaluation.relationship_id,
+            position=evaluation.position,
             payload=evaluation.payload,
         )
         session.add(model)
@@ -544,6 +567,70 @@ class RuntimePersistenceRepository:
         )
         return result.unique().one_or_none()
 
+    async def list_observation_run_summaries(
+        self, session: AsyncSession
+    ) -> list[ObservationRunSummaryRecord]:
+        """Load every run summary source in one newest-first SQL statement.
+
+        The analytical payload remains deliberately unprojected here.  The public
+        boundary validates its complete domain contract before it derives the
+        optional analytical state.
+        """
+
+        result = await session.execute(
+            select(
+                ObservationRunModel,
+                ObservationModel.name,
+                ObservationAnalysisResultModel.schema_version,
+                ObservationAnalysisResultModel.payload,
+            )
+            .join(ObservationModel, ObservationModel.id == ObservationRunModel.observation_id)
+            .outerjoin(
+                ObservationAnalysisResultModel,
+                ObservationAnalysisResultModel.observation_run_id == ObservationRunModel.id,
+            )
+            .order_by(ObservationRunModel.created_at.desc(), ObservationRunModel.id.desc())
+        )
+        return [
+            ObservationRunSummaryRecord(
+                observation_run=row[0],
+                observation_name=row[1],
+                analysis_schema_version=row[2],
+                analysis_payload=row[3],
+            )
+            for row in result
+        ]
+
+    async def get_observation_run_detail(
+        self, session: AsyncSession, observation_run_id: UUID
+    ) -> ObservationRunDetailRecord | None:
+        """Load one full runtime graph with its Observation display identity.
+
+        Callers that require a coherent public response must issue this loader
+        inside the PostgreSQL repeatable-read transaction owned by the read
+        boundary.  The select-in eager loads are then pinned to that one MVCC
+        snapshot while retaining the existing aggregate ownership.
+        """
+
+        result = await session.execute(
+            select(ObservationRunModel, ObservationModel.name)
+            .join(ObservationModel, ObservationModel.id == ObservationRunModel.observation_id)
+            .where(ObservationRunModel.id == observation_run_id)
+            .options(
+                selectinload(ObservationRunModel.lens_runs).selectinload(
+                    LensRunModel.analysis_result
+                ),
+                selectinload(ObservationRunModel.relationship_evaluations),
+                selectinload(ObservationRunModel.observation_analysis_result).selectinload(
+                    ObservationAnalysisResultModel.report
+                ),
+            )
+        )
+        row = result.unique().one_or_none()
+        if row is None:
+            return None
+        return ObservationRunDetailRecord(observation_run=row[0], observation_name=row[1])
+
     @staticmethod
     def _reason_payload(reason: StructuredReason | None) -> dict[str, object] | None:
         """Serialize the common reason without allowing callers to mutate ORM JSON directly."""
@@ -587,3 +674,70 @@ class RuntimePersistenceRepository:
             result_reason = StructuredReason.model_validate(result.payload["reason"])
             if lens_run_reason != result_reason:
                 raise ValueError("Partial LensRun reason does not match LensAnalysisResult reason")
+
+
+class RuntimeExecutionStateStore:
+    """Provide durable active-run lookup and cancellation reconciliation to the manager."""
+
+    def __init__(
+        self,
+        session_factory: async_sessionmaker[AsyncSession],
+        runtime_repository: RuntimePersistenceRepository,
+    ) -> None:
+        self._session_factory = session_factory
+        self._runtime_repository = runtime_repository
+
+    async def get_active_observation_run_id(self, observation_id: UUID) -> UUID | None:
+        """Return one deterministic active run identity for an Observation, if present."""
+
+        async with self._session_factory() as session:
+            return await session.scalar(
+                select(ObservationRunModel.id)
+                .where(
+                    ObservationRunModel.observation_id == observation_id,
+                    ObservationRunModel.status.in_(
+                        (ObservationRunStatus.PENDING.value, ObservationRunStatus.RUNNING.value)
+                    ),
+                )
+                .order_by(ObservationRunModel.created_at.desc(), ObservationRunModel.id.desc())
+                .limit(1)
+            )
+
+    async def reconcile_active_observation_runs(self) -> None:
+        """Atomically cancel every durable active aggregate without altering terminal artifacts."""
+
+        async with self._session_factory.begin() as session:
+            active_runs = list(
+                await session.scalars(
+                    select(ObservationRunModel)
+                    .where(
+                        ObservationRunModel.status.in_(
+                            (ObservationRunStatus.PENDING.value, ObservationRunStatus.RUNNING.value)
+                        )
+                    )
+                    .order_by(ObservationRunModel.created_at, ObservationRunModel.id)
+                )
+            )
+            for observation_run in active_runs:
+                await self._runtime_repository.cancel_observation_execution(
+                    session, observation_run
+                )
+
+    async def has_active_observation_runs(self) -> bool:
+        """Return whether durable active ObservationRuns remain after reconciliation."""
+
+        async with self._session_factory() as session:
+            return bool(
+                await session.scalar(
+                    select(
+                        exists().where(
+                            ObservationRunModel.status.in_(
+                                (
+                                    ObservationRunStatus.PENDING.value,
+                                    ObservationRunStatus.RUNNING.value,
+                                )
+                            )
+                        )
+                    )
+                )
+            )

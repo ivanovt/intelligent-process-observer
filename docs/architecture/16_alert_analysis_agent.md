@@ -3,8 +3,8 @@
 **Тип:** bounded analytical agent  
 **Owner stage:** Alerts Analysis Pipeline  
 **Статус:** Accepted MVP design  
-**Версия:** 2.0  
-**Актуализирано:** 2026-08-13
+**Версия:** 2.2
+**Актуализирано:** 2026-09-09
 
 ## 1. Purpose
 
@@ -217,15 +217,26 @@ Failed/timeout details се логват operationally и минимално м�
 
 ## 13. Configuration and budgets
 
-Exact LLM model, prompt version, token budget и timeout са implementation decisions.
+Production composition е фиксирана от ADR-169: Alert role използва съществуващия
+OpenRouter/PydanticAI boundary, default model `openai/gpt-5.6-terra`, request timeout
+`120s`, maximum output `12_288` tokens и текущия implementation-owned system prompt.
+Тези settings са server-owned и не променят framework-neutral port-а.
 
 Accepted bounded tool budget:
 
 ```text
 max_optional_tool_calls = 10
+max_model_requests = 11
 ```
 
 Един и същ tool може да бъде извикван многократно. Всеки invocation attempt се брои към лимита, включително `success`, `failed`, `timeout` и `not_applicable`. При достигане на 10 calls агентът трябва да приключи reasoning-а с наличното evidence.
+
+При clean admission на десетия tool остава най-много един completion-only model
+request. Той не expose-ва remaining tool capacity. Tool call в response 11 fail-ва
+policy преди execution и ledger append; request 12 е забранен. Multi-call response се
+обработва в response order само до оставащия capacity; първият excess call fail-ва
+policy без execution, ledger append или continuation. Всеки actual model request се
+брои, включително failed/invalid response; agent може да завърши по-рано.
 
 ## 14. Observability / traceability
 
@@ -242,13 +253,12 @@ Prompt/raw model trace не е част от public result contract.
 
 ## 15. Related ADRs
 
-ADR-106..ADR-110, ADR-119, ADR-123..ADR-132.
+ADR-106..ADR-110, ADR-119, ADR-123..ADR-132, ADR-152, ADR-169.
 
 ## 16. Open questions
 
-- exact prompt serialization/template;
-- model/provider choice;
-- token/latency budget;
+- бъдещо prompt refinement/versioning и production evaluation tuning;
+- provider cost/admission limits;
 - exact internal tool-call/result serialization;
 - exact evidence-ref mapping за findings derived от transient optional tool evidence.
 

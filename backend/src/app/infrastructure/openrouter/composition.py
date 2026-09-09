@@ -4,6 +4,8 @@
 from __future__ import annotations
 
 from app.core.settings import Settings
+from app.infrastructure.agents.pydantic_ai_alerts import PydanticAIAlertAnalysisAgent
+from app.infrastructure.agents.pydantic_ai_metrics import PydanticAIMetricsAnalysisAgent
 from app.infrastructure.agents.pydantic_ai_reasoning import PydanticAIObservationReasoningAgent
 from app.infrastructure.agents.pydantic_ai_reporting import PydanticAIReportGenerationAgent
 
@@ -26,6 +28,55 @@ def build_reasoning_model(settings: Settings):
         settings.observation_reasoning_model,
         provider=provider,
         settings={"extra_body": {"provider": policy}},
+    )
+
+
+def build_metric_model(settings: Settings):
+    """Return the configured OpenRouter model for Metric analysis."""
+    return _build_model(settings, settings.metric_analysis_model)
+
+
+def build_alert_model(settings: Settings):
+    """Return the configured OpenRouter model for Alert analysis."""
+    return _build_model(settings, settings.alert_analysis_model)
+
+
+def _build_model(settings: Settings, model_name: str):
+    """Compose one private native model without exposing credential material."""
+    if (
+        settings.openrouter_api_key is None
+        or not settings.openrouter_api_key.get_secret_value().strip()
+    ):
+        raise ValueError("OpenRouter credential is required for model composition")
+    from pydantic_ai.models.openrouter import OpenRouterModel
+    from pydantic_ai.providers.openrouter import OpenRouterProvider
+
+    provider = OpenRouterProvider(api_key=settings.openrouter_api_key.get_secret_value())
+    policy = {"allow_fallbacks": settings.openrouter_allow_fallbacks}
+    if settings.openrouter_provider_order:
+        policy["order"] = settings.openrouter_provider_order
+    return OpenRouterModel(
+        model_name,
+        provider=provider,
+        settings={"extra_body": {"provider": policy}},
+    )
+
+
+def build_metric_agent(settings: Settings) -> PydanticAIMetricsAnalysisAgent:
+    """Build the configured production adapter for Metric analysis only."""
+    return PydanticAIMetricsAnalysisAgent(
+        build_metric_model(settings),
+        timeout_seconds=settings.metric_analysis_request_timeout_seconds,
+        max_output_tokens=settings.metric_analysis_max_output_tokens,
+    )
+
+
+def build_alert_agent(settings: Settings) -> PydanticAIAlertAnalysisAgent:
+    """Build the configured production adapter for Alert analysis only."""
+    return PydanticAIAlertAnalysisAgent(
+        build_alert_model(settings),
+        timeout_seconds=settings.alert_analysis_request_timeout_seconds,
+        max_output_tokens=settings.alert_analysis_max_output_tokens,
     )
 
 

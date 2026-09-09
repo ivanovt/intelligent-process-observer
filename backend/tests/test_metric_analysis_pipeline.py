@@ -2897,7 +2897,10 @@ def test_postgresql_real_history_reader_precedes_history_partial_terminal_phase(
                 lens_type=LensType.METRIC,
             ),
         )
-        return await repository.advance_lens_run(session, lens_run, LensRunStatus.RUNNING)
+        running_lens_run = await repository.advance_lens_run(
+            session, lens_run, LensRunStatus.RUNNING
+        )
+        return observation_run, running_lens_run
 
     async def scenario() -> None:
         import app.metrics.pipeline as pipeline_module
@@ -2944,16 +2947,21 @@ def test_postgresql_real_history_reader_precedes_history_partial_terminal_phase(
                     )
                 )
                 await session.flush()
-                historical_lens_run = await create_running_lens_run(
+                historical_observation_run, historical_lens_run = await create_running_lens_run(
                     session, history_context, repository
                 )
 
             historical_analysis = await pipeline.analyze(history_context)
             async with session.begin():
                 await pipeline.persist_terminal(session, historical_lens_run, historical_analysis)
+                await repository.advance_observation_run(
+                    session,
+                    historical_observation_run,
+                    ObservationRunStatus.COMPLETED,
+                )
 
             async with session.begin():
-                lens_run = await create_running_lens_run(session, execution_context, repository)
+                _, lens_run = await create_running_lens_run(session, execution_context, repository)
 
             original_load = repository.load
 
@@ -3114,6 +3122,9 @@ def test_postgresql_history_reader_filters_orders_and_bounds_event_time_candidat
                 provenance=payload["provenance"],
                 payload=payload,
             ),
+        )
+        await repository.advance_observation_run(
+            session, observation_run, ObservationRunStatus.COMPLETED
         )
 
     async def scenario() -> None:

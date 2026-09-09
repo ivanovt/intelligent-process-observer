@@ -2,8 +2,8 @@
 
 **Проект:** „Интелигентна мулти-агентна система за откриване на аномалии и супервизия на технологични процеси“  
 **Статус:** Работна нормативна референция за MVP  
-**Версия:** 2.0  
-**Актуализирано:** 2026-08-13
+**Версия:** 2.1
+**Актуализирано:** 2026-09-09
 
 ## 1. Предназначение
 
@@ -381,9 +381,15 @@ Forbidden:
 
 ```text
 max_optional_tool_calls = 10
+max_model_requests = 11
 same tool may be invoked repeatedly
 all attempts count: success | failed | timeout | not_applicable
 ```
+
+След clean десетия admitted tool attempt остава най-много един completion-only model
+request. Response 11 не може да стартира tool; такъв call fail-ва policy преди
+execution/ledger append и няма request 12. Multi-call response използва remaining
+capacity в response order; excess call terminates agent path без continuation.
 
 Minimal MVP registry:
 
@@ -670,7 +676,9 @@ Observation finding evidence_refs
 16. optional duration-outlier tool with <8 valid durations -> `not_applicable`, no status change;
 17. optional tool timeout -> agent continues, call counts toward max 10, minimal unsuccessful trace may be serialized;
 18. same optional tool invoked repeatedly -> allowed while total attempts <=10;
-19. 11th optional tool call -> rejected by bounded-loop budget; agent must finish with available evidence.
+19. ten sequential optional tools -> at most one completion-only model request, total model requests <=11;
+20. tool call in model response 11 -> policy failure before execution/ledger append, no request 12;
+21. multi-call response crosses remaining capacity -> in-capacity calls preserve response order, first excess call fails policy without continuation.
 
 ## 26. Observability of the pipeline itself
 

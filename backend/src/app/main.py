@@ -7,10 +7,18 @@ from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 
 from app.core.settings import get_settings
+from app.execution import ExecutionPolicy, ObservationRunManager
+from app.infrastructure.execution import build_production_execution_composition
 from app.infrastructure.jira import JiraAlertProviderResolver
 from app.infrastructure.persistence.database import create_database_engine, create_session_factory
+from app.infrastructure.persistence.repository import (
+    RuntimeExecutionStateStore,
+    RuntimePersistenceRepository,
+)
 from app.infrastructure.prometheus.adapter import HttpxPrometheusQueryAdapter
 from app.infrastructure.prometheus.composition import PrometheusMetricSeriesProvider
+from app.observation_runs.api import router as observation_runs_router
+from app.observation_runs.read import ObservationRunReadService
 from app.observations.api import router
 from app.observations.errors import ApiError
 from app.observations.service import ObservationDefinitionService
@@ -27,12 +35,34 @@ async def lifespan(app: FastAPI):
     app.state.jira_alert_provider_resolver = JiraAlertProviderResolver(
         settings.jira_alert_provider_raw
     )
-    yield
-    await engine.dispose()
+    app.state.execution_composition = build_production_execution_composition(
+        settings=settings, session_factory=app.state.session_factory
+    )
+    runtime_repository = RuntimePersistenceRepository()
+    runtime_state_store = RuntimeExecutionStateStore(app.state.session_factory, runtime_repository)
+    app.state.observation_run_read_service = ObservationRunReadService(
+        app.state.session_factory, runtime_repository
+    )
+    app.state.observation_run_manager = ObservationRunManager(
+        orchestrator=app.state.execution_composition.orchestrator,
+        active_run_lookup=runtime_state_store,
+        reconciler=runtime_state_store,
+        policy=ExecutionPolicy(
+            max_parallel_lens_runs=settings.max_parallel_lens_runs,
+            lens_deadline_seconds=settings.lens_deadline_seconds,
+        ),
+    )
+    await app.state.observation_run_manager.request_recovery()
+    try:
+        yield
+    finally:
+        await app.state.observation_run_manager.shutdown()
+        await engine.dispose()
 
 
 app = FastAPI(title="Intelligent Process Observer", lifespan=lifespan)
 app.include_router(router)
+app.include_router(observation_runs_router)
 
 
 @app.exception_handler(ApiError)
@@ -40,6 +70,7 @@ async def api_error_handler(_: Request, error: ApiError) -> JSONResponse:
     content: dict[str, str] = {"code": error.code, "message": error.message}
     if error.field is not None:
         content["field"] = error.field
+    content.update(error.details)
     return JSONResponse(status_code=error.status_code, content=content)
 
 

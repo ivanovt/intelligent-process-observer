@@ -6,15 +6,18 @@ from datetime import datetime
 from uuid import UUID, uuid4
 
 from sqlalchemy import (
+    CheckConstraint,
     DateTime,
     ForeignKey,
     Identity,
+    Index,
     Integer,
     String,
     Text,
     UniqueConstraint,
     Uuid,
     func,
+    text,
 )
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column, relationship
@@ -120,6 +123,14 @@ class ObservationRunModel(Base):
     """Durable root of one execution, kept separate from its Observation definition."""
 
     __tablename__ = "observation_runs"
+    __table_args__ = (
+        Index(
+            "uq_observation_runs_one_active_per_observation",
+            "observation_id",
+            unique=True,
+            postgresql_where=text("status IN ('pending', 'running')"),
+        ),
+    )
 
     id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), primary_key=True, default=uuid4)
     observation_id: Mapped[UUID] = mapped_column(
@@ -137,7 +148,9 @@ class ObservationRunModel(Base):
         back_populates="observation_run", cascade="all, delete-orphan"
     )
     relationship_evaluations: Mapped[list[RelationshipEvaluationModel]] = relationship(
-        back_populates="observation_run", cascade="all, delete-orphan"
+        back_populates="observation_run",
+        cascade="all, delete-orphan",
+        order_by="RelationshipEvaluationModel.position",
     )
     observation_analysis_result: Mapped[ObservationAnalysisResultModel | None] = relationship(
         back_populates="observation_run", cascade="all, delete-orphan", uselist=False
@@ -213,13 +226,25 @@ class RelationshipEvaluationModel(Base):
     """Self-contained relationship evidence, unique per relationship within one run."""
 
     __tablename__ = "relationship_evaluations"
-    __table_args__ = (UniqueConstraint("observation_run_id", "relationship_id"),)
+    __table_args__ = (
+        UniqueConstraint("observation_run_id", "relationship_id"),
+        UniqueConstraint(
+            "observation_run_id",
+            "position",
+            name="uq_relationship_evaluations_observation_run_id_position",
+        ),
+        CheckConstraint(
+            "position >= 0",
+            name="ck_relationship_evaluations_position_non_negative",
+        ),
+    )
 
     id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), primary_key=True, default=uuid4)
     observation_run_id: Mapped[UUID] = mapped_column(
         ForeignKey("observation_runs.id", ondelete="CASCADE"), nullable=False, index=True
     )
     relationship_id: Mapped[str] = mapped_column(String(255))
+    position: Mapped[int] = mapped_column(Integer)
     payload: Mapped[dict[str, object]] = mapped_column(JSONType)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 

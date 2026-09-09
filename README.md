@@ -54,6 +54,16 @@ The frontend requires Node.js `>=24.15.0`. Its Vite development server proxies
 relative `/api` requests to the local backend; run frontend tests with
 `cd frontend && npm run test` (or use `make test` for both test suites).
 
+### Observation runs: trusted-MVP boundary
+
+The Runs UI uses `POST`/`GET /api/v1/observation-runs` and
+`GET /api/v1/observation-runs/{id}`. The service deliberately has no login or token for
+this MVP, so it is supported only for a trusted single operator on localhost or an
+operator-controlled internal network. `make backend` binds to `0.0.0.0` for WSL host
+access; this does not provide authorization. Do not expose it directly to an untrusted
+network. Authentication/authorization or an authenticated reverse proxy is required
+before broader exposure. See the [run API and deployment guidance](docs/development-guide.md#54-observation-run-api-and-trusted-deployment-boundary).
+
 ### Configure Prometheus metric sources
 
 Metric sources are configured on the backend through the optional

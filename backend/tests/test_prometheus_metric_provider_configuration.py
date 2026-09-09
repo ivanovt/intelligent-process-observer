@@ -223,6 +223,23 @@ def test_shared_consumers_remain_compatible_for_valid_and_production_invalid_sou
     monkeypatch.setattr(main_module, "get_settings", lambda: settings)
     monkeypatch.setattr(service_module, "get_settings", lambda: settings)
 
+    class _NoActiveRuntimeState:
+        """Keep this provider-composition test independent from persistence availability."""
+
+        def __init__(self, *_args) -> None:
+            pass
+
+        async def reconcile_active_observation_runs(self) -> None:
+            return None
+
+        async def has_active_observation_runs(self) -> bool:
+            return False
+
+        async def get_active_observation_run_id(self, _observation_id):
+            return None
+
+    monkeypatch.setattr(main_module, "RuntimeExecutionStateStore", _NoActiveRuntimeState)
+
     async def exercise() -> None:
         async with main_module.lifespan(main_module.app):
             provider = main_module.app.state.metric_series_provider

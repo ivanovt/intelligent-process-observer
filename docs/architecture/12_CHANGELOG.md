@@ -1,5 +1,52 @@
 # Changelog
 
+## 6.7 — 2026-09-09
+
+- добавен ADR-168: on-demand public Observation execution използва single-process
+  managed `asyncio` host, durable-before-response initialization, един active run за
+  Observation, startup cancellation на orphaned runs и server defaults `4`/`300s`;
+- multi-process ownership, scheduling, public cancellation, idempotency и API access
+  control остават Open;
+- ADR-168 fail-ва closed при detached persistence uncertainty: global launch admission
+  се блокира, tasks се quiesce-ват, retry-ва се само cancellation/reconciliation през
+  `5s`, а readiness се връща единствено след durable verification без active runs;
+- initialization admission вече е generation-fenced и tracked преди persistence;
+  indeterminate commit влиза в recovery, older-generation work/session scopes се await-ва
+  преди reconciliation, а fenced initializer не връща `202` или continuation;
+- launch `202` използва immutable acceptance-time running snapshot, изграден при
+  initialization без post-registration DB read; immediate terminal progress се вижда
+  при следващия durable list/detail refresh;
+- same-Observation public launch admission се сериализира през process-local lock;
+  database partial unique index остава defense in depth, а vanished index-race conflict
+  връща safe unavailable outcome без automatic initialization retry;
+- public run detail използва read-only PostgreSQL `REPEATABLE READ` transaction за
+  coherent multi-query snapshot без torn lifecycle/artifact projection;
+- RelationshipEvaluation persistence пази frozen-definition ordinal за stable detail
+  ordering, без да променя domain payload schema;
+- добавен ADR-170: thesis MVP остава unauthenticated за trusted single-user/internal
+  deployment; public/untrusted exposure е unsupported, arbitrary-origin CORS и browser
+  secrets не се добавят, а authentication/authorization остават отделна future change;
+- run-detail public schema reuse-ва exact accepted domain artifacts; normalized Alert
+  operational fields са explicit trusted-MVP output, а raw provider/configuration/
+  diagnostic data остават private и invalid storage fail-ва closed;
+- Alert Agent production boundary е max 10 admitted optional-tool attempts и max 11
+  actual model requests; final request е completion-only, excess calls не execute-ват,
+  не разширяват ledger-а и не могат да причинят request 12;
+- добавен ADR-169: Metric и Alert production agents reuse-ват OpenRouter/PydanticAI,
+  default-ват към същия model като Reasoning/Report, използват отделни role settings,
+  текущите system prompts, `120s` request timeout и `12_288` output tokens;
+- липсващ OpenRouter key използва safe unavailable adapters и създаденият run достига
+  existing failure/degradation semantics; временен empty KnowledgeRetriever не измисля
+  knowledge, докато real retrieval architecture остава Open;
+- синхронизирани runtime, Alert Agent и open-backlog документите само за изрично
+  одобрените decisions.
+- root agent guidance, frontend stack ADR и architecture overview са синхронизирани с
+  UI Direction v1.4, ADR-169 и ADR-170; backlog metadata е обновена.
+- UI Direction v1.4 изисква Copy Markdown в initial Report foundation, defer-ва export,
+  добавя pending/running/cancelled execution tokens и актуализира implementation sequence.
+- Run Observation dialog зарежда definitions независимо от run history, включва never-run
+  Observations и има отделни loading/error-retry/empty/success states с abort on close.
+
 ## 6.6 — 2026-09-08
 
 - добавен ADR-167, който запазва приетия frontend visual stack от ADR-166, но

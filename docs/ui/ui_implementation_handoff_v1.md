@@ -1,14 +1,14 @@
-# UI Implementation Handoff — v1.3
+# UI Implementation Handoff — v1.4
 
 **Project:** ObserveAI / Master Thesis
-**Status:** Accepted living major-v1 implementation handoff for MVP UI Direction v1.3
-**Date:** 2026-09-08
+**Status:** Accepted living major-v1 implementation handoff for MVP UI Direction v1.4
+**Date:** 2026-09-09
 
 ## 1. Purpose
 
 This document translates the accepted current UI direction into implementation-oriented rules for the MVP frontend.
 
-UI Direction v1.3 includes the original monitoring/investigation experience, Observation Management configuration UX, and read-only Data Sources visibility. It retains the v1.2 screen set and evolves only Observation child identifier entry. The frontend must preserve the architecture's semantic boundaries and must not invent new product-level classifications, lifecycle semantics, or administrative capabilities that are not supported by accepted backend contracts.
+UI Direction v1.4 includes the original monitoring/investigation experience, global run management, Observation Management configuration UX, and read-only Data Sources visibility. It retains v1.3 child identifier behavior, adds the global Runs history/launch screen, and makes the existing Observation Run Summary the initial routable run-detail foundation. The frontend must preserve the architecture's semantic boundaries and must not invent new product-level classifications, lifecycle semantics, or administrative capabilities that are not supported by accepted backend contracts.
 
 ## 2. Accepted frontend visual stack
 
@@ -48,7 +48,7 @@ https://magicpath.ai/files/447597481925181440
 
 MagicPath can inform look and feel but does not require 1:1 parity or canvas synchronization for an approved implementation. It is not permission to invent API fields or backend lifecycle operations. Accepted architecture/contracts remain authoritative for domain semantics.
 
-## 4. Screen set — v1.3
+## 4. Screen set — v1.4
 
 ### Monitoring and investigation
 
@@ -73,6 +73,7 @@ MagicPath can inform look and feel but does not require 1:1 parity or canvas syn
 12 Metric Lens Configuration
 13 Alert Lens Configuration
 14 Data Sources
+15 Runs History and Launch
 ```
 
 `00 Design System` is documentation/reference, not an application route.
@@ -108,12 +109,16 @@ Always pair color with text.
 ### Execution state
 
 ```text
-completed
-partial
-failed
+ObservationRun: pending | running | completed | failed | cancelled
+LensRun:        pending | running | completed | partial | failed | cancelled
 ```
 
 Execution state is independent from analytical state. A failed execution means unavailable analytical evidence, not a detected anomaly.
+
+`partial` is a LensRun status only. The UI must not invent a partial or degraded
+ObservationRun status. A failed ObservationRun may still have an already persisted
+ObservationAnalysisResult when a later stage, such as report generation, failed; show
+both truths independently.
 
 ### Findings, hypotheses and traceability
 
@@ -145,6 +150,9 @@ color.analysis.significant
 color.execution.completed
 color.execution.partial
 color.execution.failed
+color.execution.pending
+color.execution.running
+color.execution.cancelled
 
 color.trace.evidence
 color.trace.relationship
@@ -307,7 +315,73 @@ Show evidence coverage, Relationship evidence, limitations, findings, possible e
 
 ### Report
 
-Presentation-focused document view with Copy Markdown / Export actions.
+Presentation-focused document view with Copy Markdown. File/PDF export remains a later
+versioned refinement and is not required by the v1.4 run-detail foundation.
+
+### Runs History and Launch
+
+Purpose: monitor all active and historical ObservationRuns, start an eligible
+Observation on demand, and open the initial detailed run view.
+
+Required areas:
+
+```text
+Page header + Run Observation action
+Manual refresh
+Observation filter
+ObservationRun status filter
+Analytical-state filter, including unavailable/not-yet-produced
+Newest-first lightweight run list
+```
+
+Each row shows only scan-oriented identity, time/window, duration when available,
+ObservationRun status, optional analytical state, and Open. The list loads the complete
+MVP history without pagination. Filters combine locally and preserve newest-first order.
+
+`Run Observation` opens an accessible dialog. It selects one Observation and either a
+relative range (`5m`, `15m`, `30m`, `1h`, `3h`, `6h`, `12h`, `24h`, `2d`, `7d`) or the
+closed absolute-expression set `now`, `now-15m`, `now-1h`; initial range is `now-15m`
+to `now`. Both endpoints resolve against one captured instant and only concrete UTC
+timestamps are submitted. Unsupported Grafana expressions are rejected rather than
+partially parsed.
+
+The dialog loads current Observation Definitions independently from run history and
+distinguishes loading, retryable failure, successful empty, and successful non-empty
+states. Confirmation is disabled until a successful eligible selection. A definition
+without prior runs remains selectable; history is used only to disable known active
+Observations, and the backend remains authoritative for races. Closing aborts the
+definition request; empty state links to New Observation.
+
+An Observation with `pending|running` run is disabled and the backend remains
+authoritative for races. After accepted launch the dialog closes, route remains `/runs`,
+the new active row is shown, and automatic refresh continues while active runs exist.
+Manual refresh remains available; a failed refresh preserves last successful data with
+stale feedback.
+
+The detail route `/runs/{observationRunId}` uses the existing run navigation:
+
+```text
+Summary
+Metrics
+Alerts
+Relationships
+Analysis
+Report
+```
+
+This v1.4 detail is a semantic foundation, not final visual refinement. It shows every
+available durable artifact in its correct domain section, explains missing/not-yet-
+produced artifacts, and never collapses findings into hypotheses, evidence into
+knowledge, or execution failure into analytical significance.
+
+On-demand execution follows ADR-168's single-process MVP boundary. Scheduling,
+multi-process execution, public cancellation, retry/resume, pagination, and later
+detail visualization refinements are not implied.
+
+ADR-170 limits this unauthenticated UI/API to a trusted single-user or internal
+environment. The frontend adds no login, token storage, permission UI, permissive CORS,
+or browser-visible secret. Direct exposure to an untrusted network is unsupported until
+a separate authentication/authorization change is approved.
 
 ## 9. Observation Management UX
 
@@ -622,21 +696,23 @@ src/
 2. App shell + navigation
 3. Semantic badges/chips
 4. Observation Management flow (first roadmap UI feature)
-5. Overview
-6. Observation Detail
-7. Observation Run Summary
-8. Metric Lens Detail
-9. Alert Lens Detail
-10. Relationships
-11. Observation Analysis
-12. Report
+5. Data Sources
+6. Runs History + Run Observation dialog
+7. Observation Run Summary / initial run-detail foundation
+8. Overview
+9. Observation Detail monitoring refinement
+10. Metric Lens Detail refinement
+11. Alert Lens Detail refinement
+12. Relationships refinement
+13. Observation Analysis refinement
+14. Report presentation/export refinement
 ```
 
 If `add-observation-management-ui` is the first frontend OpenSpec change, it may establish the minimum reusable frontend foundations needed by that feature. Do not expand it into implementation of the entire monitoring UI.
 
 ## 15. Versioning and change-control rule
 
-**UI Direction v1.3 is the accepted current direction.**
+**UI Direction v1.4 is the accepted current direction.**
 
 Implementation may make minor technical adjustments for responsive fit, accessibility, browser behavior, real data length and actual API constraints, but must not silently change:
 
