@@ -50,6 +50,17 @@ async def create_observation(
     return await service.create(session, definition)
 
 
+@router.put("/observations/{observation_id}", response_model=ObservationResponse)
+async def replace_observation(
+    observation_id: UUID,
+    definition: ObservationCreate,
+    session: AsyncSession = Depends(get_session),  # noqa: B008
+    service: ObservationDefinitionService = Depends(get_service),  # noqa: B008
+) -> ObservationResponse:
+    """Replace the complete mutable configuration of one Observation definition."""
+    return await service.replace(session, observation_id, definition)
+
+
 @router.get("/observations", response_model=list[ObservationSummary])
 async def list_observations(
     session: AsyncSession = Depends(get_session),  # noqa: B008

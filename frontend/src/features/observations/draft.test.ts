@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
-import { generateObservationChildId, newAlert, newMetric, serializeDraft, validateAlert, validateDraft, validateMetric, type ObservationDraft } from './draft'
+import { generateObservationChildId, hydrateDraft, newAlert, newMetric, serializeDraft, validateAlert, validateDraft, validateMetric, type ObservationDraft } from './draft'
+import type { ObservationResponse } from './types'
 
 describe('Observation child ID generation',()=>{
   const randomUuid='A1B2C3D4-e5f6-4a1b-8c9d-001122334455',randomPart='a1b2c3d4'
@@ -18,4 +19,12 @@ const metric={...newMetric('metric-key'),id:'cpu',name:'CPU utilization',metric_
 describe('Observation Metric draft contracts',()=>{
   it('serializes Metric-only and mixed cross-type identity in exact collection order without UI fields',()=>{const draft:ObservationDraft={name:'Mixed',description:'Description',objective:'Observe',lenses:[metric],alert_lenses:[{...alert,id:'cpu'}],relationships:[]};expect(serializeDraft(draft)).toEqual({name:'Mixed',description:'Description',objective:'Observe',lenses:[{id:'cpu',name:'CPU utilization',description:null,type:'metric',metric_id:'node_cpu',adapter_type:'prometheus',source_id:'primary',query:'rate(cpu[5m])',unit:'%',analysis_objectives:['spike','drift'],reference_periods:['1d','7d']}],alert_lenses:[{id:'cpu',name:'Release alerts',description:null,type:'alert',source:'jira_track_and_release',selector:{query:' project = REL  AND status != Done '},analysis_objectives:['Assess recurrence','Compare recurrence'],reference_periods:['1d','7d']}],relationships:[]})})
   it('enforces Metric contract values and only type-local duplicate identity',()=>{expect(validateMetric({...metric,id:'BAD',analysis_objectives:['spike','spike'] as never,reference_periods:['0m','1d','1d']})).toMatchObject({id:'Use a lowercase identifier.',objectives:'Use each supported objective at most once.',references:'Reference periods must be unique positive offsets.'});expect(validateDraft({name:'Metric',description:'',objective:'Observe',lenses:[metric],alert_lenses:[{...alert,id:'cpu'}],relationships:[]})).toEqual({})})
+})
+
+describe('Persisted aggregate draft hydration',()=>{
+  it('keeps canonical child order and IDs while excluding response-only links and version fields',()=>{
+    const response={id:'observation-1',schema_version:1,href:'/api/v1/observations/observation-1',name:'Mixed',description:null,objective:'Observe',lenses:[{...metric,href:'/metric',observation_href:'/observation'}],alert_lenses:[{...alert,href:'/alert',observation_href:'/observation'}],relationships:[]} as unknown as ObservationResponse
+    expect(hydrateDraft(response)).toMatchObject({name:'Mixed',description:'',objective:'Observe',lenses:[{id:'cpu',name:'CPU utilization'}],alert_lenses:[{id:'release_alerts',name:'Release alerts'}]})
+    expect(serializeDraft(hydrateDraft(response))).toEqual({name:'Mixed',description:null,objective:'Observe',lenses:[{id:'cpu',name:'CPU utilization',description:null,type:'metric',metric_id:'node_cpu',adapter_type:'prometheus',source_id:'primary',query:'rate(cpu[5m])',unit:'%',analysis_objectives:['spike','drift'],reference_periods:['1d','7d']}],alert_lenses:[{id:'release_alerts',name:'Release alerts',description:null,type:'alert',source:'jira_track_and_release',selector:{query:' project = REL  AND status != Done '},analysis_objectives:['Assess recurrence','Compare recurrence'],reference_periods:['1d','7d']}],relationships:[]})
+  })
 })

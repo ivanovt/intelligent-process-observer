@@ -76,6 +76,25 @@ class ObservationDefinitionService:
             model = await self._repository.create(session, definition)
         return self.observation_response(model)
 
+    async def replace(
+        self,
+        session: AsyncSession,
+        observation_id: UUID,
+        definition: ObservationCreate,
+    ) -> ObservationResponse:
+        """Replace one definition's mutable aggregate data while preserving its identity."""
+        for lens in definition.lenses:
+            self._source_for(lens.source_id)
+        async with session.begin():
+            model = await self._repository.replace(session, observation_id, definition)
+            if model is None:
+                raise ApiError(
+                    404,
+                    "observation_not_found",
+                    "Observation definition was not found",
+                )
+        return self.observation_response(model)
+
     async def list(self, session: AsyncSession) -> list[ObservationSummary]:
         return [self.observation_summary(model) for model in await self._repository.list(session)]
 
