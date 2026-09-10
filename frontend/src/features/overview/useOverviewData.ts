@@ -49,24 +49,23 @@ export function useOverviewData(): OverviewDataCoordinator {
 
   useEffect(() => {
     const controller = new AbortController()
-    const candidates = findingCandidates
-    const candidateIds = new Set(candidates.map(({ run }) => run.id))
-    const pendingCandidates = candidates.filter(({ run }) => !cache.current.has(run.id))
+    const candidateIds = new Set(candidateKey === '' ? [] : candidateKey.split(','))
+    const pendingRunIds = [...candidateIds].filter((runId) => !cache.current.has(runId))
     setFindingDetails((previous) => ({
       data: new Map([...cache.current].filter(([runId]) => candidateIds.has(runId))),
       errors: new Map([...previous.errors].filter(([runId]) => candidateIds.has(runId) && !cache.current.has(runId))),
-      loadingRunIds: new Set(pendingCandidates.map(({ run }) => run.id)),
+      loadingRunIds: new Set(pendingRunIds),
     }))
 
-    if (pendingCandidates.length === 0) return () => controller.abort()
+    if (pendingRunIds.length === 0) return () => controller.abort()
 
-    void Promise.all(pendingCandidates.map(async ({ run }) => {
+    void Promise.all(pendingRunIds.map(async (runId) => {
       try {
-        const detail = await getObservationRun(run.id, controller.signal)
-        if (!controller.signal.aborted) cache.current.set(run.id, detail)
-        return { runId: run.id, detail, error: null as unknown }
+        const detail = await getObservationRun(runId, controller.signal)
+        if (!controller.signal.aborted) cache.current.set(runId, detail)
+        return { runId, detail, error: null as unknown }
       } catch (error: unknown) {
-        return { runId: run.id, detail: null, error }
+        return { runId, detail: null, error }
       }
     })).then((results) => {
       if (controller.signal.aborted) return
@@ -86,7 +85,7 @@ export function useOverviewData(): OverviewDataCoordinator {
     })
 
     return () => controller.abort()
-  }, [candidateKey, detailRefreshNonce, findingCandidates])
+  }, [candidateKey, detailRefreshNonce])
 
   const refresh = useCallback(() => {
     refreshDefinitions()

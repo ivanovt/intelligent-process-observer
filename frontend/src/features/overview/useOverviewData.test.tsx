@@ -108,6 +108,25 @@ describe('useOverviewData', () => {
     expect(api.getObservationRun).toHaveBeenCalledTimes(3)
   })
 
+  it('keeps a pending detail request while an active-run poll returns the same candidate ID', async () => {
+    vi.useFakeTimers()
+    const candidate = run('candidate', 'completed', 'uncertain')
+    const active = run('active', 'running')
+    let candidateSignal: AbortSignal | undefined
+    api.listObservations.mockResolvedValue([])
+    api.listObservationRuns.mockResolvedValueOnce([candidate, active]).mockResolvedValueOnce([{ ...candidate }, { ...active }])
+    api.getObservationRun.mockImplementation((_id: string, signal: AbortSignal) => new Promise<ObservationRunDetail>(() => { candidateSignal = signal }))
+    render(<Harness />)
+    await settle()
+
+    expect(api.getObservationRun).toHaveBeenCalledTimes(1)
+    await act(async () => { await vi.advanceTimersByTimeAsync(5_000) })
+
+    expect(api.listObservationRuns).toHaveBeenCalledTimes(2)
+    expect(candidateSignal?.aborted).toBe(false)
+    expect(api.getObservationRun).toHaveBeenCalledTimes(1)
+  })
+
   it('stops after the final terminal refresh', async () => {
     vi.useFakeTimers()
     api.listObservations.mockResolvedValue([])
