@@ -6,7 +6,8 @@ The Data Sources screen currently confirms that a Prometheus source exists but d
 
 - Keep each configured Prometheus source in its existing compact card/list presentation by default.
 - Add a per-source control that expands and collapses a detail pane containing pretty-formatted JSON for that source's current non-secret configuration.
-- Extend the definition-capabilities response with an explicit server-built safe projection of the configured source: `id`, `name`, `base_url`, credential `type`, and Basic-auth `username` when applicable.
+- Extend the definition-capabilities response with an explicit server-built safe projection of the configured source: `id`, `name`, credential `type`, Basic-auth `username` when applicable, and the exact configured `base_url` only when it passes the existing production-safe target validation.
+- Omit `base_url` entirely, without a placeholder or diagnostic, when its configured value fails that validation so URL userinfo, query, fragment, malformed content, or other unsafe input never reaches the browser.
 - Exclude bearer tokens and Basic-auth passwords from serialization and from all browser-visible state; do not send redacted placeholders that disclose secret presence or shape beyond the non-secret credential type.
 - Advance the accepted living UI handoff to v1.6 so its Data Sources visibility rules remain synchronized with the approved API and UI behavior.
 - Preserve existing read-only behavior, source ordering, refresh semantics, and Metric Lens source selection.
@@ -36,5 +37,5 @@ None.
 - Frontend: Data Sources types, card rendering, disclosure interaction, JSON presentation, and tests.
 - UI documentation: versioned Data Sources guidance updated from v1.5 to v1.6.
 - Tests: backend contract/secret-exclusion coverage and frontend interaction/accessibility/rendering coverage.
-- Security: source endpoints and non-secret Basic-auth usernames become visible to users of the existing unauthenticated internal UI; bearer tokens and passwords remain server-only.
+- Security: production-safe source endpoints and non-secret Basic-auth usernames become visible to users of the existing unauthenticated internal UI; bearer tokens, passwords, and rejected unsafe URL values remain server-only.
 - Dependencies, persistence, environment schema, provider execution, and source lifecycle behavior are unchanged.

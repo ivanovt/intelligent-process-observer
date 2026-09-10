@@ -7,10 +7,13 @@ existing server-managed `PROMETHEUS_SOURCES` registry. This change SHALL NOT mak
 Settings construction or shared source-registry loading stricter and SHALL NOT alter
 Observation creation or Metric preflight behavior. The definition-capabilities response
 MAY expose only the explicitly typed non-secret source projection defined by the
-Observation Definition API contract; that projection SHALL NOT represent production
-target validation or connection health. Production-only URL and transport validation
-SHALL occur only after the `MetricSeriesProvider` resolves the selected configured source
-for an acquisition.
+Observation Definition API contract. It SHALL expose the exact configured `base_url`
+only when the complete value passes the existing production-safe target rules and SHALL
+otherwise omit that field and rejected value entirely. Applying those pure rules as a
+serialization confidentiality gate SHALL NOT represent or report production target
+validity or connection health. Authoritative production URL and transport validation
+SHALL still occur only after the `MetricSeriesProvider` resolves the selected configured
+source for an acquisition.
 
 A configured source SHALL retain its existing stable ID, human-readable name, base URL,
 and exactly one existing credential mode: Bearer token or HTTP Basic username/password.
@@ -39,8 +42,9 @@ unavailable provider outcome and SHALL NOT select a different or default source.
 configured source that shared loading accepts but production-only URL/transport
 validation rejects SHALL yield `MetricSeriesAcquisitionFailure` with zero HTTP attempts;
 application startup, Observation creation, and Metric-preflight behavior SHALL remain
-unchanged, and capabilities SHALL continue to return the source's approved non-secret
-projection without implying production validity or health.
+unchanged. Capabilities SHALL continue to return the source's approved non-secret
+projection but SHALL omit `base_url` and its rejected value without a placeholder,
+reason, validity state, health state, or diagnostic.
 
 #### Scenario: Resolve a configured source by exact ID
 
@@ -80,6 +84,5 @@ projection without implying production validity or health.
 
 - **GIVEN** shared source loading accepts a configured source that production-only URL or transport validation rejects
 - **WHEN** the application starts and capabilities, Observation creation, Metric preflight, and production Metric acquisition are exercised
-- **THEN** startup succeeds, capabilities return only the approved non-secret configuration projection, and creation and preflight retain their existing behavior
+- **THEN** startup succeeds, capabilities return the source without `base_url` or its rejected value, and creation and preflight retain their existing behavior
 - **AND** only production acquisition returns `MetricSeriesAcquisitionFailure` with zero HTTP attempts
-

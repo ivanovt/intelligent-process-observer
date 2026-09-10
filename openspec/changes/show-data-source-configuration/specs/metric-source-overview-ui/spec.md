@@ -4,7 +4,7 @@
 
 The system SHALL retrieve Metric-source availability from `GET /api/v1/observation-definition-capabilities`. For every returned Prometheus source, the page SHALL preserve the existing compact default presentation of provider type, stable machine-readable ID, human-readable name, and availability for Metric Lens configuration. It SHALL preserve the returned source ordering and SHALL provide access to the source's API-supplied non-secret configuration without presenting any source lifecycle or connection-test behavior.
 
-The page SHALL NOT display or infer bearer tokens, Basic-auth passwords, masked secret values, Authorization data, raw environment JSON, connection health, or provider diagnostics. The source endpoint, credential type, and Basic-auth username MAY appear only in the user-requested configuration detail view.
+The page SHALL NOT display or infer bearer tokens, Basic-auth passwords, masked secret values, Authorization data, rejected unsafe URL values, raw environment JSON, connection health, or provider diagnostics. A production-safe source endpoint supplied by the API, credential type, and Basic-auth username MAY appear only in the user-requested configuration detail view.
 
 #### Scenario: List multiple configured Prometheus sources
 
@@ -23,7 +23,7 @@ The page SHALL NOT display or infer bearer tokens, Basic-auth passwords, masked 
 
 - **WHEN** configured source summaries are displayed without a user expanding their details
 - **THEN** no source endpoint, credential type, Basic-auth username, secret, connection health, or diagnostic is present in the compact view
-- **AND** secrets, connection health, and diagnostics remain absent even after details are expanded
+- **AND** secrets, rejected unsafe URL values, connection health, and diagnostics remain absent even after details are expanded
 
 ## ADDED Requirements
 
@@ -31,7 +31,7 @@ The page SHALL NOT display or infer bearer tokens, Basic-auth passwords, masked 
 
 Each configured source SHALL provide an accessible control that independently expands or collapses a detail pane for that source. The control SHALL expose its expanded state and identify the pane it controls. Expanding one source SHALL retain the compact source summary and show the API-supplied `configuration` object as valid pretty-formatted JSON in a horizontally scrollable, read-only code container. Collapsing the source SHALL remove that detail pane without changing source data or other source disclosure states.
 
-The formatted JSON SHALL preserve the configuration field names and scalar values received from the API, use two-space indentation, and contain no fabricated redaction keys or placeholders. Expanding or collapsing details SHALL make no network request and SHALL not create, mutate, test, enable, or disable a source.
+The formatted JSON SHALL preserve the configuration field names and scalar values received from the API, use two-space indentation, and contain no fabricated redaction keys or placeholders. When the API omits an unsafe `base_url`, the UI SHALL render the supplied configuration as-is without adding `base_url`, the rejected value, a placeholder, a reason, a validity/health indicator, or a diagnostic. Expanding or collapsing details SHALL make no network request and SHALL not create, mutate, test, enable, or disable a source.
 
 #### Scenario: Expand one configured source
 
@@ -67,3 +67,10 @@ The formatted JSON SHALL preserve the configuration field names and scalar value
 - **WHEN** the JSON detail is rendered
 - **THEN** it includes the source ID, name, base URL, and credential type supplied by the API
 - **AND** it contains no token field, masked token, or redaction placeholder
+
+#### Scenario: Display a source whose unsafe base URL was omitted
+
+- **GIVEN** the capabilities response contains a source configuration without `base_url`
+- **WHEN** that source's JSON detail is expanded
+- **THEN** the pane shows the exact supplied ID, name, and credential projection without a `base_url` member
+- **AND** it does not add a rejected URL value, placeholder, reason, validity/health indicator, or diagnostic
