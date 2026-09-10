@@ -7,7 +7,7 @@ from uuid import UUID
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.settings import PrometheusSourceSettings, get_settings
+from app.core.settings import BasicAuthCredentials, PrometheusSourceSettings, get_settings
 from app.infrastructure.persistence.models import (
     AlertLensModel,
     MetricLensModel,
@@ -20,6 +20,7 @@ from app.infrastructure.prometheus.adapter import (
     PrometheusQueryError,
     PrometheusTransportError,
 )
+from app.infrastructure.prometheus.configuration import is_safe_prometheus_target
 from app.infrastructure.prometheus.contracts import (
     PrometheusQueryAdapter,
     PrometheusRangeQueryResult,
@@ -41,6 +42,9 @@ from app.observations.contracts import (
     ObservationCreate,
     ObservationResponse,
     ObservationSummary,
+    PrometheusBasicAuthCredentialProjection,
+    PrometheusBearerTokenCredentialProjection,
+    PrometheusSourceConfiguration,
     RelationshipReference,
     RelationshipResponse,
     SemanticDescriptor,
@@ -58,13 +62,34 @@ class ObservationDefinitionService:
 
     def capabilities(self) -> DefinitionCapabilities:
         sources = [
-            CapabilitySource(id=source.id, name=source.name)
+            CapabilitySource(
+                id=source.id,
+                name=source.name,
+                configuration=self._source_configuration(source),
+            )
             for source in self._configured_sources().values()
         ]
         if not sources:
             return DefinitionCapabilities(metric=[])
         return DefinitionCapabilities(
             metric=[CapabilityAdapter(adapter_type="prometheus", sources=sources)]
+        )
+
+    @staticmethod
+    def _source_configuration(source: PrometheusSourceSettings) -> PrometheusSourceConfiguration:
+        if isinstance(source.credentials, BasicAuthCredentials):
+            credentials = PrometheusBasicAuthCredentialProjection(
+                type="basic_auth",
+                username=source.credentials.username,
+            )
+        else:
+            credentials = PrometheusBearerTokenCredentialProjection(type="bearer_token")
+        base_url = source.base_url if is_safe_prometheus_target(source.base_url) else None
+        return PrometheusSourceConfiguration(
+            id=source.id,
+            name=source.name,
+            base_url=base_url,
+            credentials=credentials,
         )
 
     async def create(

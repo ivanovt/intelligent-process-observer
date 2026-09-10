@@ -51,6 +51,12 @@ def _validate_prometheus_target(base_url: str) -> _ValidatedPrometheusTarget | N
     return _ValidatedPrometheusTarget(origin=origin, prefix=prefix)
 
 
+def is_safe_prometheus_target(base_url: str) -> bool:
+    """Return whether a configured URL passes the production target rules."""
+
+    return _validate_prometheus_target(base_url) is not None
+
+
 def _valid_components(base_url: str, parsed: SplitResult, port: int | None) -> bool:
     if parsed.scheme not in {"https", "http"} or not base_url.startswith(f"{parsed.scheme}://"):
         return False

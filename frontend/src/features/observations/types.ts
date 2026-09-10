@@ -15,8 +15,18 @@ export type MetricObjective='spike'|'drift'|'oscillation'
 export interface SemanticDescriptor { trend?:{direction?:'increasing'|'decreasing'|'stable';rate?:'slow'|'moderate'|'fast'}; variability?:{state:'low'|'moderate'|'high'} }
 /** Public aggregate-owned Relationship create shape. */
 export interface RelationshipCreate { id:string; name:string; description:string|null; participants:string[]; conditions:Record<string,SemanticDescriptor>; expected:Record<string,SemanticDescriptor> }
+/** The non-secret credential metadata that may be displayed for a Prometheus source. */
+export type PrometheusCredentialProjection =
+  | { type: 'bearer_token' }
+  | { type: 'basic_auth'; username: string }
+/** The complete safe configuration projection for one Prometheus source. */
+export interface PrometheusSourceConfiguration { id:string; name:string; base_url?:string; credentials:PrometheusCredentialProjection }
+/** One Prometheus source made available for Metric Lens configuration. */
+export interface PrometheusSourceCapability { id:string; name:string; configuration:PrometheusSourceConfiguration }
+/** A supported Metric adapter and its ordered source capabilities. */
+export interface PrometheusMetricCapability { adapter_type:'prometheus'; sources:PrometheusSourceCapability[] }
 /** Available acquisition sources supplied by the definition API. */
-export interface DefinitionCapabilities { metric:Array<{adapter_type:'prometheus';sources:Array<{id:string;name:string}>}> }
+export interface DefinitionCapabilities { metric:PrometheusMetricCapability[] }
 /** Public Observation creation request. */
 export interface ObservationCreate { name:string; description:string|null; objective:string; lenses:MetricLensCreate[]; alert_lenses:AlertLensCreate[]; relationships:RelationshipCreate[] }
 export interface ApiErrorEnvelope { code:string; message:string; field?:string }

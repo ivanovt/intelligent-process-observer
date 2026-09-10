@@ -13,18 +13,25 @@ the Metric provider boundary.
 The system SHALL resolve the immutable Metric provider scope's `source_id` against the
 existing server-managed `PROMETHEUS_SOURCES` registry. This change SHALL NOT make global
 Settings construction or shared source-registry loading stricter and SHALL NOT alter
-the existing capabilities response, Observation creation, or Metric preflight behavior.
-Production-only URL and transport validation SHALL occur only after the
-`MetricSeriesProvider` resolves the selected configured source for an acquisition.
+Observation creation or Metric preflight behavior. The definition-capabilities response
+MAY expose only the explicitly typed non-secret source projection defined by the
+Observation Definition API contract. It SHALL expose the exact configured `base_url`
+only when the complete value passes the existing production-safe target rules and SHALL
+otherwise omit that field and rejected value entirely. Applying those pure rules as a
+serialization confidentiality gate SHALL NOT represent or report production target
+validity or connection health. Authoritative production URL and transport validation
+SHALL still occur only after the `MetricSeriesProvider` resolves the selected configured
+source for an acquisition.
 
 A configured source SHALL retain its existing stable ID, human-readable name, base URL,
 and exactly one existing credential mode: Bearer token or HTTP Basic username/password.
 For this capability, **secret credential material** means exactly the Bearer token and
 Basic-auth password. The existing Basic username is not secret credential material and
-MAY remain in the existing internal configuration model. The provider SHALL send Bearer
-credentials in `Authorization: Bearer <token>` or Basic credentials preemptively and
-SHALL never put credentials in the URL. Provider diagnostics, logs, errors, public
-output, and failure messages SHALL expose none of the Bearer token, Basic password,
+MAY remain in the internal configuration model and appear only in the approved
+definition-capabilities projection. The provider SHALL send Bearer credentials in
+`Authorization: Bearer <token>` or Basic credentials preemptively and SHALL never put
+credentials in the URL. Provider ports, diagnostics, logs, errors, failure messages, and
+all other public output SHALL expose none of the Bearer token, Basic password,
 Authorization header, or configured Basic username. This change SHALL NOT modify the
 existing credential model merely to change its internal representation.
 
@@ -42,8 +49,10 @@ diagnostic. An absent registry or unknown `source_id` SHALL yield the existing t
 unavailable provider outcome and SHALL NOT select a different or default source. A
 configured source that shared loading accepts but production-only URL/transport
 validation rejects SHALL yield `MetricSeriesAcquisitionFailure` with zero HTTP attempts;
-application startup and all existing capabilities, Observation-creation, and
-Metric-preflight behavior SHALL remain unchanged.
+application startup, Observation creation, and Metric-preflight behavior SHALL remain
+unchanged. Capabilities SHALL continue to return the source's approved non-secret
+projection but SHALL omit `base_url` and its rejected value without a placeholder,
+reason, validity state, health state, or diagnostic.
 
 #### Scenario: Resolve a configured source by exact ID
 
@@ -61,9 +70,9 @@ Metric-preflight behavior SHALL remain unchanged.
 #### Scenario: Keep the internal Basic username compatible but out of failures
 
 - **GIVEN** an existing configured source contains a Basic-auth username
-- **WHEN** shared configuration is loaded and production acquisition is attempted
-- **THEN** the existing internal credential model may retain that username unchanged
-- **AND** provider diagnostics, logs, errors, public output, and failure messages expose neither that username nor any secret credential material
+- **WHEN** shared configuration is loaded, capabilities are read, and production acquisition is attempted
+- **THEN** the definition-capabilities response may include that username only in its approved non-secret configuration projection
+- **AND** provider ports, diagnostics, logs, errors, failure messages, and all other public output expose neither that username nor any secret credential material
 
 #### Scenario: Report an unavailable source safely
 
@@ -83,7 +92,7 @@ Metric-preflight behavior SHALL remain unchanged.
 
 - **GIVEN** shared source loading accepts a configured source that production-only URL or transport validation rejects
 - **WHEN** the application starts and capabilities, Observation creation, Metric preflight, and production Metric acquisition are exercised
-- **THEN** startup succeeds and capabilities, creation, and preflight retain their existing behavior
+- **THEN** startup succeeds, capabilities return the source without `base_url` or its rejected value, and creation and preflight retain their existing behavior
 - **AND** only production acquisition returns `MetricSeriesAcquisitionFailure` with zero HTTP attempts
 
 ### Requirement: Query the exact current or reference window through HTTP API v1

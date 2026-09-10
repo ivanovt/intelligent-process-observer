@@ -113,7 +113,11 @@ async def get_relationship(
     return await service.get_relationship(session, observation_id, relationship_id)
 
 
-@router.get("/observation-definition-capabilities", response_model=DefinitionCapabilities)
+@router.get(
+    "/observation-definition-capabilities",
+    response_model=DefinitionCapabilities,
+    response_model_exclude_none=True,
+)
 async def definition_capabilities(
     service: ObservationDefinitionService = Depends(get_service),  # noqa: B008
 ) -> DefinitionCapabilities:

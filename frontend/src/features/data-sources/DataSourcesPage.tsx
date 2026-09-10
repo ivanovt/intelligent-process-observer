@@ -1,6 +1,8 @@
-import { Database, RefreshCw, Server } from 'lucide-react'
+import { ChevronDown, Database, RefreshCw, Server } from 'lucide-react'
+import { useState } from 'react'
 import { Button, InlineNotice, PageHeader } from '../../components/ui'
 import { getDefinitionCapabilities } from '../observations/api'
+import type { PrometheusSourceCapability } from '../observations/types'
 import { useRequest } from '../observations/useRequest'
 
 /** Lists the server-managed Metric sources safely projected by the capabilities API. */
@@ -32,7 +34,18 @@ export function DataSourcesPage() {
 }
 
 /** Displays safely projected configured Metric sources in backend-provided order. */
-function ConfiguredSources({ sources }: { sources: Array<{ id: string; name: string; adapterType: 'prometheus' }> }) {
+function ConfiguredSources({ sources }: { sources: Array<PrometheusSourceCapability & { adapterType: 'prometheus' }> }) {
+  const [expandedSourceIds, setExpandedSourceIds] = useState<Set<string>>(() => new Set())
+
+  function toggleConfiguration(sourceId: string) {
+    setExpandedSourceIds((current) => {
+      const next = new Set(current)
+      if (next.has(sourceId)) next.delete(sourceId)
+      else next.add(sourceId)
+      return next
+    })
+  }
+
   return (
     <div className="overflow-hidden rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] shadow-xs">
       <div className="border-b border-[var(--color-border)] bg-[var(--color-surface-muted)] px-5 py-4">
@@ -40,21 +53,31 @@ function ConfiguredSources({ sources }: { sources: Array<{ id: string; name: str
         <p className="mt-1 text-sm text-[var(--color-text-secondary)]">These sources are available when configuring a Metric Lens.</p>
       </div>
       <ul aria-label="Configured Metric sources" className="divide-y divide-[var(--color-border)]">
-        {sources.map((source) => (
-          <li key={source.id} className="flex flex-col gap-4 px-5 py-5 sm:flex-row sm:items-center sm:justify-between">
-            <div className="flex min-w-0 items-start gap-3">
-              <span className="mt-0.5 flex size-9 shrink-0 items-center justify-center rounded-lg bg-blue-500/10 text-[var(--color-primary)]"><Server size={18} aria-hidden="true" /></span>
-              <div className="min-w-0">
-                <h3 className="break-words font-semibold">{source.name}</h3>
-                <p className="mt-1 break-all font-mono text-xs text-[var(--color-text-secondary)]">{source.id}</p>
+        {sources.map((source) => {
+          const expanded = expandedSourceIds.has(source.id)
+          const paneId = `data-source-configuration-${source.id}`
+          return (
+            <li key={source.id} className="px-5 py-5">
+              <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
+                <div className="flex min-w-0 items-start gap-3">
+                  <span className="mt-0.5 flex size-9 shrink-0 items-center justify-center rounded-lg bg-blue-500/10 text-[var(--color-primary)]"><Server size={18} aria-hidden="true" /></span>
+                  <div className="min-w-0">
+                    <h3 className="break-words font-semibold">{source.name}</h3>
+                    <p className="mt-1 break-all font-mono text-xs text-[var(--color-text-secondary)]">{source.id}</p>
+                  </div>
+                </div>
+                <div className="flex shrink-0 flex-wrap items-center gap-2 text-sm">
+                  <span className="rounded-full bg-[var(--color-surface-muted)] px-2.5 py-1 font-medium text-[var(--color-text-secondary)]">Prometheus</span>
+                  <span className="text-[var(--color-success)]">Available for Metric Lens</span>
+                  <Button aria-controls={paneId} aria-expanded={expanded} aria-label={expanded ? 'Hide configuration' : 'Show configuration'} className="h-8 min-h-8 w-8 rounded-md px-0" title={expanded ? 'Hide configuration' : 'Show configuration'} type="button" variant="ghost" onClick={() => toggleConfiguration(source.id)}>
+                    <ChevronDown className={expanded ? 'rotate-180' : undefined} size={17} aria-hidden="true" />
+                  </Button>
+                </div>
               </div>
-            </div>
-            <div className="flex shrink-0 flex-wrap items-center gap-2 text-sm">
-              <span className="rounded-full bg-[var(--color-surface-muted)] px-2.5 py-1 font-medium text-[var(--color-text-secondary)]">Prometheus</span>
-              <span className="text-[var(--color-success)]">Available for Metric Lens</span>
-            </div>
-          </li>
-        ))}
+              {expanded ? <div id={paneId} className="mt-4 overflow-x-auto rounded-lg border border-[var(--color-border)] bg-[var(--color-surface-muted)] p-4"><pre className="w-max min-w-full text-xs leading-5 text-[var(--color-text-secondary)]"><code>{JSON.stringify(source.configuration, null, 2)}</code></pre></div> : null}
+            </li>
+          )
+        })}
       </ul>
     </div>
   )

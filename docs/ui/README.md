@@ -5,11 +5,11 @@ This directory contains the accepted current UI direction, frontend technology d
 ## Files
 
 - `frontend_ui_stack_adr.md` — accepted frontend visual technology stack and related trade-offs.
-- `ui_implementation_handoff_v1.md` — living major-v1 implementation handoff (currently v1.5) covering monitoring/investigation, run management, Observation Management, and Data Sources UX.
+- `ui_implementation_handoff_v1.md` — living major-v1 implementation handoff (currently v1.6) covering monitoring/investigation, run management, Observation Management, and Data Sources UX.
 
 ## Status
 
-**UI Direction v1.5 is the accepted current direction.**
+**UI Direction v1.6 is the accepted current direction.**
 
 v1.2 retained the monitoring/investigation and Observation Management direction, and added:
 
@@ -39,6 +39,15 @@ read-only input. IDs remain stable after generation, and draft or persisted lega
 remain unchanged. This presentation and generation change preserves the backend
 identifier grammar, aggregate ownership, and existing API boundaries.
 
+v1.6 retains the existing read-only, environment-managed Data Sources lifecycle and
+adds compact-default per-source disclosure of the API-supplied safe Prometheus
+configuration. A trusted operator may expand an individual source locally to inspect
+two-space-indented JSON containing its ID, name, credential type, a Basic-auth username
+when applicable, and the exact base URL only when the API supplies it. A missing base
+URL is rendered as omitted, without a replacement, validity or health inference, or
+diagnostic. Bearer tokens and Basic-auth passwords remain absent from the browser-visible
+contract; expanding a disclosure does not fetch, test, or mutate a source.
+
 The implementation must preserve accepted information architecture, terminology, analytical/execution semantics, aggregate ownership, Lens configuration boundaries, and evidence/knowledge boundaries.
 
 Minor implementation adjustments are allowed for responsive fit, accessibility, browser behavior, real data length, and actual API constraints. Meaningful visual, UX, or semantic changes require an explicit UI version change.
@@ -59,7 +68,7 @@ Observation UI - Master Thesis
 https://magicpath.ai/files/447597481925181440
 ```
 
-MagicPath can guide look and feel, but an approved change does not require 1:1 canvas parity or synchronization. Historical v1.1 through v1.4 wording remains historical; ADR-167 and this current v1.5 documentation govern new work.
+MagicPath can guide look and feel, but an approved change does not require 1:1 canvas parity or synchronization. Historical v1.1 through v1.5 wording remains historical; ADR-167 and this current v1.6 documentation govern new work.
 
 ## Usage
 

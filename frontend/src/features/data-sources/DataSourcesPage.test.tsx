@@ -3,8 +3,13 @@ import userEvent from '@testing-library/user-event'
 import { MemoryRouter } from 'react-router-dom'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import App from '../../App'
+import type { DefinitionCapabilities, PrometheusSourceCapability } from '../observations/types'
 
-const capabilities = (sources: Array<{ id: string; name: string }>) => ({ metric: [{ adapter_type: 'prometheus' as const, sources }] })
+const bearerConfiguration = (id: string, name: string) => ({ id, name, base_url: `https://${id}.example.invalid`, credentials: { type: 'bearer_token' as const } })
+const basicConfiguration = (id: string, name: string, username: string) => ({ id, name, base_url: `https://${id}.example.invalid`, credentials: { type: 'basic_auth' as const, username } })
+const configurationWithoutUrl = (id: string, name: string) => ({ id, name, credentials: { type: 'bearer_token' as const } })
+const source = (id: string, name: string, configuration: PrometheusSourceCapability['configuration'] = bearerConfiguration(id, name)): PrometheusSourceCapability => ({ id, name, configuration })
+const capabilities = (sources: PrometheusSourceCapability[]): DefinitionCapabilities => ({ metric: [{ adapter_type: 'prometheus', sources }] })
 
 function deferred<T>() {
   let resolve: (value: T) => void
@@ -38,7 +43,7 @@ describe('DataSourcesPage', () => {
 
     expect(screen.getByText('Loading Metric sources')).toBeTruthy()
     expect(screen.queryByLabelText('Configured Metric sources')).toBeNull()
-    request.resolve(new Response(JSON.stringify(capabilities([{ id: 'primary', name: 'Primary metrics' }])), { status: 200 }))
+    request.resolve(new Response(JSON.stringify(capabilities([source('primary', 'Primary metrics')])), { status: 200 }))
     expect(await screen.findByText('Primary metrics')).toBeTruthy()
   })
 
@@ -58,8 +63,8 @@ describe('DataSourcesPage', () => {
 
   it('renders each safe source once in API order without connection details or source lifecycle controls', async () => {
     vi.stubGlobal('fetch', vi.fn().mockResolvedValue(new Response(JSON.stringify(capabilities([
-      { id: 'secondary', name: 'Secondary metrics' },
-      { id: 'primary', name: 'Primary metrics' },
+      source('secondary', 'Secondary metrics'),
+      source('primary', 'Primary metrics'),
     ])), { status: 200 })))
     renderAt()
 
@@ -72,6 +77,60 @@ describe('DataSourcesPage', () => {
     for (const label of ['Add source', 'Edit', 'Delete', 'Enable', 'Disable', 'Test connection']) {
       expect(screen.queryByRole('button', { name: label })).toBeNull()
     }
+  })
+
+  it('keeps each source configuration collapsed until its independent accessible control is activated', async () => {
+    const first = source('primary', 'Primary metrics')
+    const second = source('secondary', 'Secondary metrics', basicConfiguration('secondary', 'Secondary metrics', 'observe-reader'))
+    const fetchMock = vi.fn().mockResolvedValue(new Response(JSON.stringify(capabilities([first, second])), { status: 200 }))
+    vi.stubGlobal('fetch', fetchMock)
+    renderAt()
+
+    await screen.findByText('Primary metrics')
+    const [primaryButton, secondaryButton] = screen.getAllByRole('button', { name: 'Show configuration' })
+    expect(primaryButton.getAttribute('aria-expanded')).toBe('false')
+    expect(secondaryButton.getAttribute('aria-expanded')).toBe('false')
+    expect(primaryButton.textContent).toBe('')
+    expect(primaryButton.className).toContain('h-8')
+    expect(primaryButton.className).toContain('w-8')
+    expect(document.getElementById(primaryButton.getAttribute('aria-controls')!)).toBeNull()
+
+    await userEvent.click(primaryButton)
+    const primaryPaneId = primaryButton.getAttribute('aria-controls')!
+    const primaryPane = document.getElementById(primaryPaneId)!
+    expect(primaryButton.getAttribute('aria-expanded')).toBe('true')
+    expect(primaryPane.textContent).toBe(JSON.stringify(first.configuration, null, 2))
+    expect(primaryPane.querySelector('pre > code')).toBeTruthy()
+    expect(primaryPane.className).toContain('overflow-x-auto')
+    expect(secondaryButton.getAttribute('aria-expanded')).toBe('false')
+    expect(document.getElementById(secondaryButton.getAttribute('aria-controls')!)).toBeNull()
+    expect(fetchMock).toHaveBeenCalledTimes(1)
+
+    await userEvent.click(secondaryButton)
+    const secondaryPane = document.getElementById(secondaryButton.getAttribute('aria-controls')!)!
+    expect(secondaryPane.textContent).toBe(JSON.stringify(second.configuration, null, 2))
+    expect(primaryPane.isConnected).toBe(true)
+    expect(fetchMock).toHaveBeenCalledTimes(1)
+
+    await userEvent.click(primaryButton)
+    expect(document.getElementById(primaryPaneId)).toBeNull()
+    expect(fetchMock).toHaveBeenCalledTimes(1)
+  })
+
+  it('renders an API-omitted unsafe URL as-is without a replacement or status', async () => {
+    const unsafe = source('primary', 'Primary metrics', configurationWithoutUrl('primary', 'Primary metrics'))
+    const fetchMock = vi.fn().mockResolvedValue(new Response(JSON.stringify(capabilities([unsafe])), { status: 200 }))
+    vi.stubGlobal('fetch', fetchMock)
+    renderAt()
+
+    const button = await screen.findByRole('button', { name: 'Show configuration' })
+    await userEvent.click(button)
+
+    const pane = document.getElementById(button.getAttribute('aria-controls')!)!
+    expect(pane.textContent).toBe(JSON.stringify(unsafe.configuration, null, 2))
+    expect(pane.textContent).not.toContain('base_url')
+    expect(pane.textContent).not.toMatch(/health|diagnostic|status/i)
+    expect(fetchMock).toHaveBeenCalledTimes(1)
   })
 
   it('gives safe empty-registry configuration guidance with the current nested credential shapes', async () => {
@@ -95,8 +154,8 @@ describe('DataSourcesPage', () => {
 
   it('refreshes the existing capabilities endpoint without mutating a source', async () => {
     const fetchMock = vi.fn()
-      .mockResolvedValueOnce(new Response(JSON.stringify(capabilities([{ id: 'primary', name: 'Primary metrics' }])), { status: 200 }))
-      .mockResolvedValueOnce(new Response(JSON.stringify(capabilities([{ id: 'primary', name: 'Primary metrics' }, { id: 'secondary', name: 'Secondary metrics' }])), { status: 200 }))
+      .mockResolvedValueOnce(new Response(JSON.stringify(capabilities([source('primary', 'Primary metrics')])), { status: 200 }))
+      .mockResolvedValueOnce(new Response(JSON.stringify(capabilities([source('primary', 'Primary metrics'), source('secondary', 'Secondary metrics')])), { status: 200 }))
     vi.stubGlobal('fetch', fetchMock)
     renderAt()
 
@@ -127,9 +186,9 @@ describe('DataSourcesPage', () => {
     renderAt()
 
     await userEvent.click(screen.getByRole('button', { name: 'Refresh sources' }))
-    active.resolve(new Response(JSON.stringify(capabilities([{ id: 'active', name: 'Active metrics' }])), { status: 200 }))
+    active.resolve(new Response(JSON.stringify(capabilities([source('active', 'Active metrics')])), { status: 200 }))
     expect(await screen.findByText('Active metrics')).toBeTruthy()
-    abandoned.resolve(new Response(JSON.stringify(capabilities([{ id: 'abandoned', name: 'Abandoned metrics' }])), { status: 200 }))
+    abandoned.resolve(new Response(JSON.stringify(capabilities([source('abandoned', 'Abandoned metrics')])), { status: 200 }))
     await new Promise((resolve) => setTimeout(resolve))
     expect(screen.getByText('Active metrics')).toBeTruthy()
     expect(screen.queryByText('Abandoned metrics')).toBeNull()

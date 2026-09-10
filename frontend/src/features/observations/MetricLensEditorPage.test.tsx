@@ -5,7 +5,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import App from '../../App'
 
 const response=(body:unknown,status=200)=>new Response(JSON.stringify(body),{status})
-const capabilities={metric:[{adapter_type:'prometheus',sources:[{id:'primary',name:'Primary Prometheus'},{id:'secondary',name:'Secondary Prometheus'}]}]}
+const capabilities={metric:[{adapter_type:'prometheus' as const,sources:[{id:'primary',name:'Primary Prometheus',configuration:{id:'primary',name:'Primary Prometheus',base_url:'https://primary.example.invalid',credentials:{type:'bearer_token' as const}}},{id:'secondary',name:'Secondary Prometheus',configuration:{id:'secondary',name:'Secondary Prometheus',base_url:'https://secondary.example.invalid',credentials:{type:'basic_auth' as const,username:'observe-reader'}}}]}]}
 const renderAt=(path='/observations/new')=>render(<MemoryRouter initialEntries={[path]}><App/></MemoryRouter>)
 async function openMetric(user:ReturnType<typeof userEvent.setup>){await user.click(await screen.findByText('Add Metric Lens'));return screen.findByRole('heading',{name:'Metric Lens Configuration'})}
 async function fillMetric(user:ReturnType<typeof userEvent.setup>){await user.type(screen.getByLabelText('Name'),'CPU utilization');await user.type(screen.getByLabelText('Metric ID'),'node_cpu');await user.type(screen.getByLabelText('Unit'),'%');await user.selectOptions(screen.getByLabelText('Metric source'),'primary');await user.type(screen.getByLabelText('Provider query'),'rate(cpu[5m])');await user.click(screen.getByLabelText('spike'));await user.click(screen.getByText('Add reference period'));await user.type(screen.getByLabelText('Reference period 1'),'1d')}
