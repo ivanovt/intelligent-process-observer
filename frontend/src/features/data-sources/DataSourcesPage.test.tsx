@@ -90,6 +90,9 @@ describe('DataSourcesPage', () => {
     const [primaryButton, secondaryButton] = screen.getAllByRole('button', { name: 'Show configuration' })
     expect(primaryButton.getAttribute('aria-expanded')).toBe('false')
     expect(secondaryButton.getAttribute('aria-expanded')).toBe('false')
+    expect(primaryButton.textContent).toBe('')
+    expect(primaryButton.className).toContain('h-8')
+    expect(primaryButton.className).toContain('w-8')
     expect(document.getElementById(primaryButton.getAttribute('aria-controls')!)).toBeNull()
 
     await userEvent.click(primaryButton)

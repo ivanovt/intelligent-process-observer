@@ -1,4 +1,4 @@
-import { ChevronDown, ChevronUp, Database, RefreshCw, Server } from 'lucide-react'
+import { ChevronDown, Database, RefreshCw, Server } from 'lucide-react'
 import { useState } from 'react'
 import { Button, InlineNotice, PageHeader } from '../../components/ui'
 import { getDefinitionCapabilities } from '../observations/api'
@@ -69,9 +69,8 @@ function ConfiguredSources({ sources }: { sources: Array<PrometheusSourceCapabil
                 <div className="flex shrink-0 flex-wrap items-center gap-2 text-sm">
                   <span className="rounded-full bg-[var(--color-surface-muted)] px-2.5 py-1 font-medium text-[var(--color-text-secondary)]">Prometheus</span>
                   <span className="text-[var(--color-success)]">Available for Metric Lens</span>
-                  <Button aria-controls={paneId} aria-expanded={expanded} className="w-full sm:w-auto" type="button" variant="secondary" onClick={() => toggleConfiguration(source.id)}>
-                    {expanded ? <ChevronUp size={16} aria-hidden="true" /> : <ChevronDown size={16} aria-hidden="true" />}
-                    {expanded ? 'Hide configuration' : 'Show configuration'}
+                  <Button aria-controls={paneId} aria-expanded={expanded} aria-label={expanded ? 'Hide configuration' : 'Show configuration'} className="h-8 min-h-8 w-8 rounded-md px-0" title={expanded ? 'Hide configuration' : 'Show configuration'} type="button" variant="ghost" onClick={() => toggleConfiguration(source.id)}>
+                    <ChevronDown className={expanded ? 'rotate-180' : undefined} size={17} aria-hidden="true" />
                   </Button>
                 </div>
               </div>
