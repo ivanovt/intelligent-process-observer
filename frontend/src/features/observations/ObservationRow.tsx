@@ -1,4 +1,4 @@
-import { ArrowRight, Bell, ChartLine, Network, Telescope } from 'lucide-react'
+import { ArrowRight, Bell, ChartLine, Network, Pencil, Telescope } from 'lucide-react'
 import { Link } from 'react-router-dom'
 import type { ObservationSummary } from './types'
 
@@ -26,13 +26,7 @@ export function ObservationRow({ observation }: { observation: ObservationSummar
           <DefinitionCount icon={Network} singular="Relationship" plural="Relationships" count={relationships} />
         </div>
       </div>
-      <Link
-        className="inline-flex h-10 shrink-0 items-center justify-self-start gap-1 whitespace-nowrap rounded-lg px-3 text-sm font-medium text-[var(--color-primary)] transition-colors hover:bg-[color-mix(in_srgb,var(--color-primary),transparent_92%)] hover:text-[var(--color-primary-hover)] md:justify-self-end"
-        to={`/observations/${observation.id}`}
-      >
-        Open
-        <ArrowRight size={16} aria-hidden="true" />
-      </Link>
+      <div className="flex shrink-0 items-center gap-1 md:justify-self-end"><Link className="inline-flex h-10 items-center gap-1 whitespace-nowrap rounded-lg px-3 text-sm font-medium text-[var(--color-primary)] transition-colors hover:bg-[color-mix(in_srgb,var(--color-primary),transparent_92%)] hover:text-[var(--color-primary-hover)]" to={`/observations/${observation.id}`}>Open<ArrowRight size={16} aria-hidden="true" /></Link><Link className="inline-flex h-10 items-center gap-1 whitespace-nowrap rounded-lg px-3 text-sm font-medium text-[var(--color-primary)] transition-colors hover:bg-[color-mix(in_srgb,var(--color-primary),transparent_92%)] hover:text-[var(--color-primary-hover)]" to={`/observations/${observation.id}/edit`}>Edit<Pencil size={16} aria-hidden="true" /></Link></div>
     </li>
   )
 }

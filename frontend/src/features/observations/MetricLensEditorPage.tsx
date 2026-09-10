@@ -9,10 +9,10 @@ import type { MetricObjective } from './types'
 const objectives:MetricObjective[]=['spike','drift','oscillation']
 
 /** Edits one aggregate-owned Metric Lens using only current capability choices. */
-export function MetricLensEditorPage(){const {key='new'}=useParams();const {draft}=useObservationDraft();if(!draft)return <Navigate to="/observations/new" replace state={{draftLost:true}}/>;const existing=key==='new'?undefined:draft.lenses.find(item=>item.clientKey===key);if(key!=='new'&&!existing)return <Navigate to="/observations/new" replace state={{draftLost:true}}/>;return <MetricLensEditorForm key={key} routeKey={key} seed={existing?structuredClone(existing):newMetric(crypto.randomUUID())}/>}
+export function MetricLensEditorPage(){const {key='new'}=useParams();const {draft,returnRoute}=useObservationDraft();if(!draft)return <Navigate to={returnRoute} replace state={{draftLost:true}}/>;const existing=key==='new'?undefined:draft.lenses.find(item=>item.clientKey===key);if(key!=='new'&&!existing)return <Navigate to={returnRoute} replace state={{draftLost:true}}/>;return <MetricLensEditorForm key={key} routeKey={key} seed={existing?structuredClone(existing):newMetric(crypto.randomUUID())}/>}
 function MetricLensEditorForm({ routeKey, seed }: { routeKey: string; seed: DraftMetric }) {
   const navigate = useNavigate()
-  const { draft, upsertMetric, capabilities, loadCapabilities, cancelCapabilities } = useObservationDraft()
+  const { draft, mode, returnRoute, upsertMetric, capabilities, loadCapabilities, cancelCapabilities } = useObservationDraft()
   const [value, setValue] = useState(seed)
   const [errors, setErrors] = useState<DraftErrors>({})
   const summaryRef = useRef<HTMLDivElement>(null)
@@ -36,7 +36,7 @@ function MetricLensEditorForm({ routeKey, seed }: { routeKey: string; seed: Draf
     setErrors(next)
     if (!Object.keys(next).length && capabilities.status === 'success') {
       upsertMetric(value, routeKey)
-      navigate('/observations/new')
+      navigate(returnRoute)
     }
   }
   const unavailable = capabilities.status !== 'success'
@@ -46,14 +46,14 @@ function MetricLensEditorForm({ routeKey, seed }: { routeKey: string; seed: Draf
     <section className="mx-auto max-w-6xl">
       <div className="grid gap-5 lg:grid-cols-[minmax(0,1fr)_340px]">
         <header className="mb-3">
-          <p className="text-sm text-[var(--color-text-secondary)]">Observations / Create / Metric Lens</p>
+          <p className="text-sm text-[var(--color-text-secondary)]">Observations / {mode === 'edit' ? 'Edit' : 'Create'} / Metric Lens</p>
           <h1 className="mt-1 text-[28px] font-semibold tracking-tight">Metric Lens Configuration</h1>
           <p className="mt-2 text-[var(--color-text-secondary)]">Configure one metric perspective. Analysis scope remains one metric per Lens.</p>
         </header>
         <FormSideRail
           className="lg:col-start-2 lg:row-span-2 lg:row-start-1"
           actions={<>
-            <Button variant="secondary" onClick={() => navigate('/observations/new')}>Cancel</Button>
+            <Button variant="secondary" onClick={() => navigate(returnRoute)}>Cancel</Button>
             <Button onClick={apply} disabled={unavailable}>Apply changes</Button>
           </>}
         >
@@ -115,7 +115,7 @@ function MetricLensEditorForm({ routeKey, seed }: { routeKey: string; seed: Draf
             {errors.objectives ? <p id="metric-objectives-error" className="mt-1 flex items-center gap-1 text-sm text-[var(--color-error)]"><CircleAlert size={15} aria-hidden="true" />{errors.objectives}</p> : null}
           </section>
           <div className="mt-7"><ReferencePeriodsField values={value.reference_periods} onChange={(reference_periods) => update({ reference_periods })} error={errors.references} /></div>
-          <div className="mt-7"><InlineNotice tone="info">Persisted-history policy is not available because the current public definition contract has no history field. Reference periods are configured separately above.</InlineNotice></div>
+          <div className="mt-7"><InlineNotice tone="info">Persisted-history policy is not available because the current public definition contract has no history field. A retained Metric Lens ID keeps its identity-scoped History continuity in future runs. To begin fresh History, explicitly remove this Lens from the Observation draft and add a new one. Reference periods are configured separately above.</InlineNotice></div>
         </div>
       </div>
     </section>

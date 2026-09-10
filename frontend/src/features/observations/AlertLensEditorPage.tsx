@@ -7,18 +7,18 @@ import { generateObservationChildId, newAlert, useObservationDraft, validateAler
 /** Edits an aggregate-owned, provider-native Alert Lens draft. */
 export function AlertLensEditorPage() {
   const { key = 'new' } = useParams()
-  const { draft } = useObservationDraft()
-  if (!draft) return <Navigate to="/observations/new" replace state={{ draftLost: true }} />
+  const { draft, returnRoute } = useObservationDraft()
+  if (!draft) return <Navigate to={returnRoute} replace state={{ draftLost: true }} />
 
   const existing = key === 'new' ? undefined : draft.alert_lenses.find((item) => item.clientKey === key)
-  if (key !== 'new' && !existing) return <Navigate to="/observations/new" replace state={{ draftLost: true }} />
+  if (key !== 'new' && !existing) return <Navigate to={returnRoute} replace state={{ draftLost: true }} />
 
   return <AlertLensEditorForm key={key} routeKey={key} seed={existing ? structuredClone(existing) : newAlert(crypto.randomUUID())} />
 }
 
 function AlertLensEditorForm({ routeKey, seed }: { routeKey: string; seed: DraftAlert }) {
   const navigate = useNavigate()
-  const { draft, upsertAlert } = useObservationDraft()
+  const { draft, mode, returnRoute, upsertAlert } = useObservationDraft()
   const [value, setValue] = useState(seed)
   const [errors, setErrors] = useState<DraftErrors>({})
   const summaryRef = useRef<HTMLDivElement>(null)
@@ -37,7 +37,7 @@ function AlertLensEditorForm({ routeKey, seed }: { routeKey: string; seed: Draft
     setErrors(next)
     if (Object.keys(next).length === 0) {
       upsertAlert(value, routeKey)
-      navigate('/observations/new')
+      navigate(returnRoute)
     }
   }
 
@@ -45,14 +45,14 @@ function AlertLensEditorForm({ routeKey, seed }: { routeKey: string; seed: Draft
     <section className="mx-auto max-w-6xl">
       <div className="grid gap-5 lg:grid-cols-[minmax(0,1fr)_340px]">
         <header className="mb-3">
-          <p className="text-sm text-[var(--color-text-secondary)]">Observations / Create / Alert Lens</p>
+          <p className="text-sm text-[var(--color-text-secondary)]">Observations / {mode === 'edit' ? 'Edit' : 'Create'} / Alert Lens</p>
           <h1 className="mt-1 text-[28px] font-semibold tracking-tight">Alert Lens Configuration</h1>
           <p className="mt-2 text-[var(--color-text-secondary)]">Configure a bounded provider-native alert perspective inside the Observation Definition.</p>
         </header>
         <FormSideRail
           className="lg:col-start-2 lg:row-span-2 lg:row-start-1"
           actions={<>
-            <Button variant="secondary" onClick={() => navigate('/observations/new')}>Cancel</Button>
+            <Button variant="secondary" onClick={() => navigate(returnRoute)}>Cancel</Button>
             <Button onClick={apply}>Apply changes</Button>
           </>}
         >

@@ -48,6 +48,7 @@ class StubObservationService:
             href=f"/api/v1/observations/{self.observation_id}",
         )
         self.created_definition = None
+        self.replaced_definition = None
 
     async def list(self, _session) -> list[ObservationSummary]:
         return [
@@ -71,6 +72,12 @@ class StubObservationService:
 
     async def create(self, _session, definition):
         self.created_definition = definition
+        return self.definition
+
+    async def replace(self, _session, observation_id, definition):
+        if observation_id != self.observation_id:
+            raise ApiError(404, "observation_not_found", "Observation definition was not found")
+        self.replaced_definition = definition
         return self.definition
 
     async def get_lens(self, _session, observation_id, lens_id):
@@ -183,6 +190,55 @@ def test_create_and_follow_lens_link() -> None:
     assert detail.status_code == 200
     assert lens.status_code == 200
     assert lens.json()["observation_href"] == created.json()["href"]
+
+
+def test_replace_preserves_identity_and_rejects_response_only_fields() -> None:
+    service = StubObservationService()
+    app.dependency_overrides[get_service] = service_override(service)
+    app.dependency_overrides[get_session] = no_database_session
+    payload = {
+        "name": "Cooling health revised",
+        "description": "Updated configuration.",
+        "objective": "Detect instability.",
+        "lenses": [
+            {
+                "id": "coolant-temperature",
+                "name": "Coolant temperature",
+                "type": "metric",
+                "metric_id": "coolant_temperature",
+                "adapter_type": "prometheus",
+                "source_id": "production-prometheus",
+                "query": "avg(coolant_temperature_celsius)",
+                "unit": "celsius",
+                "analysis_objectives": [],
+                "reference_periods": [],
+            }
+        ],
+        "alert_lenses": [],
+        "relationships": [],
+    }
+    try:
+        replaced = request("PUT", f"/api/v1/observations/{service.observation_id}", json=payload)
+        rejected = request(
+            "PUT",
+            f"/api/v1/observations/{service.observation_id}",
+            json={**payload, "id": str(uuid4()), "schema_version": 2},
+        )
+        missing = request("PUT", f"/api/v1/observations/{uuid4()}", json=payload)
+    finally:
+        app.dependency_overrides.clear()
+
+    assert replaced.status_code == 200
+    assert replaced.json()["id"] == str(service.observation_id)
+    assert replaced.json()["href"] == f"/api/v1/observations/{service.observation_id}"
+    assert service.replaced_definition is not None
+    assert rejected.status_code == 422
+    assert rejected.json()["code"] == "validation_error"
+    assert missing.status_code == 404
+    assert missing.json() == {
+        "code": "observation_not_found",
+        "message": "Observation definition was not found",
+    }
 
 
 def test_alert_only_create_and_follow_alert_link_ignores_unknown_input() -> None:

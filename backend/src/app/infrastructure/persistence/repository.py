@@ -9,7 +9,7 @@ from uuid import UUID
 
 from sqlalchemy import DateTime, String, cast, exists, select, update
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
-from sqlalchemy.orm import selectinload
+from sqlalchemy.orm import joinedload, selectinload
 
 from app.infrastructure.persistence.models import (
     AlertLensModel,
@@ -44,7 +44,12 @@ from app.metrics.contracts import (
     MetricHistoryRead,
     MetricLensExecutionContext,
 )
-from app.observations.contracts import ObservationCreate
+from app.observations.contracts import (
+    AlertLensCreate,
+    MetricLensCreate,
+    ObservationCreate,
+    RelationshipCreate,
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -142,6 +147,31 @@ class ObservationRepository:
         return list(result.unique())
 
     async def get(self, session: AsyncSession, observation_id: UUID) -> ObservationModel | None:
+        """Load one complete definition through a single coherent SQL statement.
+
+        Joined eager loading gives execution initialization one PostgreSQL statement
+        snapshot across the root and all owned collections. This prevents a concurrent
+        replacement from exposing a mixture of old and new definition members without
+        retaining a read lock that could delay runtime foreign-key persistence.
+        """
+        result = await session.scalars(
+            select(ObservationModel)
+            .where(ObservationModel.id == observation_id)
+            .options(
+                joinedload(ObservationModel.lenses),
+                joinedload(ObservationModel.alert_lenses),
+                joinedload(ObservationModel.relationships),
+            )
+        )
+        return result.unique().one_or_none()
+
+    async def replace(
+        self,
+        session: AsyncSession,
+        observation_id: UUID,
+        definition: ObservationCreate,
+    ) -> ObservationModel | None:
+        """Atomically reconcile one owned definition aggregate to its submitted snapshot."""
         result = await session.scalars(
             select(ObservationModel)
             .where(ObservationModel.id == observation_id)
@@ -150,8 +180,93 @@ class ObservationRepository:
                 selectinload(ObservationModel.alert_lenses),
                 selectinload(ObservationModel.relationships),
             )
+            .with_for_update(of=ObservationModel)
         )
-        return result.unique().one_or_none()
+        observation = result.unique().one_or_none()
+        if observation is None:
+            return None
+
+        observation.name = definition.name
+        observation.description = definition.description
+        observation.objective = definition.objective
+        observation.lenses = self._reconcile_metric_lenses(observation.lenses, definition.lenses)
+        observation.alert_lenses = self._reconcile_alert_lenses(
+            observation.alert_lenses, definition.alert_lenses
+        )
+        observation.relationships = self._reconcile_relationships(
+            observation.relationships, definition.relationships
+        )
+        await session.flush()
+        return observation
+
+    @staticmethod
+    def _reconcile_metric_lenses(
+        current: list[MetricLensModel], desired: list[MetricLensCreate]
+    ) -> list[MetricLensModel]:
+        existing = {lens.lens_id: lens for lens in current}
+        reconciled: list[MetricLensModel] = []
+        for position, candidate in enumerate(desired):
+            model = existing.get(candidate.id)
+            if model is None:
+                model = MetricLensModel(lens_id=candidate.id)
+            model.name = candidate.name
+            model.description = candidate.description
+            model.adapter_type = candidate.adapter_type
+            model.source_id = candidate.source_id
+            model.metric_id = candidate.metric_id
+            model.query = candidate.query
+            model.unit = candidate.unit
+            model.analysis_objectives = [
+                objective.value for objective in candidate.analysis_objectives
+            ]
+            model.reference_periods = candidate.reference_periods
+            model.position = position
+            reconciled.append(model)
+        return reconciled
+
+    @staticmethod
+    def _reconcile_alert_lenses(
+        current: list[AlertLensModel], desired: list[AlertLensCreate]
+    ) -> list[AlertLensModel]:
+        existing = {lens.lens_id: lens for lens in current}
+        reconciled: list[AlertLensModel] = []
+        for position, candidate in enumerate(desired):
+            model = existing.get(candidate.id)
+            if model is None:
+                model = AlertLensModel(lens_id=candidate.id)
+            model.lens_type = candidate.type
+            model.name = candidate.name
+            model.description = candidate.description
+            model.source = candidate.source
+            model.selector_query = candidate.selector.query
+            model.analysis_objectives = candidate.analysis_objectives
+            model.reference_periods = candidate.reference_periods
+            model.position = position
+            reconciled.append(model)
+        return reconciled
+
+    @staticmethod
+    def _reconcile_relationships(
+        current: list[ObservationRelationshipModel], desired: list[RelationshipCreate]
+    ) -> list[ObservationRelationshipModel]:
+        existing = {relationship.relationship_id: relationship for relationship in current}
+        reconciled: list[ObservationRelationshipModel] = []
+        for position, candidate in enumerate(desired):
+            model = existing.get(candidate.id)
+            if model is None:
+                model = ObservationRelationshipModel(relationship_id=candidate.id)
+            model.name = candidate.name
+            model.description = candidate.description
+            model.participants = candidate.participants
+            model.conditions = {
+                key: value.model_dump(mode="json") for key, value in candidate.conditions.items()
+            }
+            model.expected = {
+                key: value.model_dump(mode="json") for key, value in candidate.expected.items()
+            }
+            model.position = position
+            reconciled.append(model)
+        return reconciled
 
 
 class RuntimePersistenceRepository:
