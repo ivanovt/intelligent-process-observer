@@ -16,8 +16,8 @@
 ## 3. Integration and Quality
 
 - [x] 3.1 Add Overview integration coverage for search during successful and runtime-unavailable states, client refresh time across manual/automatic refresh, responsive information preservation, read-only request behavior, and the exclusion of avatar/global-time-range/fabricated health controls.
-- [ ] 3.2 Run `npm run test`, `npm run lint`, and `npm run build` in `frontend/`, resolve refinement regressions, and verify all commands pass without adding dependencies or changing backend code.
+- [x] 3.2 Run `npm run test`, `npm run lint`, and `npm run build` in `frontend/`, resolve refinement regressions, and verify all commands pass without adding dependencies or changing backend code.
 
 ## 4. Repository Verification
 
-- [ ] 4.1 Run `make check` from the repository root and verify backend checks/tests, frontend lint/tests/build, and strict validation of both the prerequisite and refinement OpenSpec changes pass before archive or pull-request work.
+- [x] 4.1 Run `make check` from the repository root and verify backend checks/tests, frontend lint/tests/build, and strict validation of both the prerequisite and refinement OpenSpec changes pass before archive or pull-request work.
