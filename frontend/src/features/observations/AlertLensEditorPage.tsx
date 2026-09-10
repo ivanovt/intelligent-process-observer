@@ -29,9 +29,9 @@ function AlertLensEditorForm({ routeKey, seed }: { routeKey: string; seed: Draft
 
   const update = (patch: Partial<DraftAlert>) => setValue((current) => ({ ...current, ...patch }))
   const generateId = () => {
-    if (!value.id && value.name.trim()) update({ id: generateObservationChildId(value.name, 'alert', draft.alert_lenses.map((item) => item.id), Date.now()) })
+    if (!value.id && value.name.trim()) update({ id: generateObservationChildId(value.name, 'alert', draft.alert_lenses.map((item) => item.id), crypto.randomUUID()) })
   }
-  const issues: ValidationIssue[] = Object.entries(errors).map(([path, message]) => ({ message, to: path === 'objectives' ? '#analysis-objectives' : path === 'references' ? '#reference-periods' : `#alert-${path}` }))
+  const issues: ValidationIssue[] = Object.entries(errors).map(([path, message]) => ({ message, to: path === 'id' ? '#alert-name' : path === 'objectives' ? '#analysis-objectives' : path === 'references' ? '#reference-periods' : `#alert-${path}` }))
   const apply = () => {
     const next = validateAlert(value, draft.alert_lenses)
     setErrors(next)
@@ -65,12 +65,9 @@ function AlertLensEditorForm({ routeKey, seed }: { routeKey: string; seed: Draft
         <div className="rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] p-6">
           {issues.length ? <div className="mb-5"><ValidationSummary ref={summaryRef} issues={issues} title="Alert Lens changes cannot be applied" /></div> : null}
           <h2 className="text-lg font-semibold">Lens identity</h2>
-          <div className="mt-5 grid gap-4 md:grid-cols-2">
-            <Field label="Lens ID" description="Generated from the initial name and kept stable inside this Observation." error={errors.id}>
-              <Input id="alert-id" placeholder="Generated after entering a name" value={value.id} readOnly />
-            </Field>
-            <Field label="Name" description="Human-readable Lens name shown throughout the interface." error={errors.name}>
-              <Input id="alert-name" placeholder="Release alerts" value={value.name} onChange={(event) => update({ name: event.target.value })} onBlur={generateId} />
+          <div className="mt-5 min-w-0">
+            <Field label={<span className="flex flex-wrap items-baseline gap-x-2 gap-y-1"><span>Name</span>{value.id ? <span id="alert-identity" className="break-all text-xs font-normal text-[var(--color-text-secondary)]">(id: {value.id})</span> : null}</span>} description={value.id ? 'Human-readable Lens name shown throughout the interface.' : 'Human-readable Lens name shown throughout the interface. An ID is generated after the initial non-empty name is entered.'} error={errors.name ?? errors.id}>
+              <Input id="alert-name" aria-label="Name" aria-describedby={value.id ? 'alert-identity' : undefined} placeholder="Release alerts" value={value.name} onChange={(event) => update({ name: event.target.value })} onBlur={generateId} />
             </Field>
           </div>
           <div className="mt-4">

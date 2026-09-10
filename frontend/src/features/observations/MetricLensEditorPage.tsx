@@ -28,7 +28,7 @@ function MetricLensEditorForm({ routeKey, seed }: { routeKey: string; seed: Draf
   const sources = capabilities.capabilities?.metric.flatMap((adapter) => adapter.sources.map((source) => ({ ...source, adapter_type: adapter.adapter_type }))) ?? []
   const update = (patch: Partial<DraftMetric>) => setValue((current) => ({ ...current, ...patch }))
   const generateId = () => {
-    if (!value.id && value.name.trim()) update({ id: generateObservationChildId(value.name, 'metric', draft.lenses.map((item) => item.id), Date.now()) })
+    if (!value.id && value.name.trim()) update({ id: generateObservationChildId(value.name, 'metric', draft.lenses.map((item) => item.id), crypto.randomUUID()) })
   }
   const setObjectives = (next: MetricObjective[]) => update({ analysis_objectives: next })
   const apply = () => {
@@ -40,7 +40,7 @@ function MetricLensEditorForm({ routeKey, seed }: { routeKey: string; seed: Draf
     }
   }
   const unavailable = capabilities.status !== 'success'
-  const issues: ValidationIssue[] = Object.entries(errors).map(([path, message]) => ({ message, to: path === 'objectives' ? '#metric-objectives' : path === 'references' ? '#reference-periods' : `#metric-${path}` }))
+  const issues: ValidationIssue[] = Object.entries(errors).map(([path, message]) => ({ message, to: path === 'id' ? '#metric-name' : path === 'objectives' ? '#metric-objectives' : path === 'references' ? '#reference-periods' : `#metric-${path}` }))
 
   return (
     <section className="mx-auto max-w-6xl">
@@ -66,12 +66,9 @@ function MetricLensEditorForm({ routeKey, seed }: { routeKey: string; seed: Draf
         <div className="rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] p-6">
           {issues.length ? <div className="mb-5"><ValidationSummary ref={summaryRef} issues={issues} title="Metric Lens changes cannot be applied" /></div> : null}
           <h2 className="text-lg font-semibold">Lens identity</h2>
-          <div className="mt-5 grid gap-4 md:grid-cols-2">
-            <Field label="Lens ID" description="Generated from the initial name and kept stable; unique among Metric Lenses in this Observation." error={errors.id}>
-              <Input id="metric-id" placeholder="Generated after entering a name" value={value.id} readOnly />
-            </Field>
-            <Field label="Name" description="Human-readable name shown in this Observation." error={errors.name}>
-              <Input id="metric-name" placeholder="Cooling pressure" value={value.name} onChange={(event) => update({ name: event.target.value })} onBlur={generateId} />
+          <div className="mt-5 min-w-0">
+            <Field label={<span className="flex flex-wrap items-baseline gap-x-2 gap-y-1"><span>Name</span>{value.id ? <span id="metric-identity" className="break-all text-xs font-normal text-[var(--color-text-secondary)]">(id: {value.id})</span> : null}</span>} description={value.id ? 'Human-readable name shown in this Observation.' : 'Human-readable name shown in this Observation. An ID is generated after the initial non-empty name is entered.'} error={errors.name ?? errors.id}>
+              <Input id="metric-name" aria-label="Name" aria-describedby={value.id ? 'metric-identity' : undefined} placeholder="Cooling pressure" value={value.name} onChange={(event) => update({ name: event.target.value })} onBlur={generateId} />
             </Field>
           </div>
           <div className="mt-4">
