@@ -247,6 +247,8 @@ def test_shared_consumers_remain_compatible_for_valid_and_production_invalid_sou
             assert isinstance(provider, PrometheusMetricSeriesProvider)
             assert isinstance(main_module.app.state.prometheus_adapter, HttpxPrometheusQueryAdapter)
             assert service.capabilities().metric[0].sources[0].id == "plant-prometheus"
+            assert "health" not in service.capabilities().model_dump_json()
+            assert "diagnostic" not in service.capabilities().model_dump_json()
             preflight = await service.preflight_metric(
                 MetricPreflightRequest(
                     source_id="plant-prometheus", query="up", validation_window={"duration": "1m"}

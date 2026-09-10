@@ -6,17 +6,29 @@ from datetime import UTC, datetime, timedelta
 from types import SimpleNamespace
 from uuid import uuid4
 
+import httpx
 import pytest
 from pydantic import ValidationError
 
-from app.core.settings import BearerTokenCredentials, PrometheusSourceSettings, Settings
+from app.core.settings import (
+    BasicAuthCredentials,
+    BearerTokenCredentials,
+    PrometheusSourceSettings,
+    Settings,
+)
 from app.infrastructure.persistence.repository import ObservationRepository
 from app.infrastructure.prometheus.contracts import (
     PrometheusRangeQueryResult,
     PrometheusRangeSample,
     PrometheusRangeSeries,
 )
-from app.observations.contracts import MetricPreflightRequest, ObservationCreate
+from app.main import app
+from app.observations.api import get_service
+from app.observations.contracts import (
+    MetricPreflightRequest,
+    ObservationCreate,
+    PrometheusSourceConfiguration,
+)
 from app.observations.service import ObservationDefinitionService
 
 
@@ -138,7 +150,7 @@ def test_definition_contract_rejects_invalid_topology_or_vocabulary(mutate) -> N
         ObservationCreate.model_validate(definition)
 
 
-def test_capabilities_and_relative_hrefs_do_not_expose_connection_details(monkeypatch) -> None:
+def test_capabilities_and_relative_hrefs_expose_only_safe_configuration(monkeypatch) -> None:
     import app.observations.service as service_module
 
     monkeypatch.setattr(service_module, "get_settings", configured_settings)
@@ -148,7 +160,18 @@ def test_capabilities_and_relative_hrefs_do_not_expose_connection_details(monkey
         "metric": [
             {
                 "adapter_type": "prometheus",
-                "sources": [{"id": "production-prometheus", "name": "Production Prometheus"}],
+                "sources": [
+                    {
+                        "id": "production-prometheus",
+                        "name": "Production Prometheus",
+                        "configuration": {
+                            "id": "production-prometheus",
+                            "name": "Production Prometheus",
+                            "base_url": "https://prometheus.example.test",
+                            "credentials": {"type": "bearer_token"},
+                        },
+                    }
+                ],
             }
         ]
     }
@@ -165,6 +188,146 @@ def test_capabilities_and_relative_hrefs_do_not_expose_connection_details(monkey
     )
     summary = service.observation_summary(observation)
     assert summary.href == f"/api/v1/observations/{observation.id}"
+
+
+@pytest.mark.parametrize(
+    "payload, expected",
+    [
+        (
+            {
+                "id": "primary",
+                "name": "Primary metrics",
+                "base_url": "https://prometheus.example.test",
+                "credentials": {"type": "bearer_token"},
+            },
+            {"type": "bearer_token"},
+        ),
+        (
+            {
+                "id": "secondary",
+                "name": "Secondary metrics",
+                "base_url": "https://secondary.example.test",
+                "credentials": {"type": "basic_auth", "username": "observe-reader"},
+            },
+            {"type": "basic_auth", "username": "observe-reader"},
+        ),
+    ],
+)
+def test_prometheus_source_configuration_validates_both_safe_credential_variants(
+    payload: dict[str, object], expected: dict[str, str]
+) -> None:
+    configuration = PrometheusSourceConfiguration.model_validate(payload)
+
+    assert configuration.credentials.model_dump() == expected
+
+
+@pytest.mark.parametrize(
+    "credentials",
+    [
+        {"type": "bearer_token", "token": "bearer-sentinel-secret"},
+        {"type": "basic_auth", "username": "observe-reader", "password": "password-sentinel"},
+    ],
+)
+def test_prometheus_source_configuration_rejects_secret_credential_fields(
+    credentials: dict[str, str],
+) -> None:
+    with pytest.raises(ValidationError):
+        PrometheusSourceConfiguration.model_validate(
+            {
+                "id": "primary",
+                "name": "Primary metrics",
+                "base_url": "https://prometheus.example.test",
+                "credentials": credentials,
+            }
+        )
+
+
+def test_capabilities_api_serializes_exact_safe_bearer_and_basic_configurations(
+    monkeypatch,
+) -> None:
+    import app.observations.service as service_module
+
+    bearer_secret = "bearer-sentinel-secret"
+    basic_password = "basic-password-sentinel"
+    settings = Settings(
+        prometheus_sources=[
+            PrometheusSourceSettings(
+                id="primary",
+                name="Primary metrics",
+                base_url="https://primary.example.test/prometheus",
+                credentials=BearerTokenCredentials(type="bearer_token", token=bearer_secret),
+            ),
+            PrometheusSourceSettings(
+                id="secondary",
+                name="Secondary metrics",
+                base_url="https://secondary.example.test/prometheus",
+                credentials=BasicAuthCredentials(
+                    type="basic_auth", username="observe-reader", password=basic_password
+                ),
+            ),
+        ]
+    )
+    monkeypatch.setattr(service_module, "get_settings", lambda: settings)
+    service = ObservationDefinitionService()
+
+    async def service_override() -> ObservationDefinitionService:
+        return service
+
+    async def request_capabilities() -> httpx.Response:
+        transport = httpx.ASGITransport(app=app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+            return await client.get("/api/v1/observation-definition-capabilities")
+
+    app.dependency_overrides[get_service] = service_override
+    try:
+        response = asyncio.run(request_capabilities())
+    finally:
+        app.dependency_overrides.clear()
+
+    assert response.status_code == 200
+    assert response.json() == {
+        "metric": [
+            {
+                "adapter_type": "prometheus",
+                "sources": [
+                    {
+                        "id": "primary",
+                        "name": "Primary metrics",
+                        "configuration": {
+                            "id": "primary",
+                            "name": "Primary metrics",
+                            "base_url": "https://primary.example.test/prometheus",
+                            "credentials": {"type": "bearer_token"},
+                        },
+                    },
+                    {
+                        "id": "secondary",
+                        "name": "Secondary metrics",
+                        "configuration": {
+                            "id": "secondary",
+                            "name": "Secondary metrics",
+                            "base_url": "https://secondary.example.test/prometheus",
+                            "credentials": {
+                                "type": "basic_auth",
+                                "username": "observe-reader",
+                            },
+                        },
+                    },
+                ],
+            }
+        ]
+    }
+    for protected in (
+        '"token"',
+        '"password"',
+        bearer_secret,
+        basic_password,
+        "**********",
+        "Authorization",
+        "health",
+        "diagnostic",
+    ):
+        assert protected not in response.text
 
 
 def test_alert_contract_defaults_and_ignores_unknown_fields() -> None:

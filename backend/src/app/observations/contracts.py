@@ -237,9 +237,40 @@ class ObservationResponse(ObservationSummary):
     relationships: list[RelationshipResponse]
 
 
-class CapabilitySource(ApiModel):
+class PrometheusBearerTokenCredentialProjection(ApiModel):
+    """Represents the non-secret portion of Bearer-token credentials."""
+
+    type: Literal["bearer_token"]
+
+
+class PrometheusBasicAuthCredentialProjection(ApiModel):
+    """Represents the non-secret portion of HTTP Basic credentials."""
+
+    type: Literal["basic_auth"]
+    username: str
+
+
+PrometheusCredentialProjection = Annotated[
+    PrometheusBearerTokenCredentialProjection | PrometheusBasicAuthCredentialProjection,
+    Field(discriminator="type"),
+]
+
+
+class PrometheusSourceConfiguration(ApiModel):
+    """Provides the allowlisted public configuration for one Prometheus source."""
+
     id: str
     name: str
+    base_url: str
+    credentials: PrometheusCredentialProjection
+
+
+class CapabilitySource(ApiModel):
+    """Describes an available Metric source and its safe configuration projection."""
+
+    id: str
+    name: str
+    configuration: PrometheusSourceConfiguration
 
 
 class CapabilityAdapter(ApiModel):
