@@ -16,17 +16,66 @@ The system SHALL provide a `/data-sources` page within the shared ObserveAI shel
 - **AND** no application-managed source lifecycle control is present
 
 ### Requirement: List every safely projected configured Metric source
-The system SHALL retrieve Metric-source availability from `GET /api/v1/observation-definition-capabilities`. For every returned Prometheus source, the page SHALL show its provider type, stable machine-readable ID, and human-readable name. It SHALL preserve the returned source ordering and SHALL NOT display or infer the configured base URL, credentials, Authorization data, Basic username, connection health, or other diagnostics.
+The system SHALL retrieve Metric-source availability from `GET /api/v1/observation-definition-capabilities`. For every returned Prometheus source, the page SHALL preserve the existing compact default presentation of provider type, stable machine-readable ID, human-readable name, and availability for Metric Lens configuration. It SHALL preserve the returned source ordering and SHALL provide access to the source's API-supplied non-secret configuration without presenting any source lifecycle or connection-test behavior.
+
+The page SHALL NOT display or infer bearer tokens, Basic-auth passwords, masked secret values, Authorization data, rejected unsafe URL values, raw environment JSON, connection health, or provider diagnostics. A production-safe source endpoint supplied by the API, credential type, and Basic-auth username MAY appear only in the user-requested configuration detail view.
 
 #### Scenario: List multiple configured Prometheus sources
 - **GIVEN** the capabilities response contains multiple Prometheus sources
 - **WHEN** the Data Sources request succeeds
 - **THEN** every returned source is displayed once in returned order with its exact ID and name
 - **AND** each source is identified as available for Metric Lens configuration
+- **AND** each source's configuration detail is collapsed by default
+
+#### Scenario: Keep secret and operational data private
+- **WHEN** configured sources or their expanded details are displayed
+- **THEN** no bearer token, Basic-auth password, masked secret value, Authorization data, raw environment JSON, connection health, or provider diagnostic is present in browser-visible data
 
 #### Scenario: Keep connection configuration private
-- **WHEN** configured sources are displayed
-- **THEN** no source endpoint, secret, credential metadata, username, Authorization value, or inferred health state is present
+- **WHEN** configured source summaries are displayed without a user expanding their details
+- **THEN** no source endpoint, credential type, Basic-auth username, secret, connection health, or diagnostic is present in the compact view
+- **AND** secrets, rejected unsafe URL values, connection health, and diagnostics remain absent even after details are expanded
+
+### Requirement: Inspect a source's non-secret configuration on demand
+Each configured source SHALL provide an accessible control that independently expands or collapses a detail pane for that source. The control SHALL expose its expanded state and identify the pane it controls. Expanding one source SHALL retain the compact source summary and show the API-supplied `configuration` object as valid pretty-formatted JSON in a horizontally scrollable, read-only code container. Collapsing the source SHALL remove that detail pane without changing source data or other source disclosure states.
+
+The formatted JSON SHALL preserve the configuration field names and scalar values received from the API, use two-space indentation, and contain no fabricated redaction keys or placeholders. When the API omits an unsafe `base_url`, the UI SHALL render the supplied configuration as-is without adding `base_url`, the rejected value, a placeholder, a reason, a validity/health indicator, or a diagnostic. Expanding or collapsing details SHALL make no network request and SHALL not create, mutate, test, enable, or disable a source.
+
+#### Scenario: Expand one configured source
+- **GIVEN** configured sources are shown with their detail panes collapsed
+- **WHEN** a user activates one source's configuration control
+- **THEN** that control reports the expanded state
+- **AND** its associated pane shows the source's non-secret configuration as two-space-indented JSON
+- **AND** the source's compact summary remains visible
+
+#### Scenario: Keep disclosures independent
+- **GIVEN** multiple configured sources are shown
+- **WHEN** a user expands one source
+- **THEN** no other source is expanded or collapsed as a side effect
+
+#### Scenario: Collapse an expanded source
+- **GIVEN** a source's configuration pane is expanded
+- **WHEN** the user activates its configuration control again
+- **THEN** the pane is removed and the control reports the collapsed state
+- **AND** no source data or server state changes
+
+#### Scenario: Display Basic-auth configuration without its password
+- **GIVEN** a Basic-auth source configuration is expanded
+- **WHEN** the JSON detail is rendered
+- **THEN** it includes the source ID, name, base URL, credential type, and username supplied by the API
+- **AND** it contains no password field, masked password, or redaction placeholder
+
+#### Scenario: Display Bearer configuration without its token
+- **GIVEN** a Bearer-token source configuration is expanded
+- **WHEN** the JSON detail is rendered
+- **THEN** it includes the source ID, name, base URL, and credential type supplied by the API
+- **AND** it contains no token field, masked token, or redaction placeholder
+
+#### Scenario: Display a source whose unsafe base URL was omitted
+- **GIVEN** the capabilities response contains a source configuration without `base_url`
+- **WHEN** that source's JSON detail is expanded
+- **THEN** the pane shows the exact supplied ID, name, and credential projection without a `base_url` member
+- **AND** it does not add a rejected URL value, placeholder, reason, validity/health indicator, or diagnostic
 
 ### Requirement: Provide explicit loading, failure, empty, and refresh behavior
 The Data Sources page SHALL distinguish loading, retryable request failure, a successful empty Metric-source registry, and one or more configured sources. A retry or refresh action SHALL request the same capabilities endpoint again without creating, mutating, or testing a source.
