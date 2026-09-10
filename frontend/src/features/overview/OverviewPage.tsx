@@ -62,22 +62,23 @@ function OverviewFeedback({ data }: { data: OverviewDataCoordinator }) {
 }
 
 function SummaryCards({ configuredCount, summary }: { configuredCount: number | null; summary: ReturnType<typeof projectSummaryCounts> | null }) {
-  return <section aria-label="Overview summary" className="grid gap-3 sm:grid-cols-2 xl:grid-cols-6">
+  return <section aria-label="Overview summary" className="grid gap-3 sm:grid-cols-2 md:grid-cols-3 xl:grid-cols-6">
     <SummaryCard icon={Activity} label="Configured Observations" value={configuredCount === null ? 'Unavailable' : String(configuredCount)} detail={configuredCount === null ? 'Definition data is unavailable.' : 'All configured definitions.'} />
     <SummaryCard icon={Clock3} label="Active Observations" value={summary === null ? 'Unavailable' : String(summary.activeObservations)} detail={summary === null ? 'Runtime data is unavailable.' : 'Latest run is pending or running.'} />
     <SummaryCard icon={CheckCircle2} label="No significant findings" value={summary === null ? 'Unavailable' : String(summary.observationsWithNoSignificantFindings)} detail={summary === null ? 'Runtime data is unavailable.' : 'Latest explicit analytical state.'} tone="success" />
     <SummaryCard icon={AlertTriangle} label="Uncertain analysis" value={summary === null ? 'Unavailable' : String(summary.observationsWithUncertainAnalysis)} detail={summary === null ? 'Runtime data is unavailable.' : 'Latest explicit analytical state.'} tone="warning" />
     <SummaryCard icon={CircleAlert} label="Significant findings" value={summary === null ? 'Unavailable' : String(summary.observationsWithSignificantFindings)} detail={summary === null ? 'Runtime data is unavailable.' : 'Latest explicit analytical state.'} tone="error" />
-    <SummaryCard icon={CircleAlert} label="Failed executions" value={summary === null ? 'Unavailable' : String(summary.observationsWithFailedExecution)} detail={summary === null ? 'Runtime data is unavailable.' : 'Latest run execution status is failed.'} tone="error" />
+    <SummaryCard icon={CircleAlert} label="Failed executions" value={summary === null ? 'Unavailable' : String(summary.observationsWithFailedExecution)} detail={summary === null ? 'Runtime data is unavailable.' : 'Latest run execution status is failed.'} tone="executionFailure" />
   </section>
 }
 
-function SummaryCard({ detail, icon: Icon, label, tone = 'neutral', value }: { detail: string; icon: typeof Activity; label: string; tone?: 'neutral' | 'success' | 'warning' | 'error'; value: string }) {
+function SummaryCard({ detail, icon: Icon, label, tone = 'neutral', value }: { detail: string; icon: typeof Activity; label: string; tone?: 'neutral' | 'success' | 'warning' | 'error' | 'executionFailure'; value: string }) {
   const tones = {
     neutral: 'border-[var(--color-border)] bg-[var(--color-surface)] text-[var(--color-text-primary)]',
     success: 'border-[var(--color-success-border)] bg-[var(--color-success-surface)] text-[var(--color-analysis-no-findings)]',
     warning: 'border-[var(--color-warning-border)] bg-[var(--color-warning-surface)] text-[var(--color-analysis-uncertain)]',
     error: 'border-[var(--color-error-border)] bg-[var(--color-error-surface)] text-[var(--color-analysis-significant)]',
+    executionFailure: 'border-[var(--color-error-border)] bg-[var(--color-error-surface)] text-[var(--color-execution-failed)]',
   }
   return <article className={`min-w-0 rounded-xl border p-4 shadow-xs ${tones[tone]}`}><div className="flex items-start justify-between gap-2"><p className="text-sm font-medium">{label}</p><Icon size={17} aria-hidden="true" /></div><p className="mt-2 text-2xl font-semibold tracking-tight">{value}</p><p className="mt-1 text-xs text-[var(--color-text-secondary)]">{detail}</p></article>
 }
