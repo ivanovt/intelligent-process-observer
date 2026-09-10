@@ -14,8 +14,8 @@
 
 - [x] 3.1 Activate the shell Overview navigation at `/overview`, add the route, and redirect `/` to it without changing existing routes; verify routing tests cover root redirect, active navigation state, direct Overview entry, and navigation to Observation and run detail.
 - [x] 3.2 Integrate manual refresh and page-level loading, empty, partial, complete-failure, and stale feedback while keeping successful sections visible; verify integration tests cover independent request outcomes, retry actions, active-run refresh updates, and no mutation requests from Overview.
-- [ ] 3.3 Run `npm run test`, `npm run lint`, and `npm run build` in `frontend/`, fix any Overview regressions, and verify all three commands pass.
+- [x] 3.3 Run `npm run test`, `npm run lint`, and `npm run build` in `frontend/`, fix any Overview regressions, and verify all three commands pass.
 
 ## 4. Repository Verification
 
-- [ ] 4.1 Run `make check` from the repository root and verify Ruff checks, backend tests, frontend lint/tests/build, and strict OpenSpec validation all pass before archive or pull-request work.
+- [x] 4.1 Run `make check` from the repository root and verify Ruff checks, backend tests, frontend lint/tests/build, and strict OpenSpec validation all pass before archive or pull-request work.
