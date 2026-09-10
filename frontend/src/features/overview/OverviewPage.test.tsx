@@ -164,6 +164,21 @@ describe('OverviewContent', () => {
     expect(screen.getByRole('list', { name: 'Observations' }).textContent).toContain('Cooling system')
   })
 
+  it('wraps long unbroken Observation identity content without truncating its accessible text', () => {
+    const longName = 'CoolingSystemWithoutWhitespaceThatMustWrapInsideTheMonitoringGrid'
+    const longDescription = 'LongDescriptionWithoutWhitespaceThatMustWrapInsteadOfWideningThePage'
+    renderOverview(coordinator({ definitions: source([{ ...definitions[0], name: longName, description: longDescription }]), runHistory: source([runs[0]]) }))
+
+    const nameLink = screen.getByRole('link', { name: longName })
+    expect(nameLink.textContent).toBe(longName)
+    expect(nameLink.className).toContain('min-w-0')
+    expect(nameLink.className).toContain('break-words')
+    const description = screen.getByText(longDescription)
+    expect(description.textContent).toBe(longDescription)
+    expect(description.className).toContain('min-w-0')
+    expect(description.className).toContain('break-words')
+  })
+
   it('keeps all five exact recent-run markers focusable and distinguishes completed from cancelled without partial', () => {
     const pending = run('run-pending', 'observation-a', 'Cooling system', 'pending', null, '2026-09-09T03:00:00Z', null)
     renderOverview(coordinator({ runHistory: source([pending, ...runs]) }))
