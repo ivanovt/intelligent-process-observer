@@ -99,11 +99,14 @@ describe('OverviewContent', () => {
     expect(screen.getByText('Run Activity is unavailable because run history is unavailable.')).toBeTruthy()
   })
 
-  it('uses a bounded, honest empty statement and scoped incomplete detail feedback', () => {
-    renderOverview(coordinator({ findingDetails: { data: new Map([[runs[0].id, detail(runs[0], [])]]), errors: new Map(), loadingRunIds: new Set() } }))
+  it('uses a bounded, honest empty statement and keeps successful findings visible with scoped incomplete detail feedback', () => {
+    const empty = renderOverview(coordinator({ findingDetails: { data: new Map([[runs[0].id, detail(runs[0], [])]]), errors: new Map(), loadingRunIds: new Set() } }))
     expect(screen.getByText('No findings are present in the five latest analyzed runs.')).toBeTruthy()
+    empty.unmount()
 
-    renderOverview(coordinator({ findingDetails: { data: new Map(), errors: new Map([['run-failed-significant', new Error('unavailable')]]), loadingRunIds: new Set() } }))
+    renderOverview(coordinator({ findingDetails: { data: new Map([[runs[0].id, detail(runs[0], [{ id: 'finding-a', statement: 'Persisted Observation finding.' }])]]), errors: new Map([[runs[2].id, new Error('unavailable')]]), loadingRunIds: new Set() } }))
     expect(screen.getByText('Recent Findings are incomplete because one or more eligible run details could not be loaded.')).toBeTruthy()
+    expect(screen.getByText('Persisted Observation finding.')).toBeTruthy()
+    expect(screen.queryByText('No findings are present in the five latest analyzed runs.')).toBeNull()
   })
 })
