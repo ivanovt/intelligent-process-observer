@@ -1,6 +1,7 @@
-import { ExternalLink, RefreshCw } from 'lucide-react'
+import { ArrowRight, RefreshCw } from 'lucide-react'
 import { useMemo, useState, type ReactNode } from 'react'
-import { ActionLink, Button, Field, InlineNotice, PageHeader, Select } from '../../components/ui'
+import { Link } from 'react-router-dom'
+import { Button, Field, InlineNotice, PageHeader, Select } from '../../components/ui'
 import { AnalyticalStateBadge, ExecutionStatusBadge } from '../../components/domain/RunStatusBadges'
 import { launchObservationRun, listObservationRuns } from './api'
 import { emptyRunFilters, filterRuns, observationChoices, unavailableAnalyticalState, type RunFilters } from './filters'
@@ -90,7 +91,7 @@ function RunRow({ run }: { run: ObservationRunSummary }) {
       <span className="text-sm text-[var(--color-text-secondary)]">{formatDuration(run.duration_seconds)}</span>
       <ExecutionStatusBadge status={run.status} />
       <AnalyticalStateBadge state={run.analytical_state} />
-      <ActionLink aria-label={`Open run ${run.id}`} variant="secondary" to={`/runs/${encodeURIComponent(run.id)}`}>Open<ExternalLink size={15} aria-hidden="true" /></ActionLink>
+      <Link aria-label={`Open run ${run.id}`} className="inline-flex h-10 shrink-0 items-center justify-self-start gap-1 whitespace-nowrap rounded-lg px-3 text-sm font-medium text-[var(--color-primary)] transition-colors hover:bg-[color-mix(in_srgb,var(--color-primary),transparent_92%)] hover:text-[var(--color-primary-hover)] lg:justify-self-end" to={`/runs/${encodeURIComponent(run.id)}`}>Open<ArrowRight size={16} aria-hidden="true" /></Link>
     </li>
   )
 }
