@@ -1,0 +1,152 @@
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { listObservations } from '../observations/api'
+import type { ObservationSummary } from '../observations/types'
+import { getObservationRun, listObservationRuns } from '../runs/api'
+import { hasActiveRuns, mergeRunHistory } from '../runs/runHistory'
+import type { ObservationRunDetail, ObservationRunSummary } from '../runs/types'
+import { useSequentialPolling, type PollingState } from '../runs/useSequentialPolling'
+import { selectFindingCandidates, type FindingCandidate } from './projections'
+
+/** Independent request state for a source whose successful data remains visible after a failed refresh. */
+export type OverviewSourceState<T> = PollingState<T>
+
+/** State for the bounded, best-effort Observation-run detail requests used by Recent Findings. */
+export interface OverviewFindingDetailState {
+  readonly data: ReadonlyMap<string, ObservationRunDetail>
+  readonly errors: ReadonlyMap<string, unknown>
+  readonly loadingRunIds: ReadonlySet<string>
+}
+
+/** Read-only Overview data snapshot composed from existing public APIs. */
+export interface OverviewDataCoordinator {
+  readonly definitions: OverviewSourceState<readonly ObservationSummary[]>
+  readonly runHistory: OverviewSourceState<readonly ObservationRunSummary[]>
+  readonly findingCandidates: readonly FindingCandidate[]
+  readonly findingDetails: OverviewFindingDetailState
+  /** Refreshes independent definition and history sources plus retryable finding details. */
+  readonly refresh: () => void
+}
+
+const emptyDetails: OverviewFindingDetailState = {
+  data: new Map(),
+  errors: new Map(),
+  loadingRunIds: new Set(),
+}
+
+/** Loads the independent sources, follows active history, and bounds cached detail retrieval. */
+export function useOverviewData(): OverviewDataCoordinator {
+  const { state: definitionsState, refresh: refreshDefinitions } = useOverviewDefinitions()
+  const { state: runHistoryState, refresh: refreshRunHistory } = useSequentialPolling<readonly ObservationRunSummary[]>({
+    load: listObservationRuns,
+    isActive: hasActiveRuns,
+    merge: mergeRunHistory,
+  })
+  const findingCandidates = useMemo(() => selectFindingCandidates(runHistoryState.data ?? []), [runHistoryState.data])
+  const candidateKey = findingCandidates.map(({ run }) => run.id).join(',')
+  const cache = useRef(new Map<string, ObservationRunDetail>())
+  const [findingDetails, setFindingDetails] = useState<OverviewFindingDetailState>(emptyDetails)
+  const [detailRefreshNonce, setDetailRefreshNonce] = useState(0)
+
+  useEffect(() => {
+    const controller = new AbortController()
+    const candidates = findingCandidates
+    const candidateIds = new Set(candidates.map(({ run }) => run.id))
+    const pendingCandidates = candidates.filter(({ run }) => !cache.current.has(run.id))
+    setFindingDetails((previous) => ({
+      data: new Map([...cache.current].filter(([runId]) => candidateIds.has(runId))),
+      errors: new Map([...previous.errors].filter(([runId]) => candidateIds.has(runId) && !cache.current.has(runId))),
+      loadingRunIds: new Set(pendingCandidates.map(({ run }) => run.id)),
+    }))
+
+    if (pendingCandidates.length === 0) return () => controller.abort()
+
+    void Promise.all(pendingCandidates.map(async ({ run }) => {
+      try {
+        const detail = await getObservationRun(run.id, controller.signal)
+        if (!controller.signal.aborted) cache.current.set(run.id, detail)
+        return { runId: run.id, detail, error: null as unknown }
+      } catch (error: unknown) {
+        return { runId: run.id, detail: null, error }
+      }
+    })).then((results) => {
+      if (controller.signal.aborted) return
+      setFindingDetails((previous) => {
+        const data = new Map(previous.data)
+        const errors = new Map(previous.errors)
+        for (const result of results) {
+          if (result.detail !== null) {
+            data.set(result.runId, result.detail)
+            errors.delete(result.runId)
+          } else {
+            errors.set(result.runId, result.error)
+          }
+        }
+        return { data, errors, loadingRunIds: new Set() }
+      })
+    })
+
+    return () => controller.abort()
+  }, [candidateKey, detailRefreshNonce, findingCandidates])
+
+  const refresh = useCallback(() => {
+    refreshDefinitions()
+    refreshRunHistory()
+    setDetailRefreshNonce((previous) => previous + 1)
+  }, [refreshDefinitions, refreshRunHistory])
+
+  return {
+    definitions: definitionsState,
+    runHistory: runHistoryState,
+    findingCandidates,
+    findingDetails,
+    refresh,
+  }
+}
+
+function useOverviewDefinitions() {
+  const [state, setState] = useState<OverviewSourceState<readonly ObservationSummary[]>>({ data: null, error: null, loading: true, refreshing: false })
+  const stateRef = useRef(state)
+  const mounted = useRef(false)
+  const controller = useRef<AbortController | null>(null)
+
+  const refresh = useCallback(() => {
+    if (!mounted.current) return
+    controller.current?.abort()
+    const nextController = new AbortController()
+    controller.current = nextController
+    const previous = stateRef.current
+    const nextState = { ...previous, error: null, loading: previous.data === null, refreshing: previous.data !== null }
+    stateRef.current = nextState
+    setState(nextState)
+
+    void listObservations(nextController.signal)
+      .then((data) => {
+        if (!mounted.current || nextController.signal.aborted) return
+        const settled = { data, error: null, loading: false, refreshing: false }
+        stateRef.current = settled
+        setState(settled)
+      })
+      .catch((error: unknown) => {
+        if (!mounted.current || nextController.signal.aborted || isAbortError(error)) return
+        const current = stateRef.current
+        const settled = { data: current.data, error, loading: current.data === null, refreshing: false }
+        stateRef.current = settled
+        setState(settled)
+      })
+  }, [])
+
+  useEffect(() => {
+    mounted.current = true
+    refresh()
+    return () => {
+      mounted.current = false
+      controller.current?.abort()
+    }
+  }, [refresh])
+
+  return { state, refresh }
+}
+
+function isAbortError(error: unknown) {
+  return error instanceof DOMException && error.name === 'AbortError'
+}

@@ -1,8 +1,8 @@
 ## 1. Frontend Dependency and Data Projection
 
-- [ ] 1.1 After explicit approval of the dependency proposal, add `recharts@^3.10.1` to the frontend manifest and lockfile and verify `npm install` completes without changing unrelated dependencies.
-- [ ] 1.2 Add pure Overview projection helpers for latest-run selection, independent summary counts, ordered Observation rows, seven-run row history, five analyzed-run finding candidates, and fourteen-run activity data; verify focused unit tests cover mixed states, failed-plus-significant state, missing analysis, ordering, bounds, and never-run definitions.
-- [ ] 1.3 Add an Overview data coordinator that loads definitions and run history independently, reuses forward-only sequential run polling, and performs cancellable/cached detail requests for the bounded finding candidates; verify focused tests cover complete success, partial source failure, stale-data preservation, terminal non-regression, detail partial failure, and polling shutdown after a final terminal refresh.
+- [x] 1.1 After explicit approval of the dependency proposal, add `recharts@^3.10.1` to the frontend manifest and lockfile and verify `npm install` completes without changing unrelated dependencies.
+- [x] 1.2 Add pure Overview projection helpers for latest-run selection, independent summary counts, ordered Observation rows, seven-run row history, five analyzed-run finding candidates, and fourteen-run activity data; verify focused unit tests cover mixed states, failed-plus-significant state, missing analysis, ordering, bounds, and never-run definitions.
+- [x] 1.3 Add an Overview data coordinator that loads definitions and run history independently, reuses forward-only sequential run polling, and performs cancellable/cached detail requests for the bounded finding candidates; verify focused tests cover complete success, partial source failure, stale-data preservation, terminal non-regression, detail partial failure, and polling shutdown after a final terminal refresh.
 
 ## 2. Monitoring Interface
 
