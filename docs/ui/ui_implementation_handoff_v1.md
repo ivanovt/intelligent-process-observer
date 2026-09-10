@@ -1,14 +1,14 @@
-# UI Implementation Handoff — v1.5
+# UI Implementation Handoff — v1.6
 
 **Project:** ObserveAI / Master Thesis
-**Status:** Accepted living major-v1 implementation handoff for MVP UI Direction v1.5
+**Status:** Accepted living major-v1 implementation handoff for MVP UI Direction v1.6
 **Date:** 2026-09-10
 
 ## 1. Purpose
 
 This document translates the accepted current UI direction into implementation-oriented rules for the MVP frontend.
 
-UI Direction v1.5 includes the original monitoring/investigation experience, global run management, Observation Management configuration UX, and read-only Data Sources visibility. It refines UI-generated Observation-child identity to typed, compact metadata beside Name while retaining the global Runs history/launch screen and the initial routable run-detail foundation. The frontend must preserve the architecture's semantic boundaries and must not invent new product-level classifications, lifecycle semantics, or administrative capabilities that are not supported by accepted backend contracts.
+UI Direction v1.6 includes the original monitoring/investigation experience, global run management, Observation Management configuration UX, and read-only Data Sources visibility. It retains UI-generated Observation-child identity as typed, compact metadata beside Name, adds an on-demand secret-safe Prometheus configuration disclosure for each configured source, and retains the global Runs history/launch screen and initial routable run-detail foundation. The frontend must preserve the architecture's semantic boundaries and must not invent new product-level classifications, lifecycle semantics, or administrative capabilities that are not supported by accepted backend contracts.
 
 ## 2. Accepted frontend visual stack
 
@@ -48,7 +48,7 @@ https://magicpath.ai/files/447597481925181440
 
 MagicPath can inform look and feel but does not require 1:1 parity or canvas synchronization for an approved implementation. It is not permission to invent API fields or backend lifecycle operations. Accepted architecture/contracts remain authoritative for domain semantics.
 
-## 4. Screen set — v1.5
+## 4. Screen set — v1.6
 
 ### Monitoring and investigation
 
@@ -445,11 +445,22 @@ Configured source list/card view
 Safe empty-state environment setup guidance
 ```
 
-Each configured source is shown exactly once in the capabilities response order using
-only its provider type (`Prometheus`), stable ID, human-readable name, and wording that
-it is available for Metric Lens configuration. The screen must not show or infer a base
-URL, credentials, credential type, Basic username, Authorization data, connection
-health, or diagnostics.
+Each configured source is shown exactly once in the capabilities response order as a
+compact card using its provider type (`Prometheus`), stable ID, human-readable name,
+and wording that it is available for Metric Lens configuration. Its safe configuration
+is collapsed by default. An accessible, source-specific local disclosure control expands
+or collapses a read-only, horizontally scrollable JSON code pane without changing any
+other source disclosure state. The control exposes its expanded state and controls the
+associated pane.
+
+The pane renders the API-supplied configuration object directly as two-space-indented
+JSON. For Prometheus, it may show the source ID, name, credential type, a Basic-auth
+username when applicable, and the exact base URL only when the API supplies it. If the
+API omits an unsafe base URL, the pane omits it too: it must not add the rejected value,
+a replacement, placeholder, reason, validity or health indicator, or diagnostic. It
+must not show or infer bearer tokens, Basic-auth passwords, masked or redacted secret
+values, Authorization data, raw environment JSON, connection health, or diagnostics.
+The configured summary remains visible while the pane is expanded.
 
 The configured registry comes from backend `PROMETHEUS_SOURCES`, an optional JSON array
 in the root backend environment or deployment environment. Multiple entries are
@@ -721,7 +732,7 @@ If `add-observation-management-ui` is the first frontend OpenSpec change, it may
 
 ## 15. Versioning and change-control rule
 
-**UI Direction v1.5 is the accepted current direction.**
+**UI Direction v1.6 is the accepted current direction.**
 
 Implementation may make minor technical adjustments for responsive fit, accessibility, browser behavior, real data length and actual API constraints, but must not silently change:
 
