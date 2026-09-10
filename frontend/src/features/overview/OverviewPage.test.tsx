@@ -49,6 +49,7 @@ function coordinator(overrides: Partial<OverviewDataCoordinator> = {}): Overview
     runHistory: source(runs),
     findingCandidates,
     findingDetails: { data: new Map([[runs[0].id, detail(runs[0], [{ id: 'finding-a', statement: 'Persisted Observation finding.' }])], [runs[2].id, detail(runs[2], [])], [runs[4].id, detail(runs[4], [])]]), errors: new Map(), loadingRunIds: new Set(), },
+    lastSuccessfulRefreshAt: null,
     refresh: () => undefined,
     ...overrides,
   }

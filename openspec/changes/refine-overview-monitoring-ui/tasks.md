@@ -1,9 +1,9 @@
 ## 1. Prerequisite and Derived State
 
-- [ ] 1.1 Confirm the implementation branch contains the accepted `add-overview-monitoring-ui` code and verify the existing Overview focused tests pass before refinement begins.
-- [ ] 1.2 Extend the pure Overview summary projection with explicit latest-run `no_significant_findings` and `uncertain` counts and verify focused tests cover all analytical states, unavailable analysis, never-run Observations, active runs, and failed-plus-analytical overlap.
-- [ ] 1.3 Add a pure local Observation search projection over name and optional description that preserves input order, and verify focused tests cover trimming, case-insensitive matching, missing descriptions, empty queries, and no matches without API activity.
-- [ ] 1.4 Extend the Overview data coordinator with last-successful-client-refresh time without changing shared run contracts or polling semantics, and verify focused tests cover definition success, run-history success, automatic polling success, failure without timestamp advancement, and deterministic clock control.
+- [x] 1.1 Confirm the implementation branch contains the accepted `add-overview-monitoring-ui` code and verify the existing Overview focused tests pass before refinement begins.
+- [x] 1.2 Extend the pure Overview summary projection with explicit latest-run `no_significant_findings` and `uncertain` counts and verify focused tests cover all analytical states, unavailable analysis, never-run Observations, active runs, and failed-plus-analytical overlap.
+- [x] 1.3 Add a pure local Observation search projection over name and optional description that preserves input order, and verify focused tests cover trimming, case-insensitive matching, missing descriptions, empty queries, and no matches without API activity.
+- [x] 1.4 Extend the Overview data coordinator with last-successful-client-refresh time without changing shared run contracts or polling semantics, and verify focused tests cover definition success, run-history success, automatic polling success, failure without timestamp advancement, and deterministic clock control.
 
 ## 2. Dense Monitoring Workspace
 

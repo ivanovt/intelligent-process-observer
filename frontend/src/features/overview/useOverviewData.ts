@@ -17,12 +17,20 @@ export interface OverviewFindingDetailState {
   readonly loadingRunIds: ReadonlySet<string>
 }
 
+/** Optional feature-local dependencies for deterministic Overview coordination. */
+export interface UseOverviewDataOptions {
+  /** Supplies the client receipt time used only for local refresh feedback. */
+  readonly now?: () => Date
+}
+
 /** Read-only Overview data snapshot composed from existing public APIs. */
 export interface OverviewDataCoordinator {
   readonly definitions: OverviewSourceState<readonly ObservationSummary[]>
   readonly runHistory: OverviewSourceState<readonly ObservationRunSummary[]>
   readonly findingCandidates: readonly FindingCandidate[]
   readonly findingDetails: OverviewFindingDetailState
+  /** The latest client time at which definitions or run history loaded successfully. */
+  readonly lastSuccessfulRefreshAt: Date | null
   /** Refreshes independent definition and history sources plus retryable finding details. */
   readonly refresh: () => void
 }
@@ -33,11 +41,21 @@ const emptyDetails: OverviewFindingDetailState = {
   loadingRunIds: new Set(),
 }
 
+function currentClientTime() { return new Date() }
+
 /** Loads the independent sources, follows active history, and bounds cached detail retrieval. */
-export function useOverviewData(): OverviewDataCoordinator {
-  const { state: definitionsState, refresh: refreshDefinitions } = useOverviewDefinitions()
+export function useOverviewData(options: UseOverviewDataOptions = {}): OverviewDataCoordinator {
+  const now = options.now ?? currentClientTime
+  const [lastSuccessfulRefreshAt, setLastSuccessfulRefreshAt] = useState<Date | null>(null)
+  const recordSuccessfulRefresh = useCallback(() => setLastSuccessfulRefreshAt(now()), [now])
+  const { state: definitionsState, refresh: refreshDefinitions } = useOverviewDefinitions(recordSuccessfulRefresh)
+  const loadRunHistory = useCallback(async (signal: AbortSignal) => {
+    const runs = await listObservationRuns(signal)
+    if (!signal.aborted) recordSuccessfulRefresh()
+    return runs
+  }, [recordSuccessfulRefresh])
   const { state: runHistoryState, refresh: refreshRunHistory } = useSequentialPolling<readonly ObservationRunSummary[]>({
-    load: listObservationRuns,
+    load: loadRunHistory,
     isActive: hasActiveRuns,
     merge: mergeRunHistory,
   })
@@ -102,11 +120,12 @@ export function useOverviewData(): OverviewDataCoordinator {
     runHistory: runHistoryState,
     findingCandidates,
     findingDetails,
+    lastSuccessfulRefreshAt,
     refresh,
   }
 }
 
-function useOverviewDefinitions() {
+function useOverviewDefinitions(onSuccessfulReceipt: () => void) {
   const [state, setState] = useState<OverviewSourceState<readonly ObservationSummary[]>>({ data: null, error: null, loading: true, refreshing: false })
   const stateRef = useRef(state)
   const mounted = useRef(false)
@@ -125,6 +144,7 @@ function useOverviewDefinitions() {
     void listObservations(nextController.signal)
       .then((data) => {
         if (!mounted.current || nextController.signal.aborted) return
+        onSuccessfulReceipt()
         const settled = { data, error: null, loading: false, refreshing: false }
         stateRef.current = settled
         setState(settled)
@@ -136,7 +156,7 @@ function useOverviewDefinitions() {
         stateRef.current = settled
         setState(settled)
       })
-  }, [])
+  }, [onSuccessfulReceipt])
 
   useEffect(() => {
     mounted.current = true

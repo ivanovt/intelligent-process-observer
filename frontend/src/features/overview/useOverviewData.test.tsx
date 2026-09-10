@@ -25,17 +25,22 @@ function detail(summary: ObservationRunSummary): ObservationRunDetail {
   return { summary, lens_runs: [], relationship_evaluations: [], analysis: summary.analytical_state === null ? null : { schema_version: '1.0', identity: { observation_id: 'observation', observation_run_id: summary.id }, overall_state: summary.analytical_state, findings: [], hypotheses: [], limitations: [] }, report: null }
 }
 
-function Harness() {
-  const data = useOverviewData()
+function Harness({ now }: { readonly now?: () => Date }) {
+  const data = useOverviewData({ now })
   return <>
     <button type="button" onClick={data.refresh}>Refresh</button>
     <output data-testid="definitions">{JSON.stringify({ data: data.definitions.data?.length ?? null, error: data.definitions.error !== null })}</output>
     <output data-testid="runs">{JSON.stringify({ data: data.runHistory.data?.map((item) => item.status) ?? null, error: data.runHistory.error !== null })}</output>
     <output data-testid="details">{JSON.stringify({ data: data.findingDetails.data.size, errors: data.findingDetails.errors.size, loading: data.findingDetails.loadingRunIds.size })}</output>
+    <output data-testid="last-refresh">{data.lastSuccessfulRefreshAt?.toISOString() ?? 'none'}</output>
   </>
 }
 
-async function settle() { await act(async () => { await Promise.resolve(); await Promise.resolve(); await Promise.resolve() }) }
+async function settle() {
+  await act(async () => {
+    for (let index = 0; index < 8; index += 1) await Promise.resolve()
+  })
+}
 
 afterEach(() => { vi.clearAllMocks(); vi.useRealTimers() })
 
@@ -61,6 +66,42 @@ describe('useOverviewData', () => {
 
     expect(screen.getByTestId('definitions').textContent).toBe('{"data":1,"error":false}')
     expect(screen.getByTestId('runs').textContent).toBe('{"data":null,"error":true}')
+  })
+
+  it('records successful definition and run-history receipts with an injected clock, including polling', async () => {
+    vi.useFakeTimers()
+    const timestamps = [
+      new Date('2026-09-10T11:00:01Z'),
+      new Date('2026-09-10T11:00:02Z'),
+      new Date('2026-09-10T11:00:03Z'),
+    ]
+    const now = vi.fn(() => timestamps.shift()!)
+    const active = run('active', 'running')
+    api.listObservations.mockResolvedValueOnce([observation('observation')]).mockRejectedValueOnce(new Error('definitions offline'))
+    api.listObservationRuns
+      .mockRejectedValueOnce(new Error('history offline'))
+      .mockResolvedValueOnce([active])
+      .mockResolvedValueOnce([active])
+      .mockRejectedValueOnce(new Error('history offline'))
+
+    render(<Harness now={now} />)
+    await settle()
+    expect(screen.getByTestId('last-refresh').textContent).toBe('2026-09-10T11:00:01.000Z')
+
+    await act(async () => { screen.getByRole('button', { name: 'Refresh' }).click(); await Promise.resolve(); await Promise.resolve() })
+    await settle()
+    expect(screen.getByTestId('last-refresh').textContent).toBe('2026-09-10T11:00:02.000Z')
+    expect(vi.getTimerCount()).toBe(1)
+
+    await act(async () => { await vi.advanceTimersByTimeAsync(5_000) })
+    await settle()
+    expect(api.listObservationRuns).toHaveBeenCalledTimes(3)
+    expect(screen.getByTestId('last-refresh').textContent).toBe('2026-09-10T11:00:03.000Z')
+
+    await act(async () => { await vi.advanceTimersByTimeAsync(5_000) })
+    await settle()
+    expect(screen.getByTestId('last-refresh').textContent).toBe('2026-09-10T11:00:03.000Z')
+    expect(now).toHaveBeenCalledTimes(3)
   })
 
   it('preserves stale history and prevents a terminal row regressing to running', async () => {

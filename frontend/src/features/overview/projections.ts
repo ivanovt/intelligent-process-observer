@@ -5,6 +5,8 @@ import type { AnalyticalState, ExecutionStatus, ObservationRunDetail, Observatio
 export interface OverviewSummaryCounts {
   readonly configuredObservations: number
   readonly activeObservations: number
+  readonly observationsWithNoSignificantFindings: number
+  readonly observationsWithUncertainAnalysis: number
   readonly observationsWithSignificantFindings: number
   readonly observationsWithFailedExecution: number
 }
@@ -48,6 +50,8 @@ export function selectLatestRun(observationId: string, runs: readonly Observatio
 /** Derives independent current-state counts from each configured Observation's latest run. */
 export function projectSummaryCounts(definitions: readonly ObservationSummary[], runs: readonly ObservationRunSummary[]): OverviewSummaryCounts {
   let activeObservations = 0
+  let observationsWithNoSignificantFindings = 0
+  let observationsWithUncertainAnalysis = 0
   let observationsWithSignificantFindings = 0
   let observationsWithFailedExecution = 0
 
@@ -55,6 +59,8 @@ export function projectSummaryCounts(definitions: readonly ObservationSummary[],
     const latestRun = selectLatestRun(definition.id, runs)
     if (latestRun === null) continue
     if (latestRun.status === 'pending' || latestRun.status === 'running') activeObservations += 1
+    if (latestRun.analytical_state === 'no_significant_findings') observationsWithNoSignificantFindings += 1
+    if (latestRun.analytical_state === 'uncertain') observationsWithUncertainAnalysis += 1
     if (latestRun.analytical_state === 'significant_findings_present') observationsWithSignificantFindings += 1
     if (latestRun.status === 'failed') observationsWithFailedExecution += 1
   }
@@ -62,6 +68,8 @@ export function projectSummaryCounts(definitions: readonly ObservationSummary[],
   return {
     configuredObservations: definitions.length,
     activeObservations,
+    observationsWithNoSignificantFindings,
+    observationsWithUncertainAnalysis,
     observationsWithSignificantFindings,
     observationsWithFailedExecution,
   }
@@ -89,6 +97,16 @@ export function projectObservationRows(definitions: readonly ObservationSummary[
       return Date.parse(right.latestRun.created_at) - Date.parse(left.latestRun.created_at)
     })
     .map((row) => ({ observation: row.observation, latestRun: row.latestRun, recentRuns: row.recentRuns }))
+}
+
+/** Filters already projected Observation rows without changing their monitoring order. */
+export function filterObservationRows(rows: readonly OverviewObservationRow[], query: string): readonly OverviewObservationRow[] {
+  const normalizedQuery = query.trim().toLocaleLowerCase()
+  if (normalizedQuery === '') return rows
+  return rows.filter(({ observation }) =>
+    observation.name.toLocaleLowerCase().includes(normalizedQuery)
+    || (observation.description ?? '').toLocaleLowerCase().includes(normalizedQuery),
+  )
 }
 
 /** Selects at most five newest summaries with an available analytical-state artifact. */

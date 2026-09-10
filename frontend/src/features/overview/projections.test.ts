@@ -1,10 +1,10 @@
 import { describe, expect, it } from 'vitest'
 import type { ObservationSummary } from '../observations/types'
 import type { ObservationRunDetail, ObservationRunSummary } from '../runs/types'
-import { projectObservationRows, projectRecentFindings, projectRunActivity, projectSummaryCounts, selectFindingCandidates, selectLatestRun } from './projections'
+import { filterObservationRows, projectObservationRows, projectRecentFindings, projectRunActivity, projectSummaryCounts, selectFindingCandidates, selectLatestRun } from './projections'
 
-function observation(id: string, name = id): ObservationSummary {
-  return { id, name, description: null, objective: 'Observe', schema_version: 1, lenses: [], alert_lenses: [], relationships: [], href: `/api/v1/observations/${id}` }
+function observation(id: string, name = id, description: string | null = null): ObservationSummary {
+  return { id, name, description, objective: 'Observe', schema_version: 1, lenses: [], alert_lenses: [], relationships: [], href: `/api/v1/observations/${id}` }
 }
 
 function run(id: string, observationId: string, status: ObservationRunSummary['status'], analyticalState: ObservationRunSummary['analytical_state'], createdAt: string): ObservationRunSummary {
@@ -41,17 +41,21 @@ function detail(summary: ObservationRunSummary, statements: readonly string[]): 
 }
 
 describe('Overview projections', () => {
-  it('keeps active, significant, and failed counts independent for mixed latest states', () => {
-    const definitions = ['active', 'failed-significant', 'cancelled', 'never'].map((id) => observation(id))
+  it('keeps every analytical state, active work, and failed execution independent', () => {
+    const definitions = ['active', 'failed-significant', 'cancelled', 'no-findings', 'unavailable', 'never'].map((id) => observation(id))
     const runs = [
       run('active-run', 'active', 'running', null, '2026-09-10T14:00:00Z'),
       run('failed-run', 'failed-significant', 'failed', 'significant_findings_present', '2026-09-10T13:00:00Z'),
       run('cancelled-run', 'cancelled', 'cancelled', 'uncertain', '2026-09-10T12:00:00Z'),
+      run('no-findings-run', 'no-findings', 'completed', 'no_significant_findings', '2026-09-10T11:00:00Z'),
+      run('unavailable-run', 'unavailable', 'completed', null, '2026-09-10T10:00:00Z'),
     ]
 
     expect(projectSummaryCounts(definitions, runs)).toEqual({
-      configuredObservations: 4,
+      configuredObservations: 6,
       activeObservations: 1,
+      observationsWithNoSignificantFindings: 1,
+      observationsWithUncertainAnalysis: 1,
       observationsWithSignificantFindings: 1,
       observationsWithFailedExecution: 1,
     })
@@ -67,6 +71,23 @@ describe('Overview projections', () => {
     expect(rows[1]?.recentRuns.map((item) => item.id)).toEqual(['older-0', 'older-1', 'older-2', 'older-3', 'older-4', 'older-5', 'older-6'])
     expect(rows[2]?.latestRun).toBeNull()
     expect(selectLatestRun('missing', [newest])).toBeNull()
+  })
+
+  it('filters rows by trimmed case-insensitive name or description without changing order', () => {
+    const rows = projectObservationRows(
+      [
+        observation('alpha', 'Alpha pressure', 'Primary loop'),
+        observation('beta', 'Beta', 'Contains PRESSURE history'),
+        observation('gamma', 'Gamma'),
+      ],
+      [],
+    )
+
+    expect(filterObservationRows(rows, ' pressure ').map((row) => row.observation.id)).toEqual(['alpha', 'beta'])
+    expect(filterObservationRows(rows, 'GAMMA').map((row) => row.observation.id)).toEqual(['gamma'])
+    expect(filterObservationRows(rows, '').map((row) => row.observation.id)).toEqual(['alpha', 'beta', 'gamma'])
+    expect(filterObservationRows(rows, '   ')).toBe(rows)
+    expect(filterObservationRows(rows, 'no match')).toEqual([])
   })
 
   it('bounds analyzed candidates, preserves their order, and surfaces only Observation findings', () => {
