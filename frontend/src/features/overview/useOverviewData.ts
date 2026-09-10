@@ -44,13 +44,15 @@ export function useOverviewData(): OverviewDataCoordinator {
   const findingCandidates = useMemo(() => selectFindingCandidates(runHistoryState.data ?? []), [runHistoryState.data])
   const candidateKey = findingCandidates.map(({ run }) => run.id).join(',')
   const cache = useRef(new Map<string, ObservationRunDetail>())
+  const detailErrors = useRef(new Set<string>())
   const [findingDetails, setFindingDetails] = useState<OverviewFindingDetailState>(emptyDetails)
   const [detailRefreshNonce, setDetailRefreshNonce] = useState(0)
 
   useEffect(() => {
     const controller = new AbortController()
     const candidateIds = new Set(candidateKey === '' ? [] : candidateKey.split(','))
-    const pendingRunIds = [...candidateIds].filter((runId) => !cache.current.has(runId))
+    detailErrors.current = new Set([...detailErrors.current].filter((runId) => candidateIds.has(runId) && !cache.current.has(runId)))
+    const pendingRunIds = [...candidateIds].filter((runId) => !cache.current.has(runId) && (detailRefreshNonce > 0 || !detailErrors.current.has(runId)))
     setFindingDetails((previous) => ({
       data: new Map([...cache.current].filter(([runId]) => candidateIds.has(runId))),
       errors: new Map([...previous.errors].filter(([runId]) => candidateIds.has(runId) && !cache.current.has(runId))),
@@ -76,8 +78,10 @@ export function useOverviewData(): OverviewDataCoordinator {
           if (result.detail !== null) {
             data.set(result.runId, result.detail)
             errors.delete(result.runId)
+            detailErrors.current.delete(result.runId)
           } else {
             errors.set(result.runId, result.error)
+            detailErrors.current.add(result.runId)
           }
         }
         return { data, errors, loadingRunIds: new Set() }

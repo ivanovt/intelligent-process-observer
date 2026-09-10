@@ -1,9 +1,9 @@
-import { ArrowRight } from 'lucide-react'
+import { ArrowRight, RefreshCw } from 'lucide-react'
 import { Link } from 'react-router-dom'
 import type { ReactNode } from 'react'
 import { AnalyticalStateBadge, ExecutionStatusBadge } from '../../components/domain/RunStatusBadges'
 import { RunActivityChart } from '../../components/charts/RunActivityChart'
-import { PageHeader } from '../../components/ui'
+import { Button, InlineNotice, PageHeader } from '../../components/ui'
 import type { ObservationSummary } from '../observations/types'
 import type { ObservationRunSummary } from '../runs/types'
 import { projectObservationRows, projectRecentFindings, projectRunActivity, projectSummaryCounts, type OverviewObservationRow } from './projections'
@@ -30,7 +30,13 @@ export function OverviewContent({ data }: { data: OverviewDataCoordinator }) {
 
   return (
     <section className="mx-auto max-w-6xl">
-      <PageHeader eyebrow="Monitoring" title="Overview" description="Review durable Observation execution and analytical state without conflating them." />
+      <PageHeader
+        eyebrow="Monitoring"
+        title="Overview"
+        description="Review durable Observation execution and analytical state without conflating them."
+        actions={<Button type="button" variant="secondary" onClick={data.refresh} disabled={data.definitions.loading || data.runHistory.loading}><RefreshCw size={16} aria-hidden="true" />Refresh</Button>}
+      />
+      <OverviewFeedback data={data} />
       <SummaryCards configuredCount={hasDefinitions ? definitions.length : null} summary={summary} />
       <ObservationList hasDefinitions={hasDefinitions} hasRunHistory={hasRunHistory} rows={rows} />
       <div className="mt-6 grid gap-6 xl:grid-cols-2">
@@ -39,6 +45,21 @@ export function OverviewContent({ data }: { data: OverviewDataCoordinator }) {
       </div>
     </section>
   )
+}
+
+function OverviewFeedback({ data }: { data: OverviewDataCoordinator }) {
+  const definitionUnavailable = data.definitions.data === null && data.definitions.error !== null
+  const historyUnavailable = data.runHistory.data === null && data.runHistory.error !== null
+  const stale = (data.definitions.data !== null && data.definitions.error !== null) || (data.runHistory.data !== null && data.runHistory.error !== null)
+  const loading = data.definitions.loading || data.runHistory.loading
+  const refreshing = data.definitions.refreshing || data.runHistory.refreshing
+
+  if (definitionUnavailable && historyUnavailable) return <InlineNotice tone="error">Unable to load Overview monitoring data. <button type="button" className="font-semibold underline underline-offset-2" onClick={data.refresh}>Retry</button></InlineNotice>
+  if (definitionUnavailable || historyUnavailable) return <InlineNotice tone="warning">Some monitoring data is unavailable. Successful sections remain visible. <button type="button" className="font-semibold underline underline-offset-2" onClick={data.refresh}>Retry</button></InlineNotice>
+  if (stale) return <InlineNotice tone="warning">Some monitoring data is stale. Last successful data remains visible. <button type="button" className="font-semibold underline underline-offset-2" onClick={data.refresh}>Retry</button></InlineNotice>
+  if (loading) return <InlineNotice>Loading monitoring data. Successful sources will appear as soon as they are available.</InlineNotice>
+  if (refreshing) return <InlineNotice>Refreshing monitoring data. Displayed values remain available while the refresh completes.</InlineNotice>
+  return null
 }
 
 function SummaryCards({ configuredCount, summary }: { configuredCount: number | null; summary: ReturnType<typeof projectSummaryCounts> | null }) {

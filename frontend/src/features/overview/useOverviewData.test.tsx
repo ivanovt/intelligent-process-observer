@@ -88,6 +88,20 @@ describe('useOverviewData', () => {
     expect(screen.getByTestId('details').textContent).toBe('{"data":1,"errors":1,"loading":0}')
   })
 
+  it('retries a failed bounded detail request through the manual refresh action', async () => {
+    const analyzed = run('analyzed', 'completed', 'uncertain')
+    api.listObservations.mockResolvedValue([observation('observation')])
+    api.listObservationRuns.mockResolvedValue([analyzed])
+    api.getObservationRun.mockRejectedValueOnce(new Error('detail offline')).mockResolvedValueOnce(detail(analyzed))
+    render(<Harness />)
+    await settle()
+
+    expect(screen.getByTestId('details').textContent).toBe('{"data":0,"errors":1,"loading":0}')
+    await act(async () => { screen.getByRole('button', { name: 'Refresh' }).click(); await Promise.resolve(); await Promise.resolve(); await Promise.resolve() })
+    expect(screen.getByTestId('details').textContent).toBe('{"data":1,"errors":0,"loading":0}')
+    expect(api.getObservationRun).toHaveBeenCalledTimes(2)
+  })
+
   it('cancels superseded detail requests and reuses a successful stable-ID detail cache', async () => {
     const first = run('first', 'completed', 'uncertain')
     const second = run('second', 'completed', 'uncertain')
