@@ -56,10 +56,15 @@ describe('Overview application integration', () => {
     expect(await screen.findByRole('heading', { name: 'Definition not found' })).toBeTruthy()
     view.unmount()
 
-    renderAt('/overview')
+    const overviewView = renderAt('/overview')
     await screen.findByRole('link', { name: 'Open latest run cooling-run' })
     await userEvent.click(screen.getByRole('link', { name: 'Open latest run cooling-run' }))
     expect(await screen.findByRole('heading', { name: 'Run detail' })).toBeTruthy()
+    overviewView.unmount()
+
+    renderAt('/unknown-route')
+    expect(await screen.findByRole('heading', { name: 'Observations' })).toBeTruthy()
+    expect(screen.getByRole('link', { name: 'Observations' }).getAttribute('aria-current')).toBe('page')
   })
 
   it('keeps each successful source visible through partial failure, supports retry, and never makes a mutation request', async () => {
