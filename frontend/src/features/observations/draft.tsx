@@ -11,11 +11,11 @@ const blank=():ObservationDraft=>({name:'',description:'',objective:'',lenses:[]
 const MAX_CHILD_ID_LENGTH=255
 export type ObservationChildKind='metric'|'alert'|'relationship'
 /** Generates one stable, contract-safe ID for an aggregate-owned Observation child. */
-export function generateObservationChildId(name:string,kind:ObservationChildKind,siblingIds:readonly string[],generationTimeMilliseconds:number):string {
+export function generateObservationChildId(name:string,kind:ObservationChildKind,siblingIds:readonly string[],randomUuid=crypto.randomUUID()):string {
  const normalized=name.normalize('NFKD').replace(/\p{M}+/gu,'').toLowerCase().replace(/[^a-z0-9]+/g,'_').replace(/^_+|_+$/g,'')
- const prefix=/^[a-z]/.test(normalized)?normalized:kind,timestamp=Math.trunc(generationTimeMilliseconds).toString(36).toLowerCase(),used=new Set(siblingIds)
+ const typePrefix={metric:'metr',alert:'alrt',relationship:'rel'}[kind],nameSegment=/^[a-z]/.test(normalized)?normalized:'item',randomPart=randomUuid.replace(/-/g,'').toLowerCase().slice(0,8),used=new Set(siblingIds)
  let discriminator=1
- while(true){const collisionSuffix=discriminator===1?'':`_${discriminator}`,prefixLength=MAX_CHILD_ID_LENGTH-1-timestamp.length-collisionSuffix.length,candidate=`${prefix.slice(0,prefixLength)}_${timestamp}${collisionSuffix}`;if(!used.has(candidate))return candidate;discriminator+=1}
+ while(true){const collisionSuffix=discriminator===1?'':`_${discriminator}`,nameLength=MAX_CHILD_ID_LENGTH-typePrefix.length-randomPart.length-collisionSuffix.length-2,candidate=`${typePrefix}_${nameSegment.slice(0,nameLength)}_${randomPart}${collisionSuffix}`;if(!used.has(candidate))return candidate;discriminator+=1}
 }
 type Action={type:'fresh'}|{type:'general';value:Pick<ObservationDraft,'name'|'description'|'objective'>}|{type:'upsert-alert';value:DraftAlert;key:'new'|string}|{type:'upsert-metric';value:DraftMetric;key:'new'|string}|{type:'upsert-relationship';value:DraftRelationship;key:'new'|string}|{type:'clear'}
 function replaceAtKey<T extends {clientKey:string}>(items:T[],value:T,key:string):T[] { if(key==='new')return [...items,value];const index=items.findIndex(item=>item.clientKey===key);return index<0?items:items.map((item,i)=>i===index?value:item) }

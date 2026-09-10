@@ -1,14 +1,14 @@
-# UI Implementation Handoff — v1.4
+# UI Implementation Handoff — v1.5
 
 **Project:** ObserveAI / Master Thesis
-**Status:** Accepted living major-v1 implementation handoff for MVP UI Direction v1.4
-**Date:** 2026-09-09
+**Status:** Accepted living major-v1 implementation handoff for MVP UI Direction v1.5
+**Date:** 2026-09-10
 
 ## 1. Purpose
 
 This document translates the accepted current UI direction into implementation-oriented rules for the MVP frontend.
 
-UI Direction v1.4 includes the original monitoring/investigation experience, global run management, Observation Management configuration UX, and read-only Data Sources visibility. It retains v1.3 child identifier behavior, adds the global Runs history/launch screen, and makes the existing Observation Run Summary the initial routable run-detail foundation. The frontend must preserve the architecture's semantic boundaries and must not invent new product-level classifications, lifecycle semantics, or administrative capabilities that are not supported by accepted backend contracts.
+UI Direction v1.5 includes the original monitoring/investigation experience, global run management, Observation Management configuration UX, and read-only Data Sources visibility. It refines UI-generated Observation-child identity to typed, compact metadata beside Name while retaining the global Runs history/launch screen and the initial routable run-detail foundation. The frontend must preserve the architecture's semantic boundaries and must not invent new product-level classifications, lifecycle semantics, or administrative capabilities that are not supported by accepted backend contracts.
 
 ## 2. Accepted frontend visual stack
 
@@ -48,7 +48,7 @@ https://magicpath.ai/files/447597481925181440
 
 MagicPath can inform look and feel but does not require 1:1 parity or canvas synchronization for an approved implementation. It is not permission to invent API fields or backend lifecycle operations. Accepted architecture/contracts remain authoritative for domain semantics.
 
-## 4. Screen set — v1.4
+## 4. Screen set — v1.5
 
 ### Monitoring and investigation
 
@@ -316,7 +316,7 @@ Show evidence coverage, Relationship evidence, limitations, findings, possible e
 ### Report
 
 Presentation-focused document view with Copy Markdown. File/PDF export remains a later
-versioned refinement and is not required by the v1.4 run-detail foundation.
+versioned refinement and is not required by the initial run-detail foundation.
 
 ### Runs History and Launch
 
@@ -369,7 +369,7 @@ Analysis
 Report
 ```
 
-This v1.4 detail is a semantic foundation, not final visual refinement. It shows every
+This initial detail is a semantic foundation, not final visual refinement. It shows every
 available durable artifact in its correct domain section, explains missing/not-yet-
 produced artifacts, and never collapses findings into hypotheses, evidence into
 knowledge, or execution failure into analytical significance.
@@ -503,14 +503,23 @@ Do not implement standalone Lens persistence merely because a nested editor has 
 ### Generated child identity
 
 New Metric Lens, Alert Lens, and Relationship editors generate their public-contract
-ID once when the user leaves the initial non-empty name field. The generated ID uses a
-normalized readable name prefix plus a compact timestamp component, remains within the
-255-character persistence boundary, and is shown in a read-only, focusable control.
+ID once when the user leaves the initial non-empty Name field. Each new ID has the exact
+composition `<metr|alrt|rel>_<normalized-name>_<8 lowercase hex random>`: Metric Lens
+uses `metr`, Alert Lens uses `alrt`, and Relationship uses `rel`; the random part is
+eight lowercase hexadecimal characters from browser-provided randomness. The ID remains
+within the 255-character persistence boundary and public identifier grammar.
 
-After generation, later name changes do not change the ID. Reopening an applied draft
-child preserves its ID. Generation remains editor-local until `Apply changes`; Cancel
-does not mutate the aggregate draft. Metric and Alert collision checks remain type-local,
-while Relationship IDs remain unique within their own collection.
+Before generation, Name guidance explains that a non-empty name generates the ID on
+leaving the field. Once generated or when reopening a child with an existing ID, show
+the value as compact, secondary, selectable `(id: <value>)` text adjacent to Name. It
+must be exposed to assistive technology and must not be a separate input or another
+editable/focusable form control. After generation, later name changes do not change the
+ID. Reopening an applied draft or persisted child preserves its ID exactly, including a
+legacy ID that does not use the typed format. Generation remains editor-local until
+`Apply changes`; Cancel does not mutate the aggregate draft. Metric and Alert collision
+checks remain type-local, while Relationship IDs remain unique within their own
+collection. This UI-only refinement does not tighten backend identifier grammar, alter
+aggregate ownership, or add standalone Lens or Relationship API boundaries.
 
 ### Metric Lens Configuration
 
@@ -712,7 +721,7 @@ If `add-observation-management-ui` is the first frontend OpenSpec change, it may
 
 ## 15. Versioning and change-control rule
 
-**UI Direction v1.4 is the accepted current direction.**
+**UI Direction v1.5 is the accepted current direction.**
 
 Implementation may make minor technical adjustments for responsive fit, accessibility, browser behavior, real data length and actual API constraints, but must not silently change:
 
