@@ -6,9 +6,9 @@
 
 ## 2. Monitoring Interface
 
-- [ ] 2.1 Implement the Overview page header, four independent summary cards, responsive Observation list, explicit never-run/runtime-unavailable states, and definition/latest-run navigation; verify component tests assert exact counts, semantic badges, seven accessible history markers, ordering, and links for mixed monitoring data.
-- [ ] 2.2 Implement Recent Findings from Observation-level run-detail artifacts only, including bounded empty and incomplete states; verify component tests prove that hypotheses, Lens-local findings, reports, and execution failures are not promoted into findings and that each displayed finding links to its owning run.
-- [ ] 2.3 Implement project-owned `RunActivityChart` over Recharts with exact execution-state tokens, chronological data, a text legend, an accessible status-count summary, empty state, and Runs-history link; verify focused tests cover all five execution statuses, the fourteen-run bound, non-visual labels, and absence of analytical-state inference.
+- [x] 2.1 Implement the Overview page header, four independent summary cards, responsive Observation list, explicit never-run/runtime-unavailable states, and definition/latest-run navigation; verify component tests assert exact counts, semantic badges, seven accessible history markers, ordering, and links for mixed monitoring data.
+- [x] 2.2 Implement Recent Findings from Observation-level run-detail artifacts only, including bounded empty and incomplete states; verify component tests prove that hypotheses, Lens-local findings, reports, and execution failures are not promoted into findings and that each displayed finding links to its owning run.
+- [x] 2.3 Implement project-owned `RunActivityChart` over Recharts with exact execution-state tokens, chronological data, a text legend, an accessible status-count summary, empty state, and Runs-history link; verify focused tests cover all five execution statuses, the fourteen-run bound, non-visual labels, and absence of analytical-state inference.
 
 ## 3. Routing, Refresh, and Integration
 
