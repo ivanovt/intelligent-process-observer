@@ -24,8 +24,8 @@ const runs: readonly ObservationRunSummary[] = [
   run('run-previous-7', 'observation-a', 'Cooling system', 'completed', null, '2026-09-09T04:00:00Z'),
 ]
 
-function run(id: string, observationId: string, name: string, status: ObservationRunSummary['status'], analyticalState: ObservationRunSummary['analytical_state'], createdAt: string): ObservationRunSummary {
-  return { id, observation: { id: observationId, name }, analysis_window: { from: createdAt, to: createdAt }, status, reason: null, analytical_state: analyticalState, created_at: createdAt, started_at: createdAt, finished_at: status === 'running' ? null : createdAt, duration_seconds: status === 'running' ? null : 60, href: `/api/v1/observation-runs/${id}` }
+function run(id: string, observationId: string, name: string, status: ObservationRunSummary['status'], analyticalState: ObservationRunSummary['analytical_state'], createdAt: string, durationSeconds: number | null = status === 'running' ? null : 60): ObservationRunSummary {
+  return { id, observation: { id: observationId, name }, analysis_window: { from: createdAt, to: createdAt }, status, reason: null, analytical_state: analyticalState, created_at: createdAt, started_at: createdAt, finished_at: status === 'running' ? null : createdAt, duration_seconds: durationSeconds, href: `/api/v1/observation-runs/${id}` }
 }
 
 function source<T>(data: T | null, error: unknown = null): OverviewSourceState<T> {
@@ -59,6 +59,14 @@ function renderOverview(data = coordinator()) {
 }
 
 describe('OverviewContent', () => {
+  it('labels an active latest run as in progress even when its summary includes elapsed duration', () => {
+    const activeWithElapsedDuration = run('elapsed-running', 'observation-b', 'Feed pump', 'running', null, '2026-09-09T13:00:00Z', 125)
+    renderOverview(coordinator({ runHistory: source([activeWithElapsedDuration]) }))
+
+    expect(screen.getByText('In progress')).toBeTruthy()
+    expect(screen.queryByText('2m 5s')).toBeNull()
+  })
+
   it('shows independent mixed-state summary counts, ordered rows, semantic badges, seven accessible history markers, and stable navigation', () => {
     renderOverview()
 

@@ -155,7 +155,8 @@ function formatDate(value: string) {
 }
 
 function formatDuration(run: ObservationRunSummary) {
-  if (run.duration_seconds === null) return run.status === 'pending' || run.status === 'running' ? 'In progress' : 'Unavailable'
+  if (run.status === 'pending' || run.status === 'running') return 'In progress'
+  if (run.duration_seconds === null) return 'Unavailable'
   if (run.duration_seconds < 60) return `${Math.round(run.duration_seconds)}s`
   return `${Math.floor(run.duration_seconds / 60)}m ${Math.round(run.duration_seconds % 60)}s`
 }
