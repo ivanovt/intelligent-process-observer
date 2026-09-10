@@ -40,6 +40,10 @@ export function RunActivityChart({ activity }: { activity: readonly RunActivityI
         <ul aria-label="Execution status legend" className="mt-4 flex flex-wrap gap-x-4 gap-y-2 text-sm">
           {executionStatuses.map((status) => <li key={status} className="inline-flex items-center gap-2"><span aria-hidden="true" className="h-2.5 w-2.5 rounded-full" style={{ backgroundColor: statusPresentation[status].color }} />{statusPresentation[status].label}</li>)}
         </ul>
+        <div aria-label="Run activity counts" className="mt-4 flex flex-wrap gap-2 text-xs">
+          <span className="rounded-full border border-[var(--color-border)] bg-[var(--color-surface-muted)] px-2 py-1 font-semibold">{displayedActivity.length} represented runs</span>
+          {executionStatuses.map((status) => <span key={status} className="rounded-full border border-[var(--color-border)] bg-[var(--color-surface)] px-2 py-1"><span className="font-semibold">{statusPresentation[status].label}</span> {counts[status]}</span>)}
+        </div>
         <p className="sr-only">Run activity status counts: {executionStatuses.map((status) => `${statusPresentation[status].label}: ${counts[status]}`).join('; ')}.</p>
         <ol className="sr-only" aria-label="Chronological run activity">{displayedActivity.map((item) => <li key={item.observationRunId}>{formatActivityTime(item.createdAt)}: execution status {item.status}</li>)}</ol>
         <div className="mt-4 h-64" role="img" aria-label="Run activity chart showing exact ObservationRun execution statuses">

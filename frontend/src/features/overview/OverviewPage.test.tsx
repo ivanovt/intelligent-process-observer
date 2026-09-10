@@ -1,4 +1,5 @@
 import { render, screen, within } from '@testing-library/react'
+import userEvent from '@testing-library/user-event'
 import { MemoryRouter } from 'react-router-dom'
 import { describe, expect, it } from 'vitest'
 import { OverviewContent } from './OverviewPage'
@@ -72,10 +73,12 @@ describe('OverviewContent', () => {
     renderOverview()
 
     const summary = screen.getByLabelText('Overview summary')
-    expect(within(summary).getByText('Configured Observations').parentElement?.textContent).toContain('3')
-    expect(within(summary).getByText('Active Observations').parentElement?.textContent).toContain('1')
-    expect(within(summary).getByText('Significant findings').parentElement?.textContent).toContain('1')
-    expect(within(summary).getByText('Failed executions').parentElement?.textContent).toContain('1')
+    expect(summary.textContent).toContain('Configured Observations3')
+    expect(summary.textContent).toContain('Active Observations1')
+    expect(summary.textContent).toContain('No significant findings0')
+    expect(summary.textContent).toContain('Uncertain analysis0')
+    expect(summary.textContent).toContain('Significant findings1')
+    expect(summary.textContent).toContain('Failed executions1')
     const list = screen.getByRole('list', { name: 'Observations' })
     expect(list.textContent).toMatch(/Cooling system[\s\S]*Feed pump[\s\S]*Never run/)
     expect(screen.getByLabelText('Execution status: Failed')).toBeTruthy()
@@ -104,6 +107,13 @@ describe('OverviewContent', () => {
     expect(screen.getByText('Runtime data is unavailable. Observation definitions remain visible below.')).toBeTruthy()
     expect(screen.getAllByText('Runtime unavailable')).toHaveLength(3)
     expect(screen.queryByText('Not run yet')).toBeNull()
+    const summary = screen.getByLabelText('Overview summary')
+    expect(summary.textContent).toContain('Configured Observations3')
+    expect(summary.textContent).toContain('Active ObservationsUnavailable')
+    expect(summary.textContent).toContain('No significant findingsUnavailable')
+    expect(summary.textContent).toContain('Uncertain analysisUnavailable')
+    expect(summary.textContent).toContain('Significant findingsUnavailable')
+    expect(summary.textContent).toContain('Failed executionsUnavailable')
     expect(screen.getByText('Recent Findings are unavailable because run history is unavailable.')).toBeTruthy()
     expect(screen.getByText('Run Activity is unavailable because run history is unavailable.')).toBeTruthy()
   })
@@ -117,5 +127,47 @@ describe('OverviewContent', () => {
     expect(screen.getByText('Recent Findings are incomplete because one or more eligible run details could not be loaded.')).toBeTruthy()
     expect(screen.getByText('Persisted Observation finding.')).toBeTruthy()
     expect(screen.queryByText('No findings are present in the five latest analyzed runs.')).toBeNull()
+  })
+
+  it('uses the wide primary grid, stacks the semantic sections in content order, and describes client receipt time honestly', () => {
+    const refreshTime = new Date('2026-09-10T12:34:00Z')
+    renderOverview(coordinator({ lastSuccessfulRefreshAt: refreshTime }))
+
+    expect(screen.getByTestId('overview-primary-grid').className).toContain('xl:grid-cols-')
+    expect(screen.getByTestId('observations-collection').compareDocumentPosition(screen.getByLabelText('Overview insights')) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
+    expect(screen.getByText(/Last refreshed locally at/)).toBeTruthy()
+    expect(screen.getByLabelText(/Last refresh was received by this client/)).toBeTruthy()
+    expect(screen.queryByText(/snapshot/i)).toBeNull()
+  })
+
+  it('filters only already-loaded Observation rows and restores them with the accessible clear action', async () => {
+    const user = userEvent.setup()
+    renderOverview()
+    const summaryBefore = screen.getByLabelText('Overview summary').textContent
+    await user.type(screen.getByRole('textbox', { name: 'Search Observations' }), '  feed ')
+
+    const list = screen.getByRole('list', { name: 'Observations' })
+    expect(list.textContent).toContain('Feed pump')
+    expect(list.textContent).not.toContain('Cooling system')
+    expect(screen.getByText('Persisted Observation finding.')).toBeTruthy()
+    expect(screen.getByLabelText('Overview summary').textContent).toBe(summaryBefore)
+
+    await user.clear(screen.getByRole('textbox', { name: 'Search Observations' }))
+    await user.type(screen.getByRole('textbox', { name: 'Search Observations' }), 'no result')
+    expect(screen.getByText(/No Observations match/)).toBeTruthy()
+    await user.click(screen.getByRole('button', { name: 'Clear search' }))
+    expect(screen.getByRole('list', { name: 'Observations' }).textContent).toContain('Cooling system')
+  })
+
+  it('keeps all five exact recent-run markers focusable and distinguishes completed from cancelled without partial', () => {
+    const pending = run('run-pending', 'observation-a', 'Cooling system', 'pending', null, '2026-09-09T03:00:00Z', null)
+    renderOverview(coordinator({ runHistory: source([pending, ...runs]) }))
+
+    for (const status of ['pending', 'running', 'completed', 'failed', 'cancelled']) {
+      expect(screen.getAllByRole('button', { name: new RegExp(`Recent run: .*execution status ${status}`) }).length).toBeGreaterThan(0)
+    }
+    expect(screen.getAllByRole('button', { name: /execution status completed/ })[0]?.textContent).toBe('C')
+    expect(screen.getByRole('button', { name: /execution status cancelled/ }).textContent).toBe('X')
+    expect(screen.queryByRole('button', { name: /execution status partial/ })).toBeNull()
   })
 })

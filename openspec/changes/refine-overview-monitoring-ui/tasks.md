@@ -7,11 +7,11 @@
 
 ## 2. Dense Monitoring Workspace
 
-- [ ] 2.1 Refactor the Overview into a `max-w-7xl` responsive primary-grid composition with Observations beside the Recent Findings/Run Activity rail at wide widths and the required stacked order at narrow widths; verify component tests assert section order, desktop grid ownership, and preservation of all loading/empty/unavailable/stale sections.
-- [ ] 2.2 Implement the compact header and six-card responsive summary with semantic icons/tokens and last-refresh presentation; verify component tests assert exact labels/counts, independent unavailable values, failed-plus-analytical overlap, and honest refresh wording.
-- [ ] 2.3 Replace individually bordered Observation cards with a lightweight searchable semantic list using aligned desktop columns and compact narrow rows; verify tests cover column labels, row order, definition/latest-run links, runtime-unavailable and never-run labels, search/no-match/clear behavior, and that search leaves summary and rail content unchanged.
-- [ ] 2.4 Implement distinct focusable recent-run markers for all five ObservationRun statuses with keyboard-visible detail and accessible exact-state labels; verify completed and cancelled remain distinguishable without color and no unsupported `partial` marker is rendered.
-- [ ] 2.5 Refine the insights rail and Run Activity presentation with visible represented-total and exact pending/running/completed/failed/cancelled counts while retaining existing finding/activity bounds; verify tests prove true-finding-only content, additive incomplete feedback, fourteen-run count consistency, and absence of ObservationRun `partial`.
+- [x] 2.1 Refactor the Overview into a `max-w-7xl` responsive primary-grid composition with Observations beside the Recent Findings/Run Activity rail at wide widths and the required stacked order at narrow widths; verify component tests assert section order, desktop grid ownership, and preservation of all loading/empty/unavailable/stale sections.
+- [x] 2.2 Implement the compact header and six-card responsive summary with semantic icons/tokens and last-refresh presentation; verify component tests assert exact labels/counts, independent unavailable values, failed-plus-analytical overlap, and honest refresh wording.
+- [x] 2.3 Replace individually bordered Observation cards with a lightweight searchable semantic list using aligned desktop columns and compact narrow rows; verify tests cover column labels, row order, definition/latest-run links, runtime-unavailable and never-run labels, search/no-match/clear behavior, and that search leaves summary and rail content unchanged.
+- [x] 2.4 Implement distinct focusable recent-run markers for all five ObservationRun statuses with keyboard-visible detail and accessible exact-state labels; verify completed and cancelled remain distinguishable without color and no unsupported `partial` marker is rendered.
+- [x] 2.5 Refine the insights rail and Run Activity presentation with visible represented-total and exact pending/running/completed/failed/cancelled counts while retaining existing finding/activity bounds; verify tests prove true-finding-only content, additive incomplete feedback, fourteen-run count consistency, and absence of ObservationRun `partial`.
 
 ## 3. Integration and Quality
 
