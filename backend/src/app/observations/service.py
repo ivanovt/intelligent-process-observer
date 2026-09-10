@@ -20,6 +20,7 @@ from app.infrastructure.prometheus.adapter import (
     PrometheusQueryError,
     PrometheusTransportError,
 )
+from app.infrastructure.prometheus.configuration import is_safe_prometheus_target
 from app.infrastructure.prometheus.contracts import (
     PrometheusQueryAdapter,
     PrometheusRangeQueryResult,
@@ -83,10 +84,11 @@ class ObservationDefinitionService:
             )
         else:
             credentials = PrometheusBearerTokenCredentialProjection(type="bearer_token")
+        base_url = source.base_url if is_safe_prometheus_target(source.base_url) else None
         return PrometheusSourceConfiguration(
             id=source.id,
             name=source.name,
-            base_url=source.base_url,
+            base_url=base_url,
             credentials=credentials,
         )
 

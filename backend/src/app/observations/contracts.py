@@ -261,7 +261,7 @@ class PrometheusSourceConfiguration(ApiModel):
 
     id: str
     name: str
-    base_url: str
+    base_url: str | None = None
     credentials: PrometheusCredentialProjection
 
 

@@ -25,6 +25,7 @@ from app.infrastructure.prometheus.contracts import (
 from app.main import app
 from app.observations.api import get_service
 from app.observations.contracts import (
+    CapabilitySource,
     MetricPreflightRequest,
     ObservationCreate,
     PrometheusSourceConfiguration,
@@ -242,6 +243,27 @@ def test_prometheus_source_configuration_rejects_secret_credential_fields(
         )
 
 
+def test_capability_source_requires_a_typed_configuration_projection() -> None:
+    with pytest.raises(ValidationError):
+        CapabilitySource.model_validate({"id": "primary", "name": "Primary metrics"})
+
+
+def test_prometheus_source_configuration_omits_an_absent_base_url_when_serialized() -> None:
+    configuration = PrometheusSourceConfiguration.model_validate(
+        {
+            "id": "primary",
+            "name": "Primary metrics",
+            "credentials": {"type": "bearer_token"},
+        }
+    )
+
+    assert configuration.model_dump(exclude_none=True) == {
+        "id": "primary",
+        "name": "Primary metrics",
+        "credentials": {"type": "bearer_token"},
+    }
+
+
 def test_capabilities_api_serializes_exact_safe_bearer_and_basic_configurations(
     monkeypatch,
 ) -> None:
@@ -322,6 +344,73 @@ def test_capabilities_api_serializes_exact_safe_bearer_and_basic_configurations(
         '"password"',
         bearer_secret,
         basic_password,
+        "**********",
+        "Authorization",
+        "health",
+        "diagnostic",
+    ):
+        assert protected not in response.text
+
+
+@pytest.mark.parametrize(
+    "base_url",
+    [
+        "https://reader:embedded-password-sentinel@prometheus.example.test",
+        "https://prometheus.example.test/metrics?query-sentinel=1",
+        "https://prometheus.example.test/metrics#fragment-sentinel",
+        "https://",
+        "ftp://prometheus.example.test",
+        "https://prometheus.example.test/a//unsafe-path",
+    ],
+)
+def test_capabilities_api_omits_every_rejected_prometheus_target_from_real_http_response(
+    monkeypatch, base_url: str
+) -> None:
+    import app.observations.service as service_module
+
+    bearer_secret = "bearer-sentinel-secret"
+    settings = Settings(
+        prometheus_sources=[
+            PrometheusSourceSettings(
+                id="unsafe",
+                name="Unsafe metrics",
+                base_url=base_url,
+                credentials=BearerTokenCredentials(type="bearer_token", token=bearer_secret),
+            )
+        ]
+    )
+    monkeypatch.setattr(service_module, "get_settings", lambda: settings)
+    service = ObservationDefinitionService()
+
+    async def service_override() -> ObservationDefinitionService:
+        return service
+
+    async def request_capabilities() -> httpx.Response:
+        transport = httpx.ASGITransport(app=app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+            return await client.get("/api/v1/observation-definition-capabilities")
+
+    app.dependency_overrides[get_service] = service_override
+    try:
+        response = asyncio.run(request_capabilities())
+    finally:
+        app.dependency_overrides.clear()
+
+    assert response.status_code == 200
+    configuration = response.json()["metric"][0]["sources"][0]["configuration"]
+    assert configuration == {
+        "id": "unsafe",
+        "name": "Unsafe metrics",
+        "credentials": {"type": "bearer_token"},
+    }
+    for protected in (
+        base_url,
+        "embedded-password-sentinel",
+        "query-sentinel",
+        "fragment-sentinel",
+        bearer_secret,
+        '"token"',
+        '"password"',
         "**********",
         "Authorization",
         "health",
