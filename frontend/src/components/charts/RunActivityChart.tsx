@@ -13,6 +13,8 @@ const statusPresentation: Record<ExecutionStatus, { label: string; color: string
   cancelled: { label: 'Cancelled', color: 'var(--color-execution-cancelled)' },
 }
 
+const unavailablePresentation = { label: 'Unavailable', color: 'var(--color-text-secondary)' }
+
 /** Renders bounded chronological ObservationRun execution history without analytical-state inference. */
 export function RunActivityChart({ activity }: { activity: readonly RunActivityItem[] }) {
   const displayedActivity = [...activity].sort((left, right) => Date.parse(left.createdAt) - Date.parse(right.createdAt)).slice(-14)
@@ -24,7 +26,10 @@ export function RunActivityChart({ activity }: { activity: readonly RunActivityI
     completed: item.status === 'completed' ? 1 : 0,
     failed: item.status === 'failed' ? 1 : 0,
     cancelled: item.status === 'cancelled' ? 1 : 0,
+    unavailable: item.status === null ? 1 : 0,
   }))
+  const limitedCount = displayedActivity.filter((item) => item.availability === 'limited').length
+  const unavailableStatusCount = displayedActivity.filter((item) => item.status === null).length
 
   return (
     <section aria-labelledby="run-activity-heading" className="rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] p-5 shadow-xs">
@@ -39,13 +44,16 @@ export function RunActivityChart({ activity }: { activity: readonly RunActivityI
       {displayedActivity.length === 0 ? <p className="mt-5 rounded-lg border border-[var(--color-border)] bg-[var(--color-surface-muted)] px-4 py-3 text-sm text-[var(--color-text-secondary)]">No Observation runs exist yet.</p> : <>
         <ul aria-label="Execution status legend" className="mt-4 flex flex-wrap gap-x-4 gap-y-2 text-sm">
           {executionStatuses.map((status) => <li key={status} className="inline-flex items-center gap-2"><span aria-hidden="true" className="h-2.5 w-2.5 rounded-full" style={{ backgroundColor: statusPresentation[status].color }} />{statusPresentation[status].label}</li>)}
+          {unavailableStatusCount > 0 ? <li className="inline-flex items-center gap-2"><span aria-hidden="true" className="h-2.5 w-2.5 rounded-full" style={{ backgroundColor: unavailablePresentation.color }} />{unavailablePresentation.label}</li> : null}
         </ul>
         <div aria-label="Run activity counts" className="mt-4 flex flex-wrap gap-2 text-xs">
           <span className="rounded-full border border-[var(--color-border)] bg-[var(--color-surface-muted)] px-2 py-1 font-semibold">{displayedActivity.length} represented runs</span>
           {executionStatuses.map((status) => <span key={status} className="rounded-full border border-[var(--color-border)] bg-[var(--color-surface)] px-2 py-1"><span className="font-semibold">{statusPresentation[status].label}</span> {counts[status]}</span>)}
+          <span className="rounded-full border border-[var(--color-border)] bg-[var(--color-surface)] px-2 py-1"><span className="font-semibold">Limited</span> {limitedCount}</span>
+          {unavailableStatusCount > 0 ? <span className="rounded-full border border-[var(--color-border)] bg-[var(--color-surface-muted)] px-2 py-1"><span className="font-semibold">Unavailable status</span> {unavailableStatusCount}</span> : null}
         </div>
-        <p className="sr-only">Run activity status counts: {executionStatuses.map((status) => `${statusPresentation[status].label}: ${counts[status]}`).join('; ')}.</p>
-        <ol className="sr-only" aria-label="Chronological run activity">{displayedActivity.map((item) => <li key={item.observationRunId}>{formatActivityTime(item.createdAt)}: execution status {item.status}</li>)}</ol>
+        <p className="sr-only">Run activity status counts: {executionStatuses.map((status) => `${statusPresentation[status].label}: ${counts[status]}`).join('; ')}; Limited: {limitedCount}; Unavailable status: {unavailableStatusCount}.</p>
+        <ol className="sr-only" aria-label="Chronological run activity">{displayedActivity.map((item) => <li key={item.observationRunId}>{formatActivityTime(item.createdAt)}: {item.availability === 'limited' ? 'runtime data limited; ' : ''}execution status {item.status ?? 'unavailable'}</li>)}</ol>
         <div className="mt-4 h-64" role="img" aria-label="Run activity chart showing exact ObservationRun execution statuses">
           <ResponsiveContainer height="100%" width="100%">
             <BarChart data={chartData} margin={{ top: 8, right: 8, left: -24, bottom: 8 }}>
@@ -54,6 +62,7 @@ export function RunActivityChart({ activity }: { activity: readonly RunActivityI
               <YAxis allowDecimals={false} domain={[0, 1]} fontSize={12} tickCount={2} tickLine={false} />
               <Tooltip />
               {executionStatuses.map((status) => <Bar key={status} dataKey={status} fill={statusPresentation[status].color} name={statusPresentation[status].label} stackId="execution" />)}
+              <Bar dataKey="unavailable" fill={unavailablePresentation.color} name={unavailablePresentation.label} stackId="execution" />
             </BarChart>
           </ResponsiveContainer>
         </div>
@@ -63,7 +72,7 @@ export function RunActivityChart({ activity }: { activity: readonly RunActivityI
 }
 
 function countStatuses(activity: readonly RunActivityItem[]) {
-  return activity.reduce<Record<ExecutionStatus, number>>((counts, item) => ({ ...counts, [item.status]: counts[item.status] + 1 }), {
+  return activity.reduce<Record<ExecutionStatus, number>>((counts, item) => item.status === null ? counts : ({ ...counts, [item.status]: counts[item.status] + 1 }), {
     pending: 0,
     running: 0,
     completed: 0,

@@ -6,10 +6,11 @@ import { OverviewContent } from './OverviewPage'
 import type { OverviewDataCoordinator, OverviewSourceState } from './useOverviewData'
 import type { ObservationSummary } from '../observations/types'
 import type { ObservationRunDetail, ObservationRunSummary } from '../runs/types'
+import type { OverviewRuntimeFeed, OverviewRuntimeItem } from './types'
 
 const definitions: readonly ObservationSummary[] = [
-  { id: 'observation-a', name: 'Cooling system', description: 'Cooling process monitoring.', objective: 'Observe cooling', schema_version: 1, lenses: [], alert_lenses: [], relationships: [], href: '/api/v1/observations/observation-a' },
-  { id: 'observation-b', name: 'Feed pump', description: null, objective: 'Observe feed', schema_version: 1, lenses: [], alert_lenses: [], relationships: [], href: '/api/v1/observations/observation-b' },
+  { id: 'observation-a', name: 'Cooling system', description: 'Cooling process monitoring.', objective: 'Observe cooling', schema_version: 1, lenses: [{ id: 'metric', name: 'Temperature', type: 'metric', href: '/metric' }], alert_lenses: [], relationships: [], href: '/api/v1/observations/observation-a' },
+  { id: 'observation-b', name: 'Feed pump', description: null, objective: 'Observe feed', schema_version: 1, lenses: [], alert_lenses: [{ id: 'alert', name: 'Pump alert', type: 'alert', href: '/alert' }], relationships: [], href: '/api/v1/observations/observation-b' },
   { id: 'observation-c', name: 'Never run', description: null, objective: 'Observe idle equipment', schema_version: 1, lenses: [], alert_lenses: [], relationships: [], href: '/api/v1/observations/observation-c' },
 ]
 
@@ -33,6 +34,11 @@ function source<T>(data: T | null, error: unknown = null): OverviewSourceState<T
   return { data, error, loading: false, refreshing: false }
 }
 
+function runtimeFeed(items: readonly ObservationRunSummary[]): OverviewRuntimeFeed {
+  const runtimeItems: readonly OverviewRuntimeItem[] = items.map((summary) => ({ availability: 'available', summary }))
+  return { schema_version: '1.0', items: runtimeItems, limited_run_count: 0 }
+}
+
 function detail(runSummary: ObservationRunSummary, findings: readonly { id: string; statement: string }[]): ObservationRunDetail {
   return {
     summary: runSummary,
@@ -47,7 +53,7 @@ function coordinator(overrides: Partial<OverviewDataCoordinator> = {}): Overview
   const findingCandidates = [{ run: runs[0] }, { run: runs[1] }, { run: runs[2] }, { run: runs[4] }]
   return {
     definitions: source(definitions),
-    runHistory: source(runs),
+    runHistory: source(runtimeFeed(runs)),
     findingCandidates,
     findingDetails: { data: new Map([[runs[0].id, detail(runs[0], [{ id: 'finding-a', statement: 'Persisted Observation finding.' }])], [runs[2].id, detail(runs[2], [])], [runs[4].id, detail(runs[4], [])]]), errors: new Map(), loadingRunIds: new Set(), },
     lastSuccessfulRefreshAt: null,
@@ -63,7 +69,7 @@ function renderOverview(data = coordinator()) {
 describe('OverviewContent', () => {
   it('labels an active latest run as in progress even when its summary includes elapsed duration', () => {
     const activeWithElapsedDuration = run('elapsed-running', 'observation-b', 'Feed pump', 'running', null, '2026-09-09T13:00:00Z', 125)
-    renderOverview(coordinator({ runHistory: source([activeWithElapsedDuration]) }))
+    renderOverview(coordinator({ runHistory: source(runtimeFeed([activeWithElapsedDuration])) }))
 
     expect(screen.getByText('In progress')).toBeTruthy()
     expect(screen.queryByText('2m 5s')).toBeNull()
@@ -79,11 +85,15 @@ describe('OverviewContent', () => {
     expect(summary.textContent).toContain('Uncertain analysis0')
     expect(summary.textContent).toContain('Significant findings1')
     expect(summary.textContent).toContain('Failed executions1')
-    expect(summary.className).toContain('sm:grid-cols-2')
-    expect(summary.className).toContain('md:grid-cols-3')
-    expect(summary.className).toContain('xl:grid-cols-6')
-    expect(screen.getByText('Significant findings').closest('article')?.className).toContain('text-[var(--color-analysis-significant)]')
-    expect(screen.getByText('Failed executions').closest('article')?.className).toContain('text-[var(--color-execution-failed)]')
+    expect(summary.firstElementChild?.className).toContain('sm:grid-cols-2')
+    expect(summary.firstElementChild?.className).toContain('md:grid-cols-3')
+    expect(summary.firstElementChild?.className).toContain('xl:grid-cols-6')
+    const significantCard = screen.getByText('Significant findings').closest('article')
+    const failedCard = screen.getByText('Failed executions').closest('article')
+    expect(significantCard?.className).toContain('bg-[var(--color-surface)]')
+    expect(failedCard?.className).toContain('bg-[var(--color-surface)]')
+    expect(within(significantCard!).getByText('1').className).toContain('text-[var(--color-analysis-significant)]')
+    expect(within(failedCard!).getByText('1').className).toContain('text-[var(--color-execution-failed)]')
     const list = screen.getByRole('list', { name: 'Observations' })
     expect(list.textContent).toMatch(/Cooling system[\s\S]*Feed pump[\s\S]*Never run/)
     expect(screen.getByLabelText('Execution status: Failed')).toBeTruthy()
@@ -107,10 +117,10 @@ describe('OverviewContent', () => {
   })
 
   it('keeps successful definitions visible but makes runtime-derived values explicitly unavailable when runtime history has not loaded', () => {
-    renderOverview(coordinator({ runHistory: source<readonly ObservationRunSummary[]>(null, new Error('runtime unavailable')), findingCandidates: [], findingDetails: { data: new Map(), errors: new Map(), loadingRunIds: new Set() } }))
+    renderOverview(coordinator({ runHistory: source<OverviewRuntimeFeed>(null, new Error('runtime unavailable')), findingCandidates: [], findingDetails: { data: new Map(), errors: new Map(), loadingRunIds: new Set() } }))
 
     expect(screen.getByText('Runtime data is unavailable. Observation definitions remain visible below.')).toBeTruthy()
-    expect(screen.getAllByText('Runtime unavailable')).toHaveLength(3)
+    expect(screen.getAllByText('Runtime unavailable')).toHaveLength(15)
     expect(screen.queryByText('Not run yet')).toBeNull()
     const summary = screen.getByLabelText('Overview summary')
     expect(summary.textContent).toContain('Configured Observations3')
@@ -167,7 +177,7 @@ describe('OverviewContent', () => {
   it('wraps long unbroken Observation identity content without truncating its accessible text', () => {
     const longName = 'CoolingSystemWithoutWhitespaceThatMustWrapInsideTheMonitoringGrid'
     const longDescription = 'LongDescriptionWithoutWhitespaceThatMustWrapInsteadOfWideningThePage'
-    renderOverview(coordinator({ definitions: source([{ ...definitions[0], name: longName, description: longDescription }]), runHistory: source([runs[0]]) }))
+    renderOverview(coordinator({ definitions: source([{ ...definitions[0], name: longName, description: longDescription }]), runHistory: source(runtimeFeed([runs[0]])) }))
 
     const nameLink = screen.getByRole('link', { name: longName })
     expect(nameLink.textContent).toBe(longName)
@@ -181,7 +191,7 @@ describe('OverviewContent', () => {
 
   it('keeps all five exact recent-run markers focusable and distinguishes completed from cancelled without partial', () => {
     const pending = run('run-pending', 'observation-a', 'Cooling system', 'pending', null, '2026-09-09T03:00:00Z', null)
-    renderOverview(coordinator({ runHistory: source([pending, ...runs]) }))
+    renderOverview(coordinator({ runHistory: source(runtimeFeed([pending, ...runs])) }))
 
     for (const status of ['pending', 'running', 'completed', 'failed', 'cancelled']) {
       expect(screen.getAllByRole('button', { name: new RegExp(`Recent run: .*execution status ${status}`) }).length).toBeGreaterThan(0)
@@ -189,5 +199,25 @@ describe('OverviewContent', () => {
     expect(screen.getAllByRole('button', { name: /execution status completed/ })[0]?.textContent).toBe('C')
     expect(screen.getByRole('button', { name: /execution status cancelled/ }).textContent).toBe('X')
     expect(screen.queryByRole('button', { name: /execution status partial/ })).toBeNull()
+  })
+
+  it('keeps limited current fields local, preserves valid failure, and discloses bounded findings coverage', () => {
+    const limited: OverviewRuntimeItem = { availability: 'limited', id: 'limited-current', observation: { id: 'observation-a', name: 'Cooling system' }, created_at: '2026-09-09T14:00:00Z', status: 'failed', started_at: null, finished_at: null, duration_seconds: null, analytical_state: null, limitation_code: 'runtime_projection_invalid', href: '/api/v1/observation-runs/limited-current' }
+    const feed: OverviewRuntimeFeed = { schema_version: '1.0', items: [limited, { availability: 'available', summary: runs[0] }], limited_run_count: 1 }
+    renderOverview(coordinator({ runHistory: source(feed), findingCandidates: [{ run: runs[0] }] }))
+
+    expect(screen.getByText('Runtime coverage limited:')).toBeTruthy()
+    expect(screen.getByText('Runtime data limited')).toBeTruthy()
+    expect(screen.getByLabelText('Execution status: Failed')).toBeTruthy()
+    expect(screen.getByLabelText('Analytical state: Analysis unavailable')).toBeTruthy()
+    expect(screen.getByText('Runtime coverage is limited for 1 run; only available analyzed runs are inspected.')).toBeTruthy()
+    expect(screen.getByRole('button', { name: /Recent run: .*runtime data limited; execution status failed/i })).toBeTruthy()
+  })
+
+  it('labels Metric, Alert, mixed, and legacy composition icons without assigning runtime meaning', () => {
+    const mixed = { ...definitions[0], id: 'mixed', name: 'Mixed', alert_lenses: [{ id: 'alert-mixed', name: 'Mixed alert', type: 'alert' as const, href: '/alert' }] }
+    renderOverview(coordinator({ definitions: source([...definitions, mixed]), runHistory: source(runtimeFeed([])), findingCandidates: [] }))
+
+    for (const label of ['Metric Lens composition', 'Alert Lens composition', 'Mixed Metric and Alert Lens composition', 'Legacy or empty Lens composition']) expect(screen.getByLabelText(label)).toBeTruthy()
   })
 })
