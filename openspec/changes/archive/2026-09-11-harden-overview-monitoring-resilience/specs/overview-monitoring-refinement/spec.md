@@ -1,10 +1,4 @@
-# overview-monitoring-refinement Specification
-
-## Purpose
-
-Refine the approved Overview into a dense, responsive monitoring workspace that keeps Observation state, recent findings, and execution activity simultaneously scannable without changing their domain semantics.
-
-## Requirements
+## MODIFIED Requirements
 
 ### Requirement: Present a compact monitoring header and state summary
 
@@ -47,44 +41,6 @@ Summary cards SHALL use neutral surface backgrounds. Semantic color SHALL accent
 - **THEN** the header exposes the latest client refresh time
 - **AND** the label does not claim that every backend artifact was produced at that time
 
-### Requirement: Use a wide monitoring workspace with a persistent insights rail
-
-At wide desktop widths, the Overview SHALL use the available application workspace as a two-column composition: the Observation collection SHALL occupy the primary wider column, and Recent Findings plus Run Activity SHALL occupy a narrower insights rail in the same initial content region. Recent Findings SHALL appear above Run Activity. A long Observation collection SHALL NOT force both insight sections to begin only after the final Observation row.
-
-At narrower widths, the composition SHALL become one column in this order: summary, Observations, Recent Findings, Run Activity. Content SHALL not require horizontal page scrolling. Existing unavailable, loading, stale, and empty feedback SHALL remain adjacent to the affected content and SHALL not become a visually dominant replacement for successful data.
-
-#### Scenario: Scan on a wide desktop
-
-- **WHEN** the available content width supports the desktop composition
-- **THEN** Observations and the insights rail are visible beside one another
-- **AND** Recent Findings and Run Activity are not positioned beneath the entire Observation collection
-
-#### Scenario: Use the Overview at a narrow width
-
-- **WHEN** the available content width cannot preserve readable table columns and insights rail
-- **THEN** the sections stack in the specified order without horizontal page scrolling
-- **AND** every state, action, and navigation target remains available
-
-### Requirement: Provide local Observation search
-
-The Observation section SHALL provide a search field that filters only the successfully loaded Observation rows already available in the browser. Search SHALL use a trimmed, case-insensitive substring match against Observation name and description. An absent description SHALL behave as an empty value. Search SHALL preserve the approved latest-run ordering among matched rows and SHALL NOT issue a backend query, mutate data, change summary counts, or filter Recent Findings or Run Activity.
-
-An empty query SHALL show all loaded Observation rows. A non-empty query with no matches SHALL show a distinct no-match state with a clear-search action; it SHALL NOT be presented as an empty configured collection or runtime failure. The search field SHALL have a visible label or accessible name and keyboard-operable clearing behavior.
-
-#### Scenario: Filter loaded Observations
-
-- **GIVEN** loaded rows contain names and descriptions with mixed letter case
-- **WHEN** the user enters a query with surrounding whitespace
-- **THEN** rows whose name or description contains the trimmed query case-insensitively remain in their original order
-- **AND** no new API request is made
-
-#### Scenario: Clear a no-match result
-
-- **GIVEN** a non-empty search matches no loaded Observation
-- **WHEN** the no-match state appears
-- **THEN** it is distinct from an empty definition list
-- **AND** the user can clear the query and restore all loaded rows
-
 ### Requirement: Render Observations as a dense semantic table/list
 
 At desktop widths, the Observation collection SHALL use one shared non-overflowing grid definition for header and rows with columns for Observation identity, latest run time, analytical state, execution status/duration, recent runs, and a compact unlabeled action affordance. The grid SHALL fit inside the primary panel at the supported desktop breakpoint; fixed minimums SHALL not push headers or actions into the insights rail. Equivalent header and row fields SHALL align.
@@ -122,26 +78,6 @@ Each recent-run marker SHALL retain a unique visible status/availability cue, ke
 - **WHEN** their markers render
 - **THEN** they are distinguishable without relying only on color
 - **AND** their full durable descriptions are available to keyboard and assistive-technology users
-
-### Requirement: Keep true findings and exact execution activity visible
-
-The insights rail SHALL preserve the approved Recent Findings source, five-analyzed-run inspection bound, five-finding display bound, ordering, incomplete-state behavior, and source-run navigation. It SHALL display only persisted Observation-level findings. It SHALL NOT add entries that merely say an Observation has no findings, promote hypotheses or Lens-local findings, or attach severity, urgency, confidence, or finding-count semantics not present in the public contract.
-
-Run Activity SHALL retain its fourteen-newest-run bound and exact `pending`, `running`, `completed`, `failed`, and `cancelled` statuses. In addition to the accessible non-visual summary, it SHALL show a compact visible count for every exact status represented by the chart and the total number of represented runs. It SHALL NOT introduce `partial` as an ObservationRun status. The chart and counts SHALL describe only the bounded represented runs, not all historical runs.
-
-#### Scenario: Keep the insights rail semantically honest
-
-- **GIVEN** inspected runs include findings, hypotheses, no-finding analyses, and failed executions
-- **WHEN** Recent Findings renders
-- **THEN** only persisted Observation-level findings become finding entries
-- **AND** other analytical or execution outcomes are not rewritten as findings
-
-#### Scenario: Show bounded activity totals
-
-- **GIVEN** fourteen represented runs contain all accepted execution statuses
-- **WHEN** Run Activity renders
-- **THEN** the visible status counts and total describe exactly those fourteen runs
-- **AND** no ObservationRun `partial` count or state is shown
 
 ### Requirement: Treat the visual reference as informative and preserve failure honesty
 

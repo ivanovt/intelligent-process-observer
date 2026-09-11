@@ -23,6 +23,7 @@ from app.infrastructure.persistence.models import (
 from app.infrastructure.persistence.repository import RuntimePersistenceRepository
 from app.observation_runs.projection import project_observation_run_detail
 from app.observation_runs.read import ObservationRunReadService
+from app.overview_runtime.read import OverviewRuntimeReadService
 
 _BACKEND_ROOT = Path(__file__).resolve().parents[1]
 
@@ -124,6 +125,79 @@ def test_postgresql_history_order_and_read_only_detail_snapshot(
         assert detail.summary.id == second_id
         assert detail.lens_runs[0].lens_type == "metric"
         assert "secret" not in detail.model_dump_json()
+
+    asyncio.run(scenario())
+
+
+def test_postgresql_overview_runtime_keeps_legacy_rows_without_mutation(
+    session_factory: async_sessionmaker[AsyncSession],
+) -> None:
+    """Return valid and invalid legacy records together without repairing either row."""
+
+    async def scenario() -> None:
+        now = datetime(2026, 9, 10, 12, tzinfo=UTC)
+        valid_id, legacy_id = uuid4(), uuid4()
+        async with session_factory.begin() as session:
+            observation = ObservationModel(
+                id=uuid4(), name="Overview", objective="Projection test", schema_version=1
+            )
+            session.add(observation)
+            session.add_all(
+                (
+                    ObservationRunModel(
+                        id=valid_id,
+                        observation_id=observation.id,
+                        status="running",
+                        provenance={"private": "valid"},
+                        execution_context={
+                            "analysis_window": {
+                                "from": (now - timedelta(hours=1)).isoformat(),
+                                "to": now.isoformat(),
+                            }
+                        },
+                        created_at=now,
+                        started_at=now,
+                    ),
+                    ObservationRunModel(
+                        id=legacy_id,
+                        observation_id=observation.id,
+                        status="failed",
+                        reason={"code": "private_legacy_diagnostic", "component": "runtime"},
+                        provenance={"private": "legacy"},
+                        execution_context={"analysis_window": {"from": now.isoformat()}},
+                        created_at=now - timedelta(minutes=1),
+                        started_at=now - timedelta(minutes=1),
+                    ),
+                )
+            )
+
+        service = OverviewRuntimeReadService(session_factory, RuntimePersistenceRepository())
+        response = await service.get_runtime()
+
+        owned_items = tuple(
+            item
+            for item in response.items
+            if (item.summary.id if item.availability == "available" else item.id)
+            in {valid_id, legacy_id}
+        )
+        assert [item.availability for item in owned_items] == ["available", "limited"]
+        owned_item_ids = []
+        for item in owned_items:
+            owned_item_ids.append(item.summary.id if item.availability == "available" else item.id)
+        assert owned_item_ids == [valid_id, legacy_id]
+        assert response.limited_run_count == sum(
+            item.availability == "limited" for item in response.items
+        )
+        limited = owned_items[1]
+        serialized = limited.model_dump_json()
+        assert "analysis_window" not in serialized
+        assert "private_legacy_diagnostic" not in serialized
+        async with session_factory() as session:
+            legacy = await session.get(ObservationRunModel, legacy_id)
+            assert legacy is not None
+            assert legacy.status == "failed"
+            assert legacy.execution_context == {"analysis_window": {"from": now.isoformat()}}
+            assert legacy.reason == {"code": "private_legacy_diagnostic", "component": "runtime"}
 
     asyncio.run(scenario())
 
