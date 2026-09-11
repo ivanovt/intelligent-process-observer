@@ -3331,6 +3331,83 @@ unrestricted network exposure. One-active-run overlap policy не е access cont
 
 ---
 
+## ADR-171 — MVP troubleshooting използва correlated operational logs и opt-in development agent traces
+
+**Status:** Accepted
+
+**Context**
+MVP execution нормализира provider, agent, orchestration и persistence failures към
+safe runtime reason codes. Това пази public contracts, но без internal operational
+evidence прави local end-to-end troubleshooting трудно: различни Prometheus response
+rejections и различни PydanticAI/model/grounding failures могат да изглеждат еднакво в
+UI и durable state. За функционален thesis MVP trusted developer трябва да може да
+корелира run/lens lifecycle-а с backend errors и при изрично включен development mode
+да инспектира model-visible agent interaction-а.
+
+**Decision**
+MVP въвежда две отделни backend-only diagnostic нива:
+
+1. **Operational logging** е enabled по подразбиране и записва application-owned
+   handled/normalized и unhandled errors в backend logging output. Събитията използват
+   stable event names, severity, timestamp и наличните correlation identifiers
+   (`observation_run_id`, `lens_run_id`, `lens_id`, role/stage/component), safe failure
+   category, duration/attempt metadata и exception type/stack trace когато exception-ът
+   е unexpected. Expected validation/business rejection не се представя като internal
+   error и не изисква stack trace.
+2. **Full agent interaction tracing** е explicit opt-in, разрешено е само при
+   `APP_ENV=development` и по подразбиране е disabled. За всеки Metric, Alert,
+   Observation Reasoning и Report model invocation trace-ът пази exact PydanticAI-level
+   system instructions, model-visible request/context, declared tool/output schemas,
+   chronological model requests/responses, admitted tool calls/results, validated
+   completion или validation failure, timing и usage metadata. Failed/interrupted calls
+   пазят наличния partial message history.
+
+Full traces са sensitive ephemeral backend log artifacts, корелирани по
+`ObservationRun`/`LensRun`, записани извън PostgreSQL и source-controlled paths. Те не са
+Observation/Lens analytical artifacts, evidence, provenance или audit records. MVP не
+въвежда automatic retention; developer/operator ги изтрива explicit, а документацията
+предупреждава за disk usage и sensitive operational content.
+
+Secrets никога не се записват и при full tracing: API keys, passwords, bearer tokens,
+Authorization/cookie headers и provider credential objects се redact/drop-ват преди
+serialization. Provider transport headers/raw envelopes и framework/provider metadata
+се allowlist-ват, а не се dump-ват blindly. Exact agent-visible operational content
+(например normalized alerts, structured evidence и retrieved statements) остава видимо
+в изрично включения development trace и се третира като sensitive.
+
+Prometheus runtime logging пази safe categorical cause като `query_rejected`,
+`multiple_series_returned`, `authentication_failed`, `source_unavailable`, `timeout`,
+`transport_failure`, `response_too_large`, `response_invalid` или equivalent bounded
+implementation vocabulary, плюс safe count/status/attempt metadata. Raw query, label
+values и provider-authored error text не се записват в operational logs. Query-authoring
+feedback използва съществуващия explicit Metric preflight API, който може да върне
+bounded provider error/label-set diagnostics към trusted operator; frontend integration
+не прави preflight mandatory persistence gate и invalidates stale validation при
+source/query change.
+
+Public run/list/detail contracts продължават да връщат safe lifecycle reason и не
+expose-ват full traces, prompts, model/framework messages, stack traces, raw provider
+responses или trace filesystem paths. UI може да показва human-readable safe reason,
+correlation IDs и navigation към Metric query preflight/configuration, но няма trace
+viewer/download endpoint при текущия unauthenticated boundary от ADR-170.
+
+Решението използва Python logging и наличните PydanticAI message-capture/serialization
+capabilities; не добавя dependency, external observability service, message broker,
+distributed tracing backend или нова persistence schema.
+
+**Consequences**
+- safe public failure semantics остават стабилни, докато backend има достатъчно evidence
+  да различи provider, model, policy, schema и deterministic validation failures;
+- local developer може да възстанови какво точно е видял/върнал всеки agent invocation,
+  включително output-а преди strict validation rejection;
+- full trace mode е съзнателно sensitive и не е подходящо за production или untrusted
+  host; неправилна deployment експозиция не се компенсира от application auth;
+- automatic trace cleanup, production log shipping/storage, metrics dashboards,
+  alerting и distributed tracing остават Open и изискват отделно решение;
+- prompt/model/runtime tuning и analytical semantics не се променят от tracing-а.
+
+---
+
 # Open decisions
 
 Актуалният и нормативен backlog е в `10_open_decisions_and_backlog.md`. Отворените въпроси **не** са implicit requirements и трябва да получат нов ADR, когато бъдат решени.

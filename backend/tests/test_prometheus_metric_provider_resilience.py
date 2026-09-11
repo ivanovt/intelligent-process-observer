@@ -53,6 +53,18 @@ def _window() -> MetricAnalysisWindow:
     return MetricAnalysisWindow(**{"from": _START, "to": _START + timedelta(minutes=1)})
 
 
+def _assert_safe_failure(outcome: object):
+    assert isinstance(outcome, MetricSeriesAcquisitionFailure)
+    assert outcome.diagnostic == "prometheus_acquisition_failed"
+    return outcome
+
+
+def _assert_safe_timeout(outcome: object):
+    assert isinstance(outcome, MetricSeriesAcquisitionTimeout)
+    assert outcome.diagnostic == "prometheus_acquisition_timeout"
+    return outcome
+
+
 def _success() -> dict[str, Any]:
     return {"status": "success", "data": {"resultType": "matrix", "result": []}}
 
@@ -103,9 +115,7 @@ def test_httpx_default_timeout_is_disabled_and_system_attempt_deadline_is_author
 
         provider._execute_one_attempt = longer_than_httpx_default  # type: ignore[method-assign]
 
-        assert await provider.acquire(_scope(), _window()) == MetricSeriesAcquisitionTimeout(
-            diagnostic="prometheus_acquisition_timeout"
-        )
+        _assert_safe_timeout(await provider.acquire(_scope(), _window()))
 
     asyncio.run(scenario())
 
@@ -147,7 +157,7 @@ def test_retry_attempt_count_waits_and_logical_request_identity(
     outcome = asyncio.run(provider.acquire(_scope(), _window()))
 
     if terminal_attempt is None:
-        assert outcome == MetricSeriesAcquisitionFailure(diagnostic="prometheus_acquisition_failed")
+        _assert_safe_failure(outcome)
     else:
         assert outcome == MetricSeriesAvailable(source="prometheus", samples=())
     assert len(requests) == expected_count
@@ -391,7 +401,7 @@ def test_generic_httpx_errors_return_typed_failure_without_retry(error: Exceptio
 
     outcome, waits, calls = asyncio.run(scenario())
 
-    assert outcome == MetricSeriesAcquisitionFailure(diagnostic="prometheus_acquisition_failed")
+    _assert_safe_failure(outcome)
     assert waits == []
     assert calls == 1
 
@@ -445,7 +455,8 @@ def test_retry_exhaustion_is_failure_after_three_executed_eligible_results() -> 
         return await provider.acquire(_scope(), _window()), waits, calls
 
     outcome, waits, calls = asyncio.run(scenario())
-    assert outcome == MetricSeriesAcquisitionFailure(diagnostic="prometheus_acquisition_failed")
+    failure = _assert_safe_failure(outcome)
+    assert failure.attempt_count == 3
     assert calls == 3
     assert waits == [0.5, 1.0]
 
@@ -512,9 +523,7 @@ def test_attempt_deadline_cancels_body_and_closes_response_and_client() -> None:
         assert client.closed is False
         assert acquire.done() is True
 
-        assert acquire.result() == MetricSeriesAcquisitionTimeout(
-            diagnostic="prometheus_acquisition_timeout"
-        )
+        _assert_safe_timeout(acquire.result())
 
         client.close_release.set()
         await asyncio.sleep(0)
@@ -544,18 +553,15 @@ def test_deadline_returns_before_resistant_cleanup_and_releases_capacity_afterwa
         first = asyncio.create_task(provider.acquire(_scope(), _window()))
         await asyncio.wait_for(client.closing_started.wait(), timeout=0.1)
 
-        assert await asyncio.wait_for(first, timeout=0.1) == MetricSeriesAcquisitionTimeout(
-            diagnostic="prometheus_acquisition_timeout"
-        )
+        _assert_safe_timeout(await asyncio.wait_for(first, timeout=0.1))
         assert stream.cancelled is True
         assert stream.closed is True
         assert client.closed is False
         assert client_constructions == 1
 
         saturated = await provider.acquire(_scope(), _window())
-        assert saturated == MetricSeriesAcquisitionFailure(
-            diagnostic="prometheus_acquisition_failed"
-        )
+        saturated_failure = _assert_safe_failure(saturated)
+        assert saturated_failure.diagnostic_category == "capacity_exhausted"
         assert client_constructions == 1
 
         client.close_release.set()
@@ -637,9 +643,8 @@ def test_active_transport_capacity_saturation_rejects_before_client_or_request()
 
         provider._client_factory = fail_on_client_construction
         saturated = await provider.acquire(_scope(), _window())
-        assert saturated == MetricSeriesAcquisitionFailure(
-            diagnostic="prometheus_acquisition_failed"
-        )
+        saturated_failure = _assert_safe_failure(saturated)
+        assert saturated_failure.diagnostic_category == "capacity_exhausted"
         assert active_client_constructions == 1
         assert active_requests == 1
         assert rejected_client_constructions == 0
@@ -718,17 +723,15 @@ def test_capacity_is_held_during_retry_wait_and_later_admitted_attempt() -> None
         retrying = asyncio.create_task(provider.acquire(_scope(), _window()))
         await asyncio.wait_for(retry_sleep_started.wait(), timeout=0.1)
 
-        assert await provider.acquire(_scope(), _window()) == MetricSeriesAcquisitionFailure(
-            diagnostic="prometheus_acquisition_failed"
-        )
+        saturated_failure = _assert_safe_failure(await provider.acquire(_scope(), _window()))
+        assert saturated_failure.diagnostic_category == "capacity_exhausted"
         assert client_constructions == 1
         assert requests == 1
 
         retry_sleep_release.set()
         await asyncio.wait_for(retry_stream.started.wait(), timeout=0.1)
-        assert await provider.acquire(_scope(), _window()) == MetricSeriesAcquisitionFailure(
-            diagnostic="prometheus_acquisition_failed"
-        )
+        saturated_failure = _assert_safe_failure(await provider.acquire(_scope(), _window()))
+        assert saturated_failure.diagnostic_category == "capacity_exhausted"
         assert client_constructions == 2
         assert requests == 2
 
@@ -787,15 +790,12 @@ def test_acquisition_cleanup_retains_capacity_after_deadline_during_retry_wait()
             _transport_capacity=capacity,
         )
 
-        assert await provider.acquire(_scope(), _window()) == MetricSeriesAcquisitionTimeout(
-            diagnostic="prometheus_acquisition_timeout"
-        )
+        _assert_safe_timeout(await provider.acquire(_scope(), _window()))
         await asyncio.wait_for(cleanup_started.wait(), timeout=0.1)
 
         provider._deadline_runner = _immediate_deadline
-        assert await provider.acquire(_scope(), _window()) == MetricSeriesAcquisitionFailure(
-            diagnostic="prometheus_acquisition_failed"
-        )
+        saturated_failure = _assert_safe_failure(await provider.acquire(_scope(), _window()))
+        assert saturated_failure.diagnostic_category == "capacity_exhausted"
         assert client_constructions == 1
         assert requests == 1
 
@@ -848,9 +848,7 @@ def test_timeout_discards_late_attempt_outcomes_without_retrying(late_kind: str)
 
         outcome = await provider.acquire(_scope(), _window())
         await asyncio.wait_for(cleanup_started.wait(), timeout=0.1)
-        assert outcome == MetricSeriesAcquisitionTimeout(
-            diagnostic="prometheus_acquisition_timeout"
-        )
+        _assert_safe_timeout(outcome)
         assert calls == 1
         assert waits == []
 
@@ -890,7 +888,7 @@ def test_acquisition_deadline_cancels_a_retry_wait_without_another_attempt() -> 
     )
     outcome = asyncio.run(provider.acquire(_scope(), _window()))
 
-    assert outcome == MetricSeriesAcquisitionTimeout(diagnostic="prometheus_acquisition_timeout")
+    _assert_safe_timeout(outcome)
     assert sleeps_started.is_set()
     assert sleeps_cancelled is True
     assert requests == 1

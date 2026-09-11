@@ -61,6 +61,12 @@ def _acquire(provider: PrometheusMetricSeriesProvider, source_id: str = "plant-p
     return asyncio.run(provider.acquire(_scope(source_id), _window()))
 
 
+def _assert_safe_failure(outcome: object, diagnostic: str):
+    assert isinstance(outcome, MetricSeriesAcquisitionFailure)
+    assert outcome.diagnostic == diagnostic
+    return outcome
+
+
 def _provider(sources: list[PrometheusSourceSettings]) -> PrometheusMetricSeriesProvider:
     def response(_: httpx.Request) -> httpx.Response:
         return httpx.Response(
@@ -141,7 +147,8 @@ def test_valid_production_targets_reach_the_injected_transport(base_url: str) ->
 def test_invalid_selected_target_is_rejected_before_any_transport(base_url: str) -> None:
     outcome = _acquire(_provider([_source(base_url)]))
 
-    assert outcome == MetricSeriesAcquisitionFailure(diagnostic="prometheus_source_invalid")
+    failure = _assert_safe_failure(outcome, "prometheus_source_invalid")
+    assert failure.diagnostic_category == "source_invalid"
 
 
 def test_production_validation_does_not_change_shared_settings_or_leak_credentials() -> None:
@@ -164,7 +171,8 @@ def test_production_validation_does_not_change_shared_settings_or_leak_credentia
     rendered = f"{outcome!r} {provider!r}"
 
     assert settings.prometheus_sources == [selected, unselected]
-    assert outcome == MetricSeriesAcquisitionFailure(diagnostic="prometheus_source_invalid")
+    failure = _assert_safe_failure(outcome, "prometheus_source_invalid")
+    assert failure.diagnostic_category == "source_invalid"
     for protected in (bearer, username, password, "Authorization"):
         assert protected not in rendered
 

@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import asyncio
+import json
 from datetime import UTC, datetime
+from uuid import uuid4
 
 import pytest
 from pydantic_ai.exceptions import UnexpectedModelBehavior
@@ -18,6 +20,11 @@ from app.alerts.tools import AlertOptionalToolRegistry
 from app.infrastructure.agents.pydantic_ai_alerts import (
     AlertAgentPolicyViolation,
     PydanticAIAlertAnalysisAgent,
+)
+from app.infrastructure.agents.tracing import (
+    AgentTraceContext,
+    FileAgentTraceRecorder,
+    activate_trace_context,
 )
 
 START = datetime(2026, 8, 30, tzinfo=UTC)
@@ -303,3 +310,58 @@ def test_instructions_preserve_lens_local_descriptive_boundary() -> None:
         "expand scope",
     ):
         assert forbidden in prompt
+
+
+def test_enabled_alert_trace_uses_out_of_band_correlation_without_changing_request_shape(
+    tmp_path,
+) -> None:
+    """Alert capture uses the pipeline context rather than serializing trace fields into input."""
+    injected, _ = model([completion])
+    recorder = FileAgentTraceRecorder(root=tmp_path)
+    trace_context = AgentTraceContext(
+        observation_run_id=uuid4(),
+        lens_run_id=uuid4(),
+        lens_id="temperature-alerts",
+        agent_role="alert",
+        phase="analysis",
+        model="test/model",
+    )
+    value = request()
+
+    with activate_trace_context(trace_context):
+        outcome = run(
+            PydanticAIAlertAnalysisAgent(injected, trace_recorder=recorder).complete(
+                value, registry()
+            )
+        )
+
+    path = next((tmp_path / str(trace_context.observation_run_id)).glob("*-alert-analysis.json"))
+    artifact = json.loads(path.read_text(encoding="utf-8"))
+    assert outcome.overall_importance == "low"
+    assert "trace_identity" not in value.model_dump()
+    assert artifact["invocation"]["lens_run_id"] == str(trace_context.lens_run_id)
+
+
+def test_policy_transformed_alert_response_remains_raw_in_the_trace(tmp_path) -> None:
+    """The trace retains the pre-transformation tool name that the policy rejected."""
+    injected, _ = model([lambda _: ModelResponse(parts=[ToolCallPart("scope_expansion", {})])])
+    recorder = FileAgentTraceRecorder(root=tmp_path)
+    trace_context = AgentTraceContext(
+        observation_run_id=uuid4(),
+        lens_run_id=uuid4(),
+        lens_id="temperature-alerts",
+        agent_role="alert",
+        phase="analysis",
+        model="test/model",
+    )
+
+    with activate_trace_context(trace_context), pytest.raises(IndexError):
+        run(
+            PydanticAIAlertAnalysisAgent(injected, trace_recorder=recorder).complete(
+                request(), registry()
+            )
+        )
+
+    path = next((tmp_path / str(trace_context.observation_run_id)).glob("*-alert-analysis.json"))
+    artifact = json.loads(path.read_text(encoding="utf-8"))
+    assert artifact["raw_model_responses"][0]["parts"][0]["tool_name"] == "scope_expansion"

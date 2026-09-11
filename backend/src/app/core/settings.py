@@ -3,6 +3,7 @@ from __future__ import annotations
 from functools import lru_cache
 from pathlib import Path
 from typing import Annotated, Literal
+from urllib.parse import unquote, urlsplit
 
 from pydantic import BaseModel, Field, SecretStr, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -59,6 +60,7 @@ class Settings(BaseSettings):
     openrouter_provider_order: list[str] = Field(default_factory=list)
     max_parallel_lens_runs: int = Field(default=4, gt=0)
     lens_deadline_seconds: float = Field(default=300, gt=0)
+    agent_trace_enabled: bool = False
 
     model_config = SettingsConfigDict(
         env_file=_REPOSITORY_ROOT / ".env",
@@ -83,6 +85,41 @@ class Settings(BaseSettings):
         if not self.openrouter_allow_fallbacks and len(self.openrouter_provider_order) != 1:
             raise ValueError("disabled OpenRouter fallback requires exactly one provider")
         return self
+
+    @model_validator(mode="after")
+    def validate_agent_trace_mode(self) -> Settings:
+        """Allow sensitive agent capture only in an explicitly development environment."""
+        if self.agent_trace_enabled and self.app_env != "development":
+            raise ValueError("agent_trace_enabled requires app_env=development")
+        return self
+
+    @property
+    def agent_trace_root(self) -> Path:
+        """Return the fixed ignored local root for sensitive agent trace artifacts."""
+        return _REPOSITORY_ROOT / "tmp" / "agent-traces"
+
+    def configured_secret_values(self) -> tuple[str, ...]:
+        """Return configured secret values for local diagnostic redaction only."""
+        values: list[str] = []
+        values.extend(_database_password_values(self.database_url))
+        if self.openrouter_api_key is not None:
+            values.append(self.openrouter_api_key.get_secret_value())
+        for source in self.prometheus_sources:
+            credentials = source.credentials
+            if isinstance(credentials, BearerTokenCredentials):
+                values.append(credentials.token.get_secret_value())
+            else:
+                values.append(credentials.password.get_secret_value())
+        return tuple(value for value in values if value)
+
+
+def _database_password_values(database_url: str) -> tuple[str, ...]:
+    """Extract a configured database password without retaining or logging its URL."""
+    try:
+        password = urlsplit(database_url).password
+    except ValueError:
+        return ()
+    return (unquote(password),) if password else ()
 
 
 @lru_cache

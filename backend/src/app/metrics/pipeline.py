@@ -4,10 +4,12 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from dataclasses import dataclass
+from time import monotonic
 from uuid import uuid4
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.diagnostics import DiagnosticEvent, OperationalEventEmitter
 from app.infrastructure.persistence.models import LensAnalysisResultModel, LensRunModel
 from app.infrastructure.persistence.repository import RuntimePersistenceRepository
 from app.infrastructure.persistence.runtime_contracts import (
@@ -95,6 +97,8 @@ class MetricAnalysisPipeline:
         repository: RuntimePersistenceRepository,
         result_builder: MetricResultBuilder | None = None,
         record_phase: PhaseRecorder | None = None,
+        emitter: OperationalEventEmitter | None = None,
+        monotonic_clock: Callable[[], float] | None = None,
     ) -> None:
         self._provider = provider
         self._agent = agent
@@ -102,20 +106,35 @@ class MetricAnalysisPipeline:
         self._repository = repository
         self._result_builder = result_builder or MetricResultBuilder()
         self._record_phase = record_phase or (lambda _: None)
+        self._emitter = emitter or OperationalEventEmitter()
+        self._monotonic_clock = monotonic_clock or monotonic
 
     async def analyze(self, context: MetricLensExecutionContext) -> MetricPreTransactionAnalysis:
         """Perform the stages that must not hold the History/write transaction open."""
 
         self._record_phase("provider_acquisition")
+        acquisition_started = self._monotonic_clock()
         try:
             available = await self._provider.acquire(
                 context.provider_scope, context.analysis_window
             )
         except TimeoutError as error:
+            self._emit_acquisition_failure(
+                context,
+                category="acquisition_timeout",
+                duration_ms=self._duration_ms(acquisition_started),
+                exception_type=type(error).__name__,
+            )
             return self._failed_analysis(
                 context, MetricCurrentAcquisitionFailed(diagnostic=_diagnostic(error))
             )
         except Exception as error:
+            self._emit_acquisition_failure(
+                context,
+                category="provider_failure",
+                duration_ms=self._duration_ms(acquisition_started),
+                exception_type=type(error).__name__,
+            )
             return self._failed_analysis(
                 context, MetricCurrentAcquisitionFailed(diagnostic=_diagnostic(error))
             )
@@ -127,6 +146,14 @@ class MetricAnalysisPipeline:
                 MetricSeriesAcquisitionTimeout,
             ),
         ):
+            self._emit_acquisition_failure(
+                context,
+                category=available.diagnostic_category,
+                duration_ms=self._duration_ms(acquisition_started),
+                attempt_count=available.attempt_count,
+                http_status=getattr(available, "http_status", None),
+                observed_series_count=getattr(available, "observed_series_count", None),
+            )
             return self._failed_analysis(
                 context, MetricCurrentAcquisitionFailed(diagnostic=available.diagnostic)
             )
@@ -134,10 +161,12 @@ class MetricAnalysisPipeline:
         try:
             prepared = prepare_series(available.samples, context.analysis_window)
         except MetricSeriesMalformedError as error:
+            self._emit_failure(context, "metric_schema_rejected", "current_preparation", error)
             return self._failed_analysis(
                 context, MetricCurrentSeriesMalformed(diagnostic=_diagnostic(error))
             )
         except Exception as error:
+            self._emit_failure(context, "metric_internal_failed", "current_preparation", error)
             return self._failed_analysis(
                 context, MetricMandatoryAnalysisFailure(diagnostic=_diagnostic(error))
             )
@@ -151,11 +180,13 @@ class MetricAnalysisPipeline:
             try:
                 outcome = await self._agent.complete(request)
                 completion = MetricAgentCompletion.model_validate(outcome)
-            except Exception:
+            except Exception as error:
+                self._emit_failure(context, "metric_internal_failed", "agent_execution", error)
                 completion = MetricAgentOperationalFailure()
             try:
                 _, terminal_result = self._result_builder.completed_insufficient(context)
             except Exception as error:
+                self._emit_failure(context, "metric_internal_failed", "result_builder", error)
                 return self._failed_analysis(
                     context, MetricMandatoryAnalysisFailure(diagnostic=_diagnostic(error))
                 )
@@ -173,6 +204,9 @@ class MetricAnalysisPipeline:
         try:
             semantics = semanticize_mandatory(usable_prepared, context.analysis_window)
         except Exception as error:
+            self._emit_failure(
+                context, "metric_internal_failed", "mandatory_semanticization", error
+            )
             return self._failed_analysis(
                 context, MetricMandatoryAnalysisFailure(diagnostic=_diagnostic(error))
             )
@@ -194,7 +228,8 @@ class MetricAnalysisPipeline:
             completion = MetricAgentCompletion.model_validate(
                 await self._agent.complete(request, registry)
             )
-        except Exception:
+        except Exception as error:
+            self._emit_failure(context, "metric_internal_failed", "agent_execution", error)
             completion = MetricAgentOperationalFailure()
         tool_ledger = registry.ledger
         optional_projections = project_successful_optional_tools(tool_ledger)
@@ -241,6 +276,7 @@ class MetricAnalysisPipeline:
                     optional=optional_projections,
                 )
         except Exception as error:
+            self._emit_failure(context, "metric_internal_failed", "result_builder", error)
             return self._failed_analysis(
                 context, MetricMandatoryAnalysisFailure(diagnostic=_diagnostic(error))
             )
@@ -272,9 +308,17 @@ class MetricAnalysisPipeline:
         for offset in context.reference_periods:
             window = reference_window(context.analysis_window, offset)
             self._record_phase("reference_acquisition")
+            acquisition_started = self._monotonic_clock()
             try:
                 acquired = await self._provider.acquire(context.provider_scope, window)
             except TimeoutError as error:
+                self._emit_acquisition_failure(
+                    context,
+                    category="acquisition_timeout",
+                    duration_ms=self._duration_ms(acquisition_started),
+                    exception_type=type(error).__name__,
+                    stage="reference_acquisition",
+                )
                 diagnostics.append(
                     MetricReferenceUnavailable(
                         offset=offset, category="acquisition", diagnostic=_diagnostic(error)
@@ -282,6 +326,13 @@ class MetricAnalysisPipeline:
                 )
                 continue
             except Exception as error:
+                self._emit_acquisition_failure(
+                    context,
+                    category="provider_failure",
+                    duration_ms=self._duration_ms(acquisition_started),
+                    exception_type=type(error).__name__,
+                    stage="reference_acquisition",
+                )
                 diagnostics.append(
                     MetricReferenceUnavailable(
                         offset=offset, category="acquisition", diagnostic=_diagnostic(error)
@@ -296,6 +347,15 @@ class MetricAnalysisPipeline:
                     MetricSeriesAcquisitionTimeout,
                 ),
             ):
+                self._emit_acquisition_failure(
+                    context,
+                    category=acquired.diagnostic_category,
+                    duration_ms=self._duration_ms(acquisition_started),
+                    attempt_count=acquired.attempt_count,
+                    http_status=getattr(acquired, "http_status", None),
+                    observed_series_count=getattr(acquired, "observed_series_count", None),
+                    stage="reference_acquisition",
+                )
                 diagnostics.append(
                     MetricReferenceUnavailable(
                         offset=offset, category="acquisition", diagnostic=acquired.diagnostic
@@ -399,6 +459,66 @@ class MetricAnalysisPipeline:
             terminal_result=terminal_result,
             failure=failure,
         )
+
+    def _emit_acquisition_failure(
+        self,
+        context: MetricLensExecutionContext,
+        *,
+        category: str,
+        duration_ms: int,
+        attempt_count: int | None = None,
+        http_status: int | None = None,
+        observed_series_count: int | None = None,
+        exception_type: str | None = None,
+        stage: str = "provider_acquisition",
+    ) -> None:
+        """Emit the sole safe current-Metric acquisition event for one pipeline attempt."""
+
+        self._emitter.emit(
+            DiagnosticEvent(
+                event="metric_acquisition_failed",
+                category=category,
+                observation_run_id=context.identity.observation_run_id,
+                lens_run_id=context.identity.lens_run_id,
+                lens_id=context.identity.lens_id,
+                source_id=context.provider_scope.source_id,
+                stage=stage,
+                component="metrics_pipeline",
+                attempt_count=attempt_count,
+                duration_ms=duration_ms,
+                http_status=http_status,
+                observed_series_count=observed_series_count,
+                exception_type=exception_type,
+            )
+        )
+
+    def _emit_failure(
+        self,
+        context: MetricLensExecutionContext,
+        category: str,
+        stage: str,
+        error: BaseException,
+    ) -> None:
+        """Emit safe normalized Metric-stage failure metadata without agent/provider content."""
+        self._emitter.emit(
+            DiagnosticEvent(
+                event="metric_failure_normalized",
+                category=category,
+                observation_run_id=context.identity.observation_run_id,
+                lens_run_id=context.identity.lens_run_id,
+                lens_id=context.identity.lens_id,
+                source_id=context.provider_scope.source_id,
+                agent_role="metric" if stage == "agent_execution" else None,
+                stage=stage,
+                component="metrics_pipeline",
+                exception_type=type(error).__name__,
+            )
+        )
+
+    def _duration_ms(self, started_at: float) -> int:
+        """Return a non-negative bounded acquisition duration for operational logging."""
+
+        return max(0, int((self._monotonic_clock() - started_at) * 1000))
 
     async def persist_terminal(
         self,

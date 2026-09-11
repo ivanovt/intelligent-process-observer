@@ -3,14 +3,18 @@
 from __future__ import annotations
 
 import asyncio
+import json
+import logging
 
 import pytest
 from pydantic import ValidationError
 from sqlalchemy.ext.asyncio import async_sessionmaker
 
+from app.core.diagnostics import OperationalEventEmitter
 from app.core.settings import Settings
 from app.infrastructure.agents.pydantic_ai_alerts import PydanticAIAlertAnalysisAgent
 from app.infrastructure.agents.pydantic_ai_metrics import PydanticAIMetricsAnalysisAgent
+from app.infrastructure.agents.tracing import FileAgentTraceRecorder, NoOpAgentTraceRecorder
 from app.infrastructure.agents.unavailable import (
     UnavailableAlertAnalysisAgent,
     UnavailableMetricsAnalysisAgent,
@@ -82,7 +86,7 @@ def test_role_overrides_and_request_limits_reach_only_the_selected_adapters() ->
 def test_lifespan_composition_uses_safe_ports_without_a_model_credential() -> None:
     """Missing OpenRouter configuration leaves startup composition and ports usable."""
     composition = build_production_execution_composition(
-        settings=Settings(), session_factory=async_sessionmaker()
+        settings=Settings(openrouter_api_key=None), session_factory=async_sessionmaker()
     )
 
     assert isinstance(composition.metric_agent, UnavailableMetricsAnalysisAgent)
@@ -91,6 +95,60 @@ def test_lifespan_composition_uses_safe_ports_without_a_model_credential() -> No
     assert isinstance(composition.report_executor._agent, UnavailableReportGenerationAgent)
     assert isinstance(composition.metric_adapter._pipeline._agent, UnavailableMetricsAnalysisAgent)
     assert isinstance(composition.alert_adapter._agent, UnavailableAlertAnalysisAgent)
+
+
+def test_composition_selects_trace_recorder_from_development_only_setting() -> None:
+    """The fixed trace root is selected without creating it in disabled mode."""
+    emitter = OperationalEventEmitter()
+    disabled = build_production_execution_composition(
+        settings=Settings(openrouter_api_key=None),
+        session_factory=async_sessionmaker(),
+        emitter=emitter,
+    )
+    enabled_settings = Settings(
+        app_env="development", agent_trace_enabled=True, openrouter_api_key=None
+    )
+    enabled = build_production_execution_composition(
+        settings=enabled_settings,
+        session_factory=async_sessionmaker(),
+        emitter=emitter,
+    )
+
+    assert isinstance(disabled.trace_recorder, NoOpAgentTraceRecorder)
+    assert disabled.reasoning_executor._trace_recorder is disabled.trace_recorder
+    assert disabled.reasoning_executor._emitter is emitter
+    assert disabled.report_executor._trace_recorder is disabled.trace_recorder
+    assert disabled.report_executor._emitter is emitter
+    assert isinstance(enabled.trace_recorder, FileAgentTraceRecorder)
+    assert enabled.reasoning_executor._trace_recorder is enabled.trace_recorder
+    assert enabled.reasoning_executor._emitter is emitter
+    assert enabled.report_executor._trace_recorder is enabled.trace_recorder
+    assert enabled.report_executor._emitter is emitter
+    assert enabled.trace_recorder.root == enabled_settings.agent_trace_root
+
+
+def test_missing_openrouter_configuration_emits_safe_operational_metadata() -> None:
+    """Unavailable agent ports are visible without disclosing configuration values."""
+    messages: list[str] = []
+    logger = logging.getLogger("test.production-composition.operational")
+    logger.handlers = [_CollectingHandler(messages)]
+    logger.setLevel(logging.WARNING)
+    logger.propagate = False
+    build_production_execution_composition(
+        settings=Settings(openrouter_api_key=None),
+        session_factory=async_sessionmaker(),
+        emitter=OperationalEventEmitter(logger=logger),
+    )
+
+    payloads = [json.loads(message) for message in messages]
+    event = next(item for item in payloads if item["event"] == "agent_configuration_unavailable")
+    assert event == {
+        "category": "agent_configuration_missing",
+        "component": "production_composition",
+        "event": "agent_configuration_unavailable",
+        "level": "warning",
+        "timestamp": event["timestamp"],
+    }
 
 
 def test_unavailable_metric_and_alert_ports_follow_existing_safe_failure_paths() -> None:
@@ -124,3 +182,15 @@ def test_unavailable_alert_port_has_no_completion_or_configuration_payload() -> 
     """The unavailable Alert port cannot fabricate a valid analytical completion."""
     with pytest.raises(RuntimeError):
         asyncio.run(UnavailableAlertAnalysisAgent().complete(None, None))
+
+
+class _CollectingHandler(logging.Handler):
+    """Collect operational messages without depending on process-global logging state."""
+
+    def __init__(self, messages: list[str]) -> None:
+        super().__init__()
+        self._messages = messages
+
+    def emit(self, record: logging.LogRecord) -> None:
+        """Store the rendered message for deterministic assertions."""
+        self._messages.append(record.getMessage())

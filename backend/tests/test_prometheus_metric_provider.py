@@ -68,6 +68,12 @@ def _acquire(provider: PrometheusMetricSeriesProvider, window: MetricAnalysisWin
     return asyncio.run(provider.acquire(_scope(), window))
 
 
+def _assert_safe_failure(outcome: object, diagnostic: str = "prometheus_acquisition_failed"):
+    assert isinstance(outcome, MetricSeriesAcquisitionFailure)
+    assert outcome.diagnostic == diagnostic
+    return outcome
+
+
 def test_default_client_disables_redirects_and_environment_proxies_with_tls_verification() -> None:
     client = PrometheusMetricSeriesProvider._new_client()
     try:
@@ -191,7 +197,7 @@ def test_authentication_is_preemptive_and_never_enters_outcomes(
     provider = _provider(_source(credentials=credentials), handler)
     outcome = _acquire(provider)
 
-    assert outcome == MetricSeriesAcquisitionFailure(diagnostic="prometheus_acquisition_failed")
+    _assert_safe_failure(outcome)
     assert len(requests) == 1
     assert requests[0].headers["authorization"] == expected_authorization
     rendered = repr(outcome)
@@ -255,7 +261,7 @@ def test_exactly_sixty_one_float_samples_are_accepted() -> None:
 def test_unrepresentable_success_shapes_fail_closed(payload: dict) -> None:
     outcome = _acquire(_provider(_source(), lambda _: httpx.Response(200, json=payload)))
 
-    assert outcome == MetricSeriesAcquisitionFailure(diagnostic="prometheus_acquisition_failed")
+    _assert_safe_failure(outcome)
     assert "provider-warning-sentinel" not in repr(outcome)
 
 
@@ -289,8 +295,9 @@ def test_malformed_success_annotations_fail_closed_without_provider_text_leakage
         _provider(_source(), lambda _: httpx.Response(200, json=_success([], **annotations)))
     )
 
-    assert outcome == MetricSeriesAcquisitionFailure(diagnostic="prometheus_acquisition_failed")
-    assert "valid" not in repr(outcome)
+    _assert_safe_failure(outcome)
+    assert "not-an-array" not in repr(outcome)
+    assert "['valid', 1]" not in repr(outcome)
 
 
 @pytest.mark.parametrize("status_code", [429, 500, 502, 504])
@@ -329,7 +336,7 @@ def test_retryable_status_body_precedence_pairs_bounded_malformed_and_oversized_
         )
     )
 
-    assert oversized == _AttemptFailure()
+    assert oversized == _AttemptFailure(category="response_too_large", http_status=status_code)
     assert closed is True
 
 
@@ -357,7 +364,7 @@ def test_valid_timeout_and_canceled_error_envelopes_override_retryable_statuses(
 
     result = _classify_complete_response(status_code, payload)
 
-    assert result == _AttemptTimeout()
+    assert result == _AttemptTimeout(category="transport_timeout")
     rendered = repr(result)
     assert provider_text not in rendered
     assert "provider-warning-must-not-leak" not in rendered
@@ -396,7 +403,7 @@ def test_valid_timeout_and_canceled_error_envelopes_override_retryable_statuses(
 def test_invalid_error_envelopes_do_not_prove_timeout_on_503(payload: dict) -> None:
     result = _classify_complete_response(503, json.dumps(payload).encode())
 
-    assert result == _AttemptFailure()
+    assert result == _AttemptFailure(category="http_status_failure", http_status=503)
     assert "provider-text-must-not-leak" not in repr(result)
 
 
@@ -404,7 +411,7 @@ def test_invalid_error_envelopes_do_not_prove_timeout_on_503(payload: dict) -> N
 @pytest.mark.parametrize(
     ("status_code", "expected"),
     [
-        (503, _AttemptFailure()),
+        (503, _AttemptFailure(category="http_status_failure", http_status=503)),
         (429, _AttemptRetryEligible(status_code=429)),
         (500, _AttemptRetryEligible(status_code=500)),
         (502, _AttemptRetryEligible(status_code=502)),
@@ -447,8 +454,71 @@ def test_bare_malformed_503_and_other_non_retryable_statuses_are_terminal_failur
 ) -> None:
     result = _classify_complete_response(status_code, body)
 
-    assert result == _AttemptFailure()
+    category = "query_rejected" if b'"errorType":"bad_data"' in body else "http_status_failure"
+    assert result == _AttemptFailure(category=category, http_status=status_code)
     assert "provider-text-must-not-leak" not in repr(result)
+
+
+@pytest.mark.parametrize(
+    ("status_code", "payload", "category"),
+    [
+        (
+            401,
+            {"status": "error", "errorType": "bad_data", "error": "provider-text"},
+            "authentication_failed",
+        ),
+        (
+            400,
+            {"status": "error", "errorType": "bad_data", "error": "provider-text"},
+            "query_rejected",
+        ),
+        (
+            418,
+            {"status": "unexpected", "error": "provider-text"},
+            "http_status_failure",
+        ),
+        (
+            200,
+            {"status": "success", "data": {"resultType": "vector", "result": []}},
+            "response_invalid",
+        ),
+        (200, _success([], warnings=["provider-warning"]), "provider_warning"),
+        (
+            200,
+            _success(
+                [
+                    {"metric": {"unsafe": "provider-label"}, "values": []},
+                    {"metric": {"unsafe": "another-label"}, "values": []},
+                ]
+            ),
+            "multiple_series_returned",
+        ),
+        (
+            200,
+            _success(
+                [
+                    {
+                        "metric": {"unsafe": "provider-label"},
+                        "values": [[_START.timestamp(), "not-a-float"]],
+                    }
+                ]
+            ),
+            "invalid_sample_data",
+        ),
+    ],
+)
+def test_complete_response_failure_categories_are_closed_and_discard_provider_content(
+    status_code: int, payload: dict, category: str
+) -> None:
+    """Classification retains only the safe category and bounded approved metadata."""
+    result = _classify_complete_response(status_code, json.dumps(payload).encode())
+
+    assert isinstance(result, _AttemptFailure)
+    assert result.category == category
+    assert "provider-text" not in repr(result)
+    assert "provider-warning" not in repr(result)
+    assert "provider-label" not in repr(result)
+    assert "another-label" not in repr(result)
 
 
 @pytest.mark.parametrize("status_code", [429, 500, 502, 504])
@@ -488,5 +558,6 @@ def test_streamed_response_over_the_cap_fails_and_closes_without_classifying_sta
 
     outcome = _acquire(_provider(_source(), handler))
 
-    assert outcome == MetricSeriesAcquisitionFailure(diagnostic="prometheus_acquisition_failed")
+    failure = _assert_safe_failure(outcome)
+    assert failure.diagnostic_category == "response_too_large"
     assert closed is True

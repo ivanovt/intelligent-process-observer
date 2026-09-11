@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 import asyncio
+from uuid import UUID
 
+from app.core.diagnostics import DiagnosticEvent, OperationalEventEmitter
 from app.knowledge.contracts import (
     KnowledgeReference,
     KnowledgeRetrievalRequest,
@@ -21,7 +23,14 @@ from app.knowledge.ports import KnowledgeRetriever
 class BoundedRetrievalExecutor:
     """Enforce finding grounding and a sequential two-call retrieval budget per run."""
 
-    def __init__(self, frozen_finding_ids: frozenset[str], retriever: KnowledgeRetriever) -> None:
+    def __init__(
+        self,
+        frozen_finding_ids: frozenset[str],
+        retriever: KnowledgeRetriever,
+        *,
+        observation_run_id: UUID | None = None,
+        emitter: OperationalEventEmitter | None = None,
+    ) -> None:
         """Bind this executor to one non-empty immutable finding scope and retriever."""
         if not frozen_finding_ids or any(not finding_id for finding_id in frozen_finding_ids):
             raise ValueError("frozen_finding_ids must be a non-empty set of non-empty values")
@@ -32,6 +41,8 @@ class BoundedRetrievalExecutor:
         self._consumed_slots = 0
         self._active = False
         self._attempts: dict[int, RetrievalAttempt] = {}
+        self._observation_run_id = observation_run_id
+        self._emitter = emitter or OperationalEventEmitter()
 
     @property
     def ledger(self) -> tuple[RetrievalAttempt, ...]:
@@ -50,6 +61,7 @@ class BoundedRetrievalExecutor:
             self._next_submission_ordinal += 1
             rejection = self._rejection_reason(request)
             if rejection is not None:
+                self._emit("knowledge_retrieval_policy_rejected")
                 outcome = RetrievalRejected(rejection_reason=rejection)
                 self._record_rejection(submission_ordinal, request, outcome)
                 return outcome
@@ -108,14 +120,30 @@ class BoundedRetrievalExecutor:
         try:
             items = await self._retriever.retrieve(request)
         except TimeoutError:
+            self._emit("knowledge_retrieval_timeout")
             return RetrievalTimeout()
         except asyncio.CancelledError:
             raise
         except Exception:
+            self._emit("knowledge_retrieval_failed")
             return RetrievalFailure(diagnostic_code="retriever_failed")
         if not _valid_batch(items):
+            self._emit("knowledge_retrieval_invalid")
             return RetrievalFailure(diagnostic_code="invalid_retriever_result")
         return RetrievalSuccess(items=items)
+
+    def _emit(self, category: str) -> None:
+        """Emit safe retrieval-boundary metadata without tool input or content."""
+        self._emitter.emit(
+            DiagnosticEvent(
+                event="knowledge_retrieval_failed",
+                category=category,
+                observation_run_id=self._observation_run_id,
+                agent_role="observation_reasoning",
+                phase="hypotheses",
+                component="knowledge_retrieval",
+            )
+        )
 
     async def _release_active(self) -> None:
         """Release the run-local active guard after caller cancellation."""

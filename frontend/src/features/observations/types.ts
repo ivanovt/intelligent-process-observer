@@ -31,3 +31,13 @@ export interface DefinitionCapabilities { metric:PrometheusMetricCapability[] }
 export interface ObservationCreate { name:string; description:string|null; objective:string; lenses:MetricLensCreate[]; alert_lenses:AlertLensCreate[]; relationships:RelationshipCreate[] }
 export interface ApiErrorEnvelope { code:string; message:string; field?:string }
 export class ApiError extends Error { readonly status:number; readonly code:string; readonly field?:string; constructor(status:number,code:string,message:string,field?:string) { super(message); this.status=status; this.code=code; this.field=field } }
+/** The fixed, non-persisting candidate sent to the Metric query preflight endpoint. */
+export interface MetricPreflightRequest { source_id:string; query:string; validation_window:{duration:'15m'} }
+/** One typed sample returned when a Metric query resolves to one series. */
+export interface MetricPreflightSample { timestamp:string; value:number|null; value_status:'finite'|'nan'|'positive_infinity'|'negative_infinity' }
+/** A successful Metric preflight result for exactly one time series. */
+export interface MetricPreflightSuccess { valid:true; resolved_start:string; resolved_end:string; step_seconds:number; labels:Record<string,string>; samples:MetricPreflightSample[]; warnings:string[] }
+/** A non-persisting Metric preflight result that did not resolve to one series. */
+export interface MetricPreflightFailure { valid:false; code:string; message:string; series_count:number|null; label_sets:Record<string,string>[]; warnings:string[] }
+/** The discriminated response contract of the Metric query preflight endpoint. */
+export type MetricPreflightResponse=MetricPreflightSuccess|MetricPreflightFailure

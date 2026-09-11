@@ -3,11 +3,13 @@
 # ruff: noqa: E501
 from __future__ import annotations
 
+from app.core.diagnostics import OperationalEventEmitter
 from app.core.settings import Settings
 from app.infrastructure.agents.pydantic_ai_alerts import PydanticAIAlertAnalysisAgent
 from app.infrastructure.agents.pydantic_ai_metrics import PydanticAIMetricsAnalysisAgent
 from app.infrastructure.agents.pydantic_ai_reasoning import PydanticAIObservationReasoningAgent
 from app.infrastructure.agents.pydantic_ai_reporting import PydanticAIReportGenerationAgent
+from app.infrastructure.agents.tracing import AgentTraceRecorder
 
 
 def build_reasoning_model(settings: Settings):
@@ -62,30 +64,54 @@ def _build_model(settings: Settings, model_name: str):
     )
 
 
-def build_metric_agent(settings: Settings) -> PydanticAIMetricsAnalysisAgent:
+def build_metric_agent(
+    settings: Settings,
+    *,
+    trace_recorder: AgentTraceRecorder | None = None,
+    emitter: OperationalEventEmitter | None = None,
+) -> PydanticAIMetricsAnalysisAgent:
     """Build the configured production adapter for Metric analysis only."""
     return PydanticAIMetricsAnalysisAgent(
         build_metric_model(settings),
         timeout_seconds=settings.metric_analysis_request_timeout_seconds,
         max_output_tokens=settings.metric_analysis_max_output_tokens,
+        model_name=settings.metric_analysis_model,
+        trace_recorder=trace_recorder,
+        emitter=emitter,
     )
 
 
-def build_alert_agent(settings: Settings) -> PydanticAIAlertAnalysisAgent:
+def build_alert_agent(
+    settings: Settings,
+    *,
+    trace_recorder: AgentTraceRecorder | None = None,
+    emitter: OperationalEventEmitter | None = None,
+) -> PydanticAIAlertAnalysisAgent:
     """Build the configured production adapter for Alert analysis only."""
     return PydanticAIAlertAnalysisAgent(
         build_alert_model(settings),
         timeout_seconds=settings.alert_analysis_request_timeout_seconds,
         max_output_tokens=settings.alert_analysis_max_output_tokens,
+        model_name=settings.alert_analysis_model,
+        trace_recorder=trace_recorder,
+        emitter=emitter,
     )
 
 
-def build_reasoning_agent(settings: Settings) -> PydanticAIObservationReasoningAgent:
+def build_reasoning_agent(
+    settings: Settings,
+    *,
+    trace_recorder: AgentTraceRecorder | None = None,
+    emitter: OperationalEventEmitter | None = None,
+) -> PydanticAIObservationReasoningAgent:
     """Build the configured production adapter for all Observation Reasoning phases."""
     return PydanticAIObservationReasoningAgent(
         build_reasoning_model(settings),
         timeout_seconds=settings.openrouter_request_timeout_seconds,
         max_output_tokens=settings.observation_reasoning_max_output_tokens,
+        model_name=settings.observation_reasoning_model,
+        trace_recorder=trace_recorder,
+        emitter=emitter,
     )
 
 
@@ -111,10 +137,18 @@ def build_report_model(settings: Settings):
     )
 
 
-def build_report_agent(settings: Settings) -> PydanticAIReportGenerationAgent:
+def build_report_agent(
+    settings: Settings,
+    *,
+    trace_recorder: AgentTraceRecorder | None = None,
+    emitter: OperationalEventEmitter | None = None,
+) -> PydanticAIReportGenerationAgent:
     """Build the configured production adapter for report presentation only."""
     return PydanticAIReportGenerationAgent(
         build_report_model(settings),
         timeout_seconds=settings.openrouter_request_timeout_seconds,
         max_output_tokens=settings.observation_report_max_output_tokens,
+        model_name=settings.observation_report_model,
+        trace_recorder=trace_recorder,
+        emitter=emitter,
     )
