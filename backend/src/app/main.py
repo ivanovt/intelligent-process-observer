@@ -22,6 +22,8 @@ from app.observation_runs.read import ObservationRunReadService
 from app.observations.api import router
 from app.observations.errors import ApiError
 from app.observations.service import ObservationDefinitionService
+from app.overview_runtime.api import router as overview_runtime_router
+from app.overview_runtime.read import OverviewRuntimeReadService
 
 
 @asynccontextmanager
@@ -41,6 +43,9 @@ async def lifespan(app: FastAPI):
     runtime_repository = RuntimePersistenceRepository()
     runtime_state_store = RuntimeExecutionStateStore(app.state.session_factory, runtime_repository)
     app.state.observation_run_read_service = ObservationRunReadService(
+        app.state.session_factory, runtime_repository
+    )
+    app.state.overview_runtime_read_service = OverviewRuntimeReadService(
         app.state.session_factory, runtime_repository
     )
     app.state.observation_run_manager = ObservationRunManager(
@@ -63,6 +68,7 @@ async def lifespan(app: FastAPI):
 app = FastAPI(title="Intelligent Process Observer", lifespan=lifespan)
 app.include_router(router)
 app.include_router(observation_runs_router)
+app.include_router(overview_runtime_router)
 
 
 @app.exception_handler(ApiError)
