@@ -1,5 +1,14 @@
 # Changelog
 
+## 6.9 — 2026-09-12
+
+- добавен ADR-172: MVP browser presentation на persisted `ObservationReport` Markdown
+  използва project-owned dependency-free safe subset renderer;
+- browser renderer-ът е inert за raw HTML, links и unsupported Markdown и не променя
+  persisted content, analytical ownership или Report Agent boundary;
+- затворен е само browser-renderer item-ът в Report Agent backlog-а; export,
+  notification и други renderer adapters остават Open/Deferred.
+
 ## 6.8 — 2026-09-11
 
 - добавен ADR-171 за minimum viable self-observability: correlated backend operational

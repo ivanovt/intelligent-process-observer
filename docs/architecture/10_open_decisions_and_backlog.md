@@ -1,8 +1,8 @@
 # Open decisions и архитектурен backlog
 
 **Статус:** Open / Deferred register  
-**Версия:** 5.2
-**Актуализирано:** 2026-09-09
+**Версия:** 5.3
+**Актуализирано:** 2026-09-12
 
 Този файл съдържа **само нерешени или съзнателно deferred** въпроси. Нищо тук не трябва да се използва като implicit requirement.
 
@@ -81,7 +81,8 @@
 
 - Exact Markdown template/sections за engineer vs operator variants.
 - Localization/language policy на report-а.
-- Rendering/notification adapters извън Markdown artifact-а.
+- Export, notification и други renderer adapters извън приетия MVP browser renderer
+  за persisted Markdown artifact-а.
 
 ## 7. Triggering and lifecycle
 

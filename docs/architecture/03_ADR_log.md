@@ -3408,6 +3408,41 @@ distributed tracing backend или нова persistence schema.
 
 ---
 
+## ADR-172 — MVP browser renderer за persisted Markdown report е dependency-free safe subset
+
+**Status:** Accepted
+
+**Context**
+`ObservationReport.content` остава persisted Markdown presentation artifact, а
+`Report Agent` остава presentation-only component съгласно ADR-086/ADR-087 и
+`09_report_agent.md`. MVP Run Detail трябва да го покаже четимо в browser без нова
+Markdown dependency, без browser-side повторно генериране от structured analysis и без
+untrusted content да създава HTML, links или document structure.
+
+**Decision**
+MVP browser presentation използва project-owned, dependency-free, line-oriented safe
+renderer за малкия deterministic Markdown subset, произвеждан от backend renderer-а:
+ATX headings, paragraphs, blockquotes, unordered lists и inline code. Renderer-ът
+поставя content само като text children. Raw HTML, Markdown links и unsupported или
+malformed syntax остават видим inert text; не се използва general-purpose Markdown
+engine, active navigation или HTML injection.
+
+Browser view запазва document order и content на persisted artifact-а. Existing Copy
+Markdown action копира exact persisted `report.content`; formatted view не mutира,
+обобщава или придобива analytical authority над `ObservationAnalysisResult`. Това
+решение не променя Markdown persistence, Report Agent input/output boundary, export,
+notification или други report-rendering decisions.
+
+**Consequences**
+- MVP получава readable, safe browser presentation без dependency или нов public API;
+- browser renderer-ът е presentation adapter, не source of analytical meaning и не
+  може да добавя/махa findings, hypotheses, limitations или traceability;
+- exact persisted Markdown остава interoperable artifact и source за Copy action;
+- export renderers, notification adapters, other report formats, localization и
+  general-purpose Markdown engine остават Open/Deferred и изискват отделно решение.
+
+---
+
 # Open decisions
 
 Актуалният и нормативен backlog е в `10_open_decisions_and_backlog.md`. Отворените въпроси **не** са implicit requirements и трябва да получат нов ADR, когато бъдат решени.

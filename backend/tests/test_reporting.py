@@ -197,15 +197,15 @@ def test_renderer_restores_source_order_and_all_traceability_without_mutation() 
     assert report.observation_run_id == request.analysis_result.identity.observation_run_id
     assert report.generated_at is NOW
     assert "## Overall Assessment" in report.content
-    assert f"### Finding {_markdown_opaque('finding-temperature')}" in report.content
-    assert f"source type {_markdown_opaque('metric_result')}" in report.content
+    assert f"### Finding ID: {_markdown_opaque('finding-temperature')}" in report.content
+    assert f"Source type: {_markdown_opaque('metric_result')}" in report.content
     assert "Supported by findings: " + _inline_values(("finding-temperature",)) in report.content
     assert (
-        f"source ID {_markdown_opaque('manual')}; "
-        f"reference {_markdown_opaque('section-4')}" in report.content
+        f"Source ID: {_markdown_opaque('manual')}; "
+        f"reference: {_markdown_opaque('section-4')}" in report.content
     )
     assert "possible explanation, not a confirmed cause" in report.content
-    assert "missing\\_lens\\_evidence" in report.content
+    assert "code: `missing_lens_evidence`" in report.content
 
 
 def test_renderer_uses_injective_delimiter_safe_traceability_encoding() -> None:
@@ -268,19 +268,54 @@ def test_renderer_uses_injective_delimiter_safe_traceability_encoding() -> None:
     delimiter_bearing_locator = ("items / key=other", 0)
     split_locator = ("items", "other / key=0")
     assert _markdown_opaque(actual_control) != _markdown_opaque(literal_escape)
-    assert _markdown_opaque(uuid_source_id) != _markdown_opaque(string_uuid_source_id)
+    assert _markdown_opaque(uuid_source_id) == _markdown_opaque(string_uuid_source_id)
     assert _markdown_opaque(actual_control_reference) != _markdown_opaque(literal_escape_reference)
     assert _locator_text(delimiter_bearing_locator) != _locator_text(split_locator)
-    assert r"string\=" in _markdown_opaque(actual_control)
-    assert r"key\=" in _locator_text(delimiter_bearing_locator)
-    assert f"source ID {_markdown_opaque(actual_control)}" in content
-    assert f"source ID {_markdown_opaque(literal_escape)}" in content
-    assert f"source ID {_markdown_opaque(uuid_source_id)}" in content
-    assert f"source ID {_markdown_opaque(string_uuid_source_id)}" in content
-    assert f"reference {_markdown_opaque(actual_control_reference)}" in content
-    assert f"reference {_markdown_opaque(literal_escape_reference)}" in content
-    assert f"locator {_locator_text(delimiter_bearing_locator)}" in content
-    assert f"locator {_locator_text(split_locator)}" in content
+    assert _markdown_opaque(actual_control) == r"`metric\nrun`"
+    assert _markdown_opaque(literal_escape) == r"`metric\\nrun`"
+    assert _locator_text(delimiter_bearing_locator) == '`["items / key=other"][0]`'
+    assert _locator_text(split_locator) == '`items["other / key=0"]`'
+    assert f"source ID: {_markdown_opaque(actual_control)}" in content
+    assert f"source ID: {_markdown_opaque(literal_escape)}" in content
+    assert f"source ID: {_markdown_opaque(uuid_source_id)}" in content
+    assert f"source ID: {_markdown_opaque(string_uuid_source_id)}" in content
+    assert f"reference: {_markdown_opaque(actual_control_reference)}" in content
+    assert f"reference: {_markdown_opaque(literal_escape_reference)}" in content
+    assert f"locator: {_locator_text(delimiter_bearing_locator)}" in content
+    assert f"locator: {_locator_text(split_locator)}" in content
+    assert "uuid=" not in content and "string=" not in content and "0x" not in content
+
+
+def test_renderer_contains_hostile_identifiers_and_locator_segments_as_inline_code() -> None:
+    """Untrusted traceability values cannot create Markdown blocks or active markup."""
+    hostile_id = "`</code>\n## injected heading\n- injected list"
+    hostile_locator = ("evidence", '`<script>alert("x")</script>\n[link](https://bad.invalid)')
+    finding = Finding(
+        id=hostile_id,
+        statement="A hostile traceability fixture.",
+        evidence_refs=(
+            EvidenceReference(
+                source_type="metric_result", source_id=hostile_id, locator=hostile_locator
+            ),
+        ),
+    )
+    request = _request(findings=(finding,), hypotheses=(), limitations=())
+
+    content = build_report(request, _draft(request), NOW).content
+
+    assert _markdown_opaque(hostile_id).startswith("``")
+    assert _markdown_opaque(hostile_id).endswith("``")
+    assert _locator_text(hostile_locator).startswith("``")
+    assert r"\n## injected heading" in content
+    assert r"\n[link](https://bad.invalid)" in content
+    assert "<script>alert" in content
+    assert [line for line in content.splitlines() if line.startswith("## ")] == [
+        "## Overall Assessment",
+        "## Findings",
+        "## Possible Explanations",
+        "## Analysis Limitations",
+    ]
+    assert not any(line.startswith("- injected list") for line in content.splitlines())
 
 
 def test_renderer_encoding_distinguishes_astral_and_surrogate_values_without_int_limits() -> None:
@@ -296,9 +331,9 @@ def test_renderer_encoding_distinguishes_astral_and_surrogate_values_without_int
 
     assert opaque_astral != opaque_surrogate
     assert astral_locator != surrogate_locator
-    assert r"\\U0001f600" in opaque_astral
-    assert r"\\ud83d\\ude00" in opaque_surrogate
-    assert unbounded_locator.startswith(r"\[index\=0x")
+    assert astral_scalar in opaque_astral
+    assert r"\uD83D\uDE00" in opaque_surrogate
+    assert unbounded_locator.startswith("`[")
     assert len(unbounded_locator) > 4_000
 
     finding = Finding(
@@ -325,11 +360,11 @@ def test_renderer_encoding_distinguishes_astral_and_surrogate_values_without_int
     request = _request(findings=(finding,), hypotheses=(), limitations=())
     content = build_report(request, _draft(request), NOW).content
 
-    assert f"source ID {opaque_astral}" in content
-    assert f"source ID {opaque_surrogate}" in content
-    assert f"locator {astral_locator}" in content
-    assert f"locator {surrogate_locator}" in content
-    assert f"locator {unbounded_locator}" in content
+    assert f"source ID: {opaque_astral}" in content
+    assert f"source ID: {opaque_surrogate}" in content
+    assert f"locator: {astral_locator}" in content
+    assert f"locator: {surrogate_locator}" in content
+    assert f"locator: {unbounded_locator}" in content
 
 
 def test_renderer_honestly_represents_empty_analysis_collections() -> None:
@@ -337,8 +372,9 @@ def test_renderer_honestly_represents_empty_analysis_collections() -> None:
     request = _request(state="no_significant_findings", findings=(), hypotheses=(), limitations=())
     report = build_report(request, _draft(request), NOW)
     assert "No significant findings were identified" in report.content
-    assert "No possible explanations were supplied" in report.content
-    assert "No analysis limitations were supplied" in report.content
+    assert "No knowledge-grounded possible explanation was produced" in report.content
+    assert "No analysis limitation was identified in the supplied result" in report.content
+    assert "persist" not in report.content.lower()
 
 
 @pytest.mark.parametrize("state", ["uncertain", "significant_findings_present"])
@@ -367,9 +403,7 @@ def test_renderer_excludes_non_english_and_control_bearing_semantic_context() ->
     assert "Рестартирайте" not in report.content
     assert "основната причина" not in report.content
     assert "Observation ID:" in report.content and "Observation Run ID:" in report.content
-    assert (
-        str(request.analysis_result.identity.observation_id).replace("-", "\\-") in report.content
-    )
+    assert str(request.analysis_result.identity.observation_id) in report.content
 
 
 @pytest.mark.parametrize(
@@ -431,11 +465,11 @@ def test_renderer_escapes_all_dynamic_markdown_punctuation_and_normalizes_lines(
         "# Observation Report",
         "## Overall Assessment",
         "## Findings",
-        f"### Finding {_markdown_opaque('finding-temperature')}",
+        f"### Finding ID: {_markdown_opaque('finding-temperature')}",
         "## Possible Explanations",
-        f"### Possible explanation {_markdown_opaque('hypothesis-valve')}",
+        f"### Possible explanation ID: {_markdown_opaque('hypothesis-valve')}",
         "## Analysis Limitations",
-        f"### Limitation 1: {_markdown_opaque('missing_lens_evidence')}",
+        f"### Limitation 1 (code: {_markdown_opaque('missing_lens_evidence')})",
     ]
 
 
