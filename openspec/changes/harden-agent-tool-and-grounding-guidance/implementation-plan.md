@@ -283,3 +283,4 @@ Mutable Coordinator-owned metadata only; do not add requirements or redesign dec
 | Bounded correction | none |
 | Stop/escalation reason | none |
 | Home DEV smoke | PASS — run `b0ddf4df-f220-4955-8b87-36c3f10c8a4e`; both target paths exercised, no trace content recorded |
+| Final local verification | PASS — `make check`; 974 backend passed, 84 skipped; 176 frontend passed; strict OpenSpec 21/21 |
