@@ -21,10 +21,15 @@ cover guidance clauses, capability descriptions, initial/continuation request se
 tool-free settings, preserved rejection behavior, empty unavailable-retrieval completion,
 and private trace allowlisting.
 
-Home DEV smoke: **INCONCLUSIVE**. Local `.env` has development tracing and a configured
-OpenRouter key, but no operator-designated Home DEV Observation or approved no-knowledge
-condition was available in this repository context. No live provider run was launched;
-no trace content or secrets were recorded here.
+Home DEV smoke history: an earlier attempt was **INCONCLUSIVE** because no
+operator-designated Home DEV Observation or approved no-knowledge condition was available;
+no live provider run was launched for that attempt.
+
+Later Home DEV smoke: **PASS** — run ID
+`b0ddf4df-f220-4955-8b87-36c3f10c8a4e`. Both Metric target paths were exercised
+sequentially with empty arguments and non-parallel settings. Findings caused hypothesis
+invocation; no upstream or direct knowledge references were available, and hypotheses
+were empty with no fabricated reference. No trace content or secrets are recorded here.
 
 Scope/normative concern: none. Upstream-reference wording is prompt-semantics-only; no
 Log or reasoning provenance contract support was added.
