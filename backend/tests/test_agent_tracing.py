@@ -6,6 +6,7 @@ import asyncio
 import json
 import logging
 from datetime import UTC, datetime
+from types import SimpleNamespace
 from uuid import UUID
 
 import pytest
@@ -18,6 +19,7 @@ from app.infrastructure.agents.tracing import (
     FileAgentTraceRecorder,
     NoOpAgentTraceRecorder,
     emit_agent_failure,
+    model_request_metadata,
 )
 
 _RUN_ID = UUID("00000000-0000-0000-0000-000000000010")
@@ -116,6 +118,28 @@ def test_trace_retains_allowlisted_token_limits_and_usage_counts(tmp_path) -> No
     artifact = json.loads(path.read_text(encoding="utf-8"))
     assert artifact["requests"][0]["model_settings"] == {"max_tokens": 321}
     assert artifact["usage"] == {"input_tokens": 11, "output_tokens": 7, "total_tokens": 18}
+
+
+def test_trace_metadata_allowlists_non_parallel_tool_steering(tmp_path) -> None:
+    """Private traces retain the safe request steering flag without broadening settings capture."""
+    recorder = FileAgentTraceRecorder(root=tmp_path)
+    metadata = model_request_metadata(
+        ordinal=1,
+        model_settings={
+            "timeout": 120,
+            "parallel_tool_calls": False,
+            "provider_secret": "must-not-appear",
+        },
+        model_request_parameters=SimpleNamespace(function_tools=(), output_tools=()),
+    )
+
+    _record(recorder, request_metadata=(metadata,))
+
+    path = tmp_path / str(_RUN_ID) / f"{_INVOCATION_ID}-metric-analysis.json"
+    assert json.loads(path.read_text(encoding="utf-8"))["requests"][0]["model_settings"] == {
+        "timeout": 120,
+        "parallel_tool_calls": False,
+    }
 
 
 def test_trace_failure_retains_bounded_secret_redacted_detail(tmp_path) -> None:

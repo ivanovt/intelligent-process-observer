@@ -491,7 +491,7 @@ def _safe_model_settings(value: object) -> dict[str, object] | None:
         return None
     return {
         key: _json_value(value[key])
-        for key in ("timeout", "max_tokens", "temperature")
+        for key in ("timeout", "max_tokens", "temperature", "parallel_tool_calls")
         if key in value
     }
 

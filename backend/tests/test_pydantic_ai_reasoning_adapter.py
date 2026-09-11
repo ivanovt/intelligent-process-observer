@@ -148,6 +148,16 @@ def prompt(messages) -> str:
     )
 
 
+def system_prompt(messages) -> str:
+    """Extract server-owned instructions from a function-model request."""
+    return " ".join(
+        " ".join(part.content.split())
+        for message in messages
+        for part in message.parts
+        if part.part_kind == "system-prompt"
+    )
+
+
 def test_findings_are_structured_single_request_with_no_tools_and_exact_projection() -> None:
     request = finding_request()
     model, calls = scripted_model([output({"findings": ()})])
@@ -155,6 +165,7 @@ def test_findings_are_structured_single_request_with_no_tools_and_exact_projecti
     assert value.findings == () and len(calls) == 1
     messages, info = calls[0]
     assert not info.function_tools
+    assert info.model_settings == {"timeout": 120, "max_tokens": 12_288}
     assert prompt(messages) == request.model_dump_json()
     system_prompt = " ".join(
         part.content
@@ -189,6 +200,24 @@ def test_hypothesis_retrieval_trajectories_and_refinement_are_bounded() -> None:
     assert [item.query for item in retriever.calls] == ["first", "refine"]
     assert retriever.calls[1].refinement == RetrievalRefinement(unresolved_gap="gap")
     assert [tool_def.name for tool_def in calls[0][1].function_tools] == ["retrieve_knowledge"]
+    instructions = system_prompt(calls[0][0]).lower()
+    for clause in (
+        "retrieval is optional",
+        "frozen finding ids",
+        "independent or refine",
+        "exact knowledge references",
+        "preserved upstream",
+        "`hypotheses=[]`",
+        "never invent a reference",
+        "untrusted knowledge-only data",
+    ):
+        assert clause in instructions
+    for _, info in calls:
+        assert info.model_settings == {
+            "timeout": 120,
+            "max_tokens": 12_288,
+            "parallel_tool_calls": False,
+        }
 
 
 @pytest.mark.parametrize(
@@ -265,6 +294,7 @@ def test_overall_state_is_structured_single_request_without_tools_or_hypothesis_
     assert value.overall_state == "uncertain" and len(calls) == 1
     messages, info = calls[0]
     assert not info.function_tools
+    assert info.model_settings == {"timeout": 120, "max_tokens": 12_288}
     sent = prompt(messages)
     assert sent == request.model_dump_json()
     assert "hypotheses" not in sent and "knowledge" not in sent

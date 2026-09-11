@@ -647,6 +647,52 @@ rm -rf tmp/agent-traces
 
 Never commit, copy into issue trackers, or serve files from that directory.
 
+#### Manual verification: Home DEV agent interaction smoke
+
+This opt-in smoke checks provider steering against the existing operator-controlled
+**Home DEV** Observation. It is not part of `make check`; do not create or alter an
+Observation merely to run it. Before starting, confirm that the local Home DEV
+Observation, its Prometheus source, a valid `OPENROUTER_API_KEY`, and the configured
+model route are operator-approved. Set `APP_ENV=development` and
+`AGENT_TRACE_ENABLED=true` in the local root `.env`, then restart the backend with
+`make backend` so tracing is composed from those settings.
+
+List the local Observation definitions and identify the existing Home DEV ID without
+copying its provider configuration into notes or tickets:
+
+```bash
+curl -sS http://localhost:8000/api/v1/observations
+```
+
+Launch that ID with a concrete completed UTC window. Substitute the approved Home DEV
+ID and an appropriate past window; neither model settings nor tracing are request inputs:
+
+```bash
+curl -sS -X POST http://localhost:8000/api/v1/observation-runs \
+  -H 'Content-Type: application/json' \
+  -d '{"observation_id":"<home-dev-observation-id>","analysis_window":{"from":"<utc-from>","to":"<utc-to>"}}'
+```
+
+Record only the returned `observation_run_id`, then inspect the correlated local files
+under `tmp/agent-traces/<observation-run-id>/`. Do not copy trace payloads. For the
+Metric artifact, verify each request records `parallel_tool_calls=false` and each raw
+Metric response has at most one optional-tool call with `{}` arguments. For the
+hypothesis artifact, verify the frozen-finding invocation and, under the no-knowledge
+condition, that no preserved upstream reference or direct retrieval reference was
+available. A smoke is **PASS** only when it exercised an admitted Metric optional-tool
+call, every Metric response had at most one empty-argument tool call, frozen findings
+caused a hypothesis invocation, and that no-knowledge hypothesis completion was
+`hypotheses=[]` with no fabricated reference.
+
+Mark it **INCONCLUSIVE** (not PASS) when no Metric tool call or hypothesis invocation
+occurred, a preserved/direct knowledge reference made a different condition available, or
+another prerequisite prevented either behavior from being exercised. Mark it **FAIL** if
+the target model emitted parallel Metric calls or fabricated a knowledge reference under
+the exercised no-knowledge condition; retain the existing deterministic rejection and
+escalate model/default evaluation separately. Record only the run ID, outcome, and unmet
+or exercised thresholds. Disable tracing after the run and remove `tmp/agent-traces/`
+locally when the investigation is complete; never add trace content to Git.
+
 #### Error-boundary coverage matrix
 
 This matrix is maintained when application-owned normalization boundaries change. An

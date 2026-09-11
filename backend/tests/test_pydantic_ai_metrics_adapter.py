@@ -115,6 +115,16 @@ def user_prompt(messages: object) -> str:
     raise AssertionError("FunctionModel did not receive the serialized agent request")
 
 
+def system_prompt(messages: object) -> str:
+    """Extract server-owned instructions from a function-model request."""
+    return " ".join(
+        " ".join(part.content.split())
+        for message in messages
+        for part in message.parts
+        if part.part_kind == "system-prompt"
+    )
+
+
 def test_adapter_preserves_usable_projections_and_zero_tool_completion() -> None:
     for data_quality in ("good", "degraded"):
         model, calls = function_model([completion])
@@ -161,6 +171,41 @@ def test_adapter_routes_each_serial_tool_call_through_the_existing_registry() ->
         ("oscillation", True, True),
         ("stuck_signal", True, True),
     ]
+
+
+def test_usable_metric_guidance_descriptions_and_settings_steer_every_tool_request() -> None:
+    """Tool-enabled requests retain server-owned sequential steering through continuations."""
+    model, calls = function_model(
+        [lambda _: ModelResponse(parts=[ToolCallPart("spike", {})]), completion]
+    )
+
+    assert run(
+        PydanticAIMetricsAnalysisAgent(model).complete(usable_request(), tool_registry())
+    ) == (MetricAgentCompletion())
+    assert len(calls) == 2
+    instructions = system_prompt(calls[0][0]).lower()
+    for clause in (
+        "immutable structured metric request",
+        "empty object (`{}`)",
+        "at most one optional tool",
+        "wait for its result",
+        "at most once",
+        "at most three tool attempts",
+        "strict required completion object",
+    ):
+        assert clause in instructions
+    descriptions = {tool.name: tool.description for tool in calls[0][1].function_tools}
+    assert descriptions == {
+        "spike": "Inspect the supplied immutable Metric evidence for abrupt spike behavior.",
+        "oscillation": "Inspect the supplied immutable Metric evidence for oscillating behavior.",
+        "stuck_signal": "Inspect the supplied immutable Metric evidence for a stuck signal.",
+    }
+    for _, info in calls:
+        assert info.model_settings == {
+            "timeout": 120,
+            "max_tokens": 12_288,
+            "parallel_tool_calls": False,
+        }
 
 
 def test_adapter_routes_duplicate_parallel_unregistered_and_fourth_requests_to_policy() -> None:
@@ -262,6 +307,7 @@ def test_adapter_exposes_no_tools_for_the_insufficient_projection() -> None:
     assert len(calls) == 1
     messages, info = calls[0]
     assert info.function_tools == []
+    assert info.model_settings == {"timeout": 120, "max_tokens": 12_288}
     assert user_prompt(messages) == request.model_dump_json(by_alias=True)
 
 
@@ -288,6 +334,7 @@ def test_enabled_metric_trace_captures_one_model_invocation_without_changing_com
     assert artifact["invocation"]["terminal_state"] == "validated_completion"
     assert artifact["model_visible"]["messages"]
     assert artifact["requests"][0]["ordinal"] == 1
+    assert artifact["requests"][0]["model_settings"]["parallel_tool_calls"] is False
 
 
 def test_policy_rejected_metric_trace_retains_the_raw_model_response(tmp_path) -> None:
