@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 
 import pytest
 from pydantic import ValidationError
@@ -126,14 +127,20 @@ def test_composition_selects_trace_recorder_from_development_only_setting() -> N
     assert enabled.trace_recorder.root == enabled_settings.agent_trace_root
 
 
-def test_missing_openrouter_configuration_emits_safe_operational_metadata(caplog) -> None:
+def test_missing_openrouter_configuration_emits_safe_operational_metadata() -> None:
     """Unavailable agent ports are visible without disclosing configuration values."""
-    with caplog.at_level("WARNING", logger="app.operational"):
-        build_production_execution_composition(
-            settings=Settings(openrouter_api_key=None), session_factory=async_sessionmaker()
-        )
+    messages: list[str] = []
+    logger = logging.getLogger("test.production-composition.operational")
+    logger.handlers = [_CollectingHandler(messages)]
+    logger.setLevel(logging.WARNING)
+    logger.propagate = False
+    build_production_execution_composition(
+        settings=Settings(openrouter_api_key=None),
+        session_factory=async_sessionmaker(),
+        emitter=OperationalEventEmitter(logger=logger),
+    )
 
-    payloads = [json.loads(record.message) for record in caplog.records]
+    payloads = [json.loads(message) for message in messages]
     event = next(item for item in payloads if item["event"] == "agent_configuration_unavailable")
     assert event == {
         "category": "agent_configuration_missing",
@@ -175,3 +182,15 @@ def test_unavailable_alert_port_has_no_completion_or_configuration_payload() -> 
     """The unavailable Alert port cannot fabricate a valid analytical completion."""
     with pytest.raises(RuntimeError):
         asyncio.run(UnavailableAlertAnalysisAgent().complete(None, None))
+
+
+class _CollectingHandler(logging.Handler):
+    """Collect operational messages without depending on process-global logging state."""
+
+    def __init__(self, messages: list[str]) -> None:
+        super().__init__()
+        self._messages = messages
+
+    def emit(self, record: logging.LogRecord) -> None:
+        """Store the rendered message for deterministic assertions."""
+        self._messages.append(record.getMessage())
