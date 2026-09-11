@@ -23,6 +23,29 @@ def test_public_execution_policy_settings_accept_server_side_overrides() -> None
     assert settings.lens_deadline_seconds == 45.5
 
 
+def test_agent_trace_is_disabled_by_default_without_creating_a_trace_directory(
+    tmp_path, monkeypatch
+) -> None:
+    """Settings construction has no sensitive trace filesystem side effect."""
+    import app.core.settings as settings_module
+
+    monkeypatch.setattr(settings_module, "_REPOSITORY_ROOT", tmp_path)
+    settings = Settings()
+
+    assert settings.agent_trace_enabled is False
+    assert settings.agent_trace_root == tmp_path / "tmp" / "agent-traces"
+    assert not settings.agent_trace_root.exists()
+
+
+def test_agent_trace_enabled_is_valid_only_for_development_before_composition() -> None:
+    """Production-like modes cannot select sensitive tracing composition."""
+    assert Settings(app_env="development", agent_trace_enabled=True).agent_trace_enabled is True
+
+    for app_env in ("production", "test", "staging", "Development"):
+        with pytest.raises(ValidationError, match="agent_trace_enabled"):
+            Settings(app_env=app_env, agent_trace_enabled=True)
+
+
 @pytest.mark.parametrize(
     ("field", "value"),
     [

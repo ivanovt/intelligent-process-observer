@@ -2,9 +2,12 @@
 
 from __future__ import annotations
 
+import asyncio
+from contextlib import nullcontext
 from dataclasses import dataclass, field, replace
+from datetime import UTC, datetime
 
-from pydantic_ai import Agent, RunContext
+from pydantic_ai import Agent, RunContext, capture_run_messages
 from pydantic_ai.exceptions import UsageLimitExceeded
 from pydantic_ai.messages import ModelResponse, ToolCallPart
 from pydantic_ai.models import Model, ModelRequestParameters, ModelSettings
@@ -17,6 +20,18 @@ from app.alerts.contracts import (
     AlertOptionalToolOutcome,
 )
 from app.alerts.ports import AlertOptionalToolExecutor
+from app.core.diagnostics import OperationalEventEmitter
+from app.infrastructure.agents.tracing import (
+    AgentTraceContext,
+    AgentTraceRecorder,
+    NoOpAgentTraceRecorder,
+    active_trace_context,
+    elapsed_duration_ms,
+    emit_agent_failure,
+    model_request_metadata,
+    record_trace_safely,
+    trace_capture_enabled,
+)
 
 _TOOL_NAMES = (
     "recurrence_concentration_analysis",
@@ -39,6 +54,8 @@ class _RunState:
     tool_outcomes: dict[str, AlertOptionalToolOutcome] = field(default_factory=dict)
     model_requests: int = 0
     admitted_tool_attempts: int = 0
+    trace_enabled: bool = False
+    trace_requests: list[object] = field(default_factory=list)
 
 
 class _DomainToolObservingModel(WrapperModel):
@@ -57,6 +74,14 @@ class _DomainToolObservingModel(WrapperModel):
         if self._state.model_requests >= _REQUEST_LIMIT:
             raise UsageLimitExceeded("Alert Agent model request limit is eleven")
         self._state.model_requests += 1
+        if self._state.trace_enabled:
+            self._state.trace_requests.append(
+                model_request_metadata(
+                    ordinal=self._state.model_requests,
+                    model_settings=model_settings,
+                    model_request_parameters=model_request_parameters,
+                )
+            )
         response = await self.wrapped.request(messages, model_settings, model_request_parameters)
         await self._admit_tool_calls(response, model_request_parameters)
         return self._framework_safe_response(response, model_request_parameters)
@@ -112,7 +137,14 @@ class PydanticAIAlertAnalysisAgent:
     """Implement the Alert agent port using an injected PydanticAI model only."""
 
     def __init__(
-        self, model: Model, *, timeout_seconds: float = 120, max_output_tokens: int = 12_288
+        self,
+        model: Model,
+        *,
+        timeout_seconds: float = 120,
+        max_output_tokens: int = 12_288,
+        model_name: str = "configured",
+        trace_recorder: AgentTraceRecorder | None = None,
+        emitter: OperationalEventEmitter | None = None,
     ) -> None:
         """Configure one injected model with server-owned request limits."""
         self._model = model
@@ -120,20 +152,92 @@ class PydanticAIAlertAnalysisAgent:
             "timeout": timeout_seconds,
             "max_tokens": max_output_tokens,
         }
+        self._model_name = model_name
+        self._trace_recorder = trace_recorder or NoOpAgentTraceRecorder()
+        self._emitter = emitter or OperationalEventEmitter()
 
     async def complete(
         self, request: AlertAgentRequest, tools: AlertOptionalToolExecutor
     ) -> AlertAgentCompletion:
         """Translate one bounded Alert request through the injected model."""
         state = _RunState(tools=tools)
-        agent = self._build_agent(state)
-        result = await agent.run(
-            request.model_dump_json(by_alias=True),
-            deps=state,
-            model_settings=self._settings,
-            usage_limits=UsageLimits(request_limit=_REQUEST_LIMIT),
+        input_json = request.model_dump_json(by_alias=True)
+        parent_context = active_trace_context()
+        recorder: AgentTraceRecorder = (
+            self._trace_recorder if parent_context is not None else NoOpAgentTraceRecorder()
         )
-        return AlertAgentCompletion.model_validate(result.output)
+        context = (
+            AgentTraceContext(
+                observation_run_id=parent_context.observation_run_id,
+                lens_run_id=parent_context.lens_run_id,
+                lens_id=parent_context.lens_id,
+                agent_role="alert",
+                phase="analysis",
+                model=self._model_name,
+            )
+            if parent_context is not None
+            else None
+        )
+        trace_enabled = trace_capture_enabled(self._trace_recorder) and context is not None
+        state.trace_enabled = trace_enabled
+        started_at = datetime.now(UTC)
+        completion: object | None = None
+        failure: BaseException | None = None
+        usage: object | None = None
+        terminal_state = "framework_failure"
+        capture = capture_run_messages() if trace_enabled else nullcontext([])
+        with capture as messages:
+            try:
+                agent = self._build_agent(state)
+                result = await agent.run(
+                    input_json,
+                    deps=state,
+                    model_settings=self._settings,
+                    usage_limits=UsageLimits(request_limit=_REQUEST_LIMIT),
+                )
+                completion = AlertAgentCompletion.model_validate(result.output)
+                usage = result.usage
+                terminal_state = "validated_completion"
+                return completion
+            except asyncio.CancelledError as error:
+                failure = error
+                terminal_state = "cancelled"
+                if context is not None:
+                    emit_agent_failure(
+                        self._emitter,
+                        context,
+                        error,
+                        request_ordinal=state.model_requests or None,
+                        duration_ms=elapsed_duration_ms(started_at),
+                    )
+                raise
+            except Exception as error:
+                failure = error
+                if context is not None:
+                    emit_agent_failure(
+                        self._emitter,
+                        context,
+                        error,
+                        request_ordinal=state.model_requests or None,
+                        duration_ms=elapsed_duration_ms(started_at),
+                    )
+                raise
+            finally:
+                if trace_enabled and context is not None:
+                    await record_trace_safely(
+                        recorder,
+                        context,
+                        input_json=input_json,
+                        messages=messages,
+                        request_metadata=tuple(state.trace_requests),
+                        completion=completion,
+                        failure=failure,
+                        terminal_state=terminal_state,
+                        started_at=started_at,
+                        finished_at=datetime.now(UTC),
+                        usage=usage,
+                        emitter=self._emitter,
+                    )
 
     def _build_agent(self, state: _RunState) -> Agent[_RunState, AlertAgentCompletion]:
         agent: Agent[_RunState, AlertAgentCompletion] = Agent(

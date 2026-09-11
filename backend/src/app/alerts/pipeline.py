@@ -21,6 +21,7 @@ from app.alerts.ports import AlertAnalysisAgent, AlertProvider
 from app.alerts.references import acquire_prepared_references
 from app.alerts.result_builder import AlertResultBuilder
 from app.alerts.tools import AlertOptionalToolRegistry, unsuccessful_trace
+from app.infrastructure.agents.tracing import AgentTraceContext, activate_trace_context
 from app.infrastructure.persistence.runtime_contracts import LensRunStatus, StructuredReason
 
 PhaseRecorder = Callable[[str], None]
@@ -115,11 +116,21 @@ class AlertAnalysisPipeline:
         tools = self._tool_registry_factory(records, evidence)
         try:
             complete = self._agent.complete
-            completion = await (
-                complete(request, tools)
-                if len(signature(complete).parameters) > 1
-                else complete(request)
-            )
+            with activate_trace_context(
+                AgentTraceContext(
+                    observation_run_id=context.identity.observation_run_id,
+                    lens_run_id=context.identity.lens_run_id,
+                    lens_id=context.identity.lens_id,
+                    agent_role="alert",
+                    phase="analysis",
+                    model="configured",
+                )
+            ):
+                completion = await (
+                    complete(request, tools)
+                    if len(signature(complete).parameters) > 1
+                    else complete(request)
+                )
         except TimeoutError:
             return self._failed("agent_timeout")
         except Exception:

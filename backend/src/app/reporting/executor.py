@@ -27,10 +27,12 @@ class ReportGenerationExecutor:
         agent: ReportGenerationAgent,
         *,
         clock: Callable[[], datetime] | None = None,
+        trace_recorder: object | None = None,
     ) -> None:
         """Bind one framework-neutral agent and an injectable UTC report clock."""
         self._agent = agent
         self._clock = clock or (lambda: datetime.now(UTC))
+        self._trace_recorder = trace_recorder
 
     async def execute(self, value: object) -> ReportGenerationOutcome:
         """Execute at most one presentation request and fail closed on all failures."""
@@ -56,6 +58,29 @@ class ReportGenerationExecutor:
             report = build_report(request, validate_presentation(request, draft), self._clock())
         except asyncio.CancelledError:
             raise
-        except Exception:
+        except Exception as error:
+            await self._record_validation(
+                request.context.identity.observation_run_id, outcome="rejected", detail=str(error)
+            )
             return ReportFailure(code="report_result_invalid", component="report_builder")
+        await self._record_validation(
+            request.context.identity.observation_run_id, outcome="accepted"
+        )
         return ReportSuccess(report=report)
+
+    async def _record_validation(
+        self, observation_run_id, *, outcome: str, detail: str | None = None
+    ) -> None:
+        """Append the deterministic report-render outcome when a trace sink is enabled."""
+        append = getattr(self._trace_recorder, "append_validation", None)
+        if append is not None:
+            try:
+                await append(
+                    observation_run_id=observation_run_id,
+                    phase="report_render",
+                    category="report_render",
+                    outcome=outcome,
+                    detail=detail,
+                )
+            except Exception:
+                return

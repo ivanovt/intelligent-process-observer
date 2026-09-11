@@ -7,6 +7,7 @@ import asyncio
 
 from pydantic_ai.exceptions import UnexpectedModelBehavior, UsageLimitExceeded
 
+from app.core.diagnostics import OperationalEventEmitter
 from app.knowledge.contracts import KnowledgeRetrievalRequest, RetrievalOutcome, RetrievalRejected
 from app.knowledge.executor import BoundedRetrievalExecutor
 from app.knowledge.ports import KnowledgeRetriever
@@ -53,10 +54,19 @@ class _ReasoningRetrievalSession:
 class ObservationReasoningExecutor:
     """Coordinate validated evidence through isolated reasoning phases."""
 
-    def __init__(self, agent: ObservationReasoningAgent, retriever: KnowledgeRetriever) -> None:
+    def __init__(
+        self,
+        agent: ObservationReasoningAgent,
+        retriever: KnowledgeRetriever,
+        *,
+        trace_recorder: object | None = None,
+        emitter: OperationalEventEmitter | None = None,
+    ) -> None:
         """Bind framework-neutral agent and injected knowledge retriever."""
         self._agent = agent
         self._retriever = retriever
+        self._trace_recorder = trace_recorder
+        self._emitter = emitter or OperationalEventEmitter()
 
     async def execute(self, value) -> ReasoningOutcome:
         """Execute one side-effect-free reasoning run and fail closed safely."""
@@ -79,6 +89,12 @@ class ObservationReasoningExecutor:
                 )
             )
             findings = freeze_findings(findings_completion, catalog)
+            await self._record_validation(
+                value.context.identity.observation_run_id,
+                phase="findings",
+                category="finding_freeze",
+                outcome="accepted",
+            )
         except asyncio.CancelledError:
             raise
         except TimeoutError:
@@ -89,14 +105,26 @@ class ObservationReasoningExecutor:
             return ReasoningFailure(code="reasoning_policy_violated", component="finding_phase")
         except UnexpectedModelBehavior:
             return ReasoningFailure(code="reasoning_result_invalid", component="finding_phase")
-        except ValueError:
+        except ValueError as error:
+            await self._record_validation(
+                value.context.identity.observation_run_id,
+                phase="findings",
+                category="finding_freeze",
+                outcome="rejected",
+                detail=str(error),
+            )
             return ReasoningFailure(code="reasoning_result_invalid", component="finding_phase")
         except Exception:
             return ReasoningFailure(code="reasoning_model_failed", component="finding_phase")
         hypotheses = ()
         if findings:
             retrieval = _ReasoningRetrievalSession(
-                BoundedRetrievalExecutor(frozenset(item.id for item in findings), self._retriever)
+                BoundedRetrievalExecutor(
+                    frozenset(item.id for item in findings),
+                    self._retriever,
+                    observation_run_id=value.context.identity.observation_run_id,
+                    emitter=self._emitter,
+                )
             )
             try:
                 from app.reasoning.contracts import HypothesisRequest
@@ -118,6 +146,12 @@ class ObservationReasoningExecutor:
                     for reference in attempt.knowledge_refs
                 )
                 hypotheses = validate_hypotheses(completion, findings, refs)
+                await self._record_validation(
+                    value.context.identity.observation_run_id,
+                    phase="hypotheses",
+                    category="hypothesis_grounding",
+                    outcome="accepted",
+                )
             except asyncio.CancelledError:
                 raise
             except TimeoutError:
@@ -136,7 +170,14 @@ class ObservationReasoningExecutor:
                 return ReasoningFailure(
                     code="reasoning_policy_violated", component="hypothesis_phase"
                 )
-            except ValueError:
+            except ValueError as error:
+                await self._record_validation(
+                    value.context.identity.observation_run_id,
+                    phase="hypotheses",
+                    category="hypothesis_grounding",
+                    outcome="rejected",
+                    detail=str(error),
+                )
                 return ReasoningFailure(
                     code="reasoning_result_invalid", component="hypothesis_phase"
                 )
@@ -180,8 +221,45 @@ class ObservationReasoningExecutor:
         except Exception:
             return ReasoningFailure(code="reasoning_model_failed", component="overall_state_phase")
         try:
-            return ReasoningSuccess(
+            success = ReasoningSuccess(
                 result=build_result(value, findings, hypotheses, overall, limitations)
             )
-        except Exception:
+            await self._record_validation(
+                value.context.identity.observation_run_id,
+                phase="overall_state",
+                category="final_result",
+                outcome="accepted",
+            )
+            return success
+        except Exception as error:
+            await self._record_validation(
+                value.context.identity.observation_run_id,
+                phase="overall_state",
+                category="final_result",
+                outcome="rejected",
+                detail=str(error),
+            )
             return ReasoningFailure(code="reasoning_result_invalid", component="result_builder")
+
+    async def _record_validation(
+        self,
+        observation_run_id,
+        *,
+        phase: str,
+        category: str,
+        outcome: str,
+        detail: str | None = None,
+    ) -> None:
+        """Append a safe post-agent validation outcome when tracing is enabled."""
+        append = getattr(self._trace_recorder, "append_validation", None)
+        if append is not None:
+            try:
+                await append(
+                    observation_run_id=observation_run_id,
+                    phase=phase,
+                    category=category,
+                    outcome=outcome,
+                    detail=detail,
+                )
+            except Exception:
+                return

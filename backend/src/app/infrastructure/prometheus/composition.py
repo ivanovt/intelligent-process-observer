@@ -26,6 +26,7 @@ from app.infrastructure.prometheus.configuration import (
 )
 from app.metrics.contracts import (
     MetricAnalysisWindow,
+    MetricProviderDiagnosticCategory,
     MetricProviderScope,
     MetricSample,
     MetricSeriesAcquisitionFailure,
@@ -76,12 +77,18 @@ class _AttemptAvailable:
 
 @dataclass(frozen=True)
 class _AttemptFailure:
-    """A terminal one-attempt rejection with no provider detail."""
+    """A terminal one-attempt rejection with bounded safe diagnostic metadata."""
+
+    category: MetricProviderDiagnosticCategory = "provider_failure"
+    http_status: int | None = None
+    observed_series_count: int | None = None
 
 
 @dataclass(frozen=True)
 class _AttemptTimeout:
     """A terminal one-attempt timeout classification."""
+
+    category: MetricProviderDiagnosticCategory = "acquisition_timeout"
 
 
 @dataclass(frozen=True)
@@ -208,7 +215,10 @@ class PrometheusMetricSeriesProvider:
                 _ACQUISITION_DEADLINE_SECONDS,
             )
         except TimeoutError:
-            return MetricSeriesAcquisitionTimeout(diagnostic=_ACQUISITION_TIMEOUT)
+            return MetricSeriesAcquisitionTimeout(
+                diagnostic=_ACQUISITION_TIMEOUT,
+                diagnostic_category="acquisition_timeout",
+            )
 
     async def _acquire_with_resilience(
         self,
@@ -220,13 +230,22 @@ class PrometheusMetricSeriesProvider:
 
         source = self._sources.get(scope.source_id)
         if source is None:
-            return MetricSeriesUnavailable(diagnostic=_SOURCE_UNAVAILABLE)
+            return MetricSeriesUnavailable(
+                diagnostic=_SOURCE_UNAVAILABLE,
+                diagnostic_category="source_unavailable",
+            )
         target = _validate_prometheus_target(source.base_url)
         if target is None:
-            return MetricSeriesAcquisitionFailure(diagnostic=_INVALID_TARGET)
+            return MetricSeriesAcquisitionFailure(
+                diagnostic=_INVALID_TARGET,
+                diagnostic_category="source_invalid",
+            )
         request = self._logical_request(source, target, scope, window)
         if not self._transport_capacity.try_acquire():
-            return MetricSeriesAcquisitionFailure(diagnostic=_ACQUISITION_FAILED)
+            return MetricSeriesAcquisitionFailure(
+                diagnostic=_ACQUISITION_FAILED,
+                diagnostic_category="capacity_exhausted",
+            )
 
         capacity_lease = _TransportCapacityLease(self._transport_capacity)
         try:
@@ -235,17 +254,44 @@ class PrometheusMetricSeriesProvider:
                 if isinstance(attempt, _AttemptAvailable):
                     return MetricSeriesAvailable(source="prometheus", samples=attempt.samples)
                 if isinstance(attempt, _AttemptTimeout):
-                    return MetricSeriesAcquisitionTimeout(diagnostic=_ACQUISITION_TIMEOUT)
+                    return MetricSeriesAcquisitionTimeout(
+                        diagnostic=_ACQUISITION_TIMEOUT,
+                        diagnostic_category=attempt.category,
+                        attempt_count=attempt_number + 1,
+                    )
                 if isinstance(attempt, _AttemptFailure):
-                    return MetricSeriesAcquisitionFailure(diagnostic=_ACQUISITION_FAILED)
+                    return MetricSeriesAcquisitionFailure(
+                        diagnostic=_ACQUISITION_FAILED,
+                        diagnostic_category=attempt.category,
+                        attempt_count=attempt_number + 1,
+                        http_status=attempt.http_status,
+                        observed_series_count=attempt.observed_series_count,
+                    )
                 if attempt_number == 2:
-                    return MetricSeriesAcquisitionFailure(diagnostic=_ACQUISITION_FAILED)
+                    return MetricSeriesAcquisitionFailure(
+                        diagnostic=_ACQUISITION_FAILED,
+                        diagnostic_category=(
+                            "http_status_failure"
+                            if isinstance(attempt, _AttemptRetryEligible)
+                            else "transport_failure"
+                        ),
+                        attempt_count=3,
+                        http_status=(
+                            attempt.status_code
+                            if isinstance(attempt, _AttemptRetryEligible)
+                            else None
+                        ),
+                    )
 
                 retry_wait = _RETRY_WAITS_SECONDS[attempt_number]
                 if acquisition_deadline - self._monotonic_clock() < (
                     retry_wait + _ATTEMPT_DEADLINE_SECONDS
                 ):
-                    return MetricSeriesAcquisitionTimeout(diagnostic=_ACQUISITION_TIMEOUT)
+                    return MetricSeriesAcquisitionTimeout(
+                        diagnostic=_ACQUISITION_TIMEOUT,
+                        diagnostic_category="acquisition_timeout",
+                        attempt_count=attempt_number + 1,
+                    )
                 await self._sleep(retry_wait)
         finally:
             capacity_lease.finish()
@@ -264,17 +310,17 @@ class PrometheusMetricSeriesProvider:
         try:
             return await self._deadline_runner(task, _ATTEMPT_DEADLINE_SECONDS)
         except TimeoutError:
-            return _AttemptTimeout()
+            return _AttemptTimeout(category="acquisition_timeout")
         except httpx.TimeoutException:
-            return _AttemptTimeout()
+            return _AttemptTimeout(category="transport_timeout")
         except httpx.ConnectError:
             return _AttemptConnectRetryEligible()
         except httpx.TransportError:
-            return _AttemptFailure()
+            return _AttemptFailure(category="transport_failure")
         except (httpx.InvalidURL, httpx.StreamError):
-            return _AttemptFailure()
+            return _AttemptFailure(category="request_invalid")
         except httpx.HTTPError:
-            return _AttemptFailure()
+            return _AttemptFailure(category="transport_failure")
         finally:
             capacity_lease.observe(task)
 
@@ -330,7 +376,9 @@ class PrometheusMetricSeriesProvider:
             ) as response:
                 body = await _read_bounded_body(response)
                 if body is None:
-                    return _AttemptFailure()
+                    return _AttemptFailure(
+                        category="response_too_large", http_status=response.status_code
+                    )
                 return _classify_complete_response(response.status_code, body)
 
 
@@ -417,11 +465,17 @@ def _classify_complete_response(status_code: int, body: bytes) -> _AttemptResult
 
     error_kind = _valid_error_kind(payload)
     if error_kind in {"timeout", "canceled"}:
-        return _AttemptTimeout()
+        return _AttemptTimeout(category="transport_timeout")
     if status_code in _RETRYABLE_STATUS_CODES:
         return _AttemptRetryEligible(status_code=status_code)
     if status_code < 200 or status_code >= 300:
-        return _AttemptFailure()
+        if status_code in {401, 403}:
+            category = "authentication_failed"
+        elif error_kind is not None:
+            category = "query_rejected"
+        else:
+            category = "http_status_failure"
+        return _AttemptFailure(category=category, http_status=status_code)
     return _classify_success(payload)
 
 
@@ -445,24 +499,31 @@ def _classify_success(payload: object) -> _AttemptResult:
     """Validate a successful matrix response and map its sole float series."""
 
     if not isinstance(payload, dict) or payload.get("status") != "success":
-        return _AttemptFailure()
+        return _AttemptFailure(category="response_invalid")
     if not _valid_annotations(payload):
-        return _AttemptFailure()
+        return _AttemptFailure(category="response_invalid")
     warnings = payload.get("warnings", [])
     if warnings:
-        return _AttemptFailure()
+        return _AttemptFailure(category="provider_warning")
     data = payload.get("data")
     if not isinstance(data, dict) or data.get("resultType") != "matrix":
-        return _AttemptFailure()
+        return _AttemptFailure(category="response_invalid")
     result = data.get("result")
     if not isinstance(result, list):
-        return _AttemptFailure()
+        return _AttemptFailure(category="response_invalid")
     if not result:
         return _AttemptAvailable(samples=())
     if len(result) != 1:
-        return _AttemptFailure()
+        return _AttemptFailure(
+            category="multiple_series_returned",
+            observed_series_count=len(result),
+        )
     samples = _parse_float_series(result[0])
-    return _AttemptFailure() if samples is None else _AttemptAvailable(samples=samples)
+    return (
+        _AttemptFailure(category="invalid_sample_data")
+        if samples is None
+        else _AttemptAvailable(samples=samples)
+    )
 
 
 def _valid_annotations(payload: dict[str, Any]) -> bool:

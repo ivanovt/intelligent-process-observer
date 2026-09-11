@@ -1,12 +1,42 @@
 import { CircleAlert } from 'lucide-react'
-import { useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { Navigate, useNavigate, useParams } from 'react-router-dom'
 import { Button, Field, FormSideRail, InlineNotice, Input, Select, Textarea, ValidationSummary, type ValidationIssue } from '../../components/ui'
 import { ReferencePeriodsField } from './configuration'
+import { preflightMetricQuery } from './api'
 import { generateObservationChildId, newMetric, useObservationDraft, validateMetric, type DraftErrors, type DraftMetric } from './draft'
-import type { MetricObjective } from './types'
+import { ApiError, type MetricObjective, type MetricPreflightFailure, type MetricPreflightResponse } from './types'
 
 const objectives:MetricObjective[]=['spike','drift','oscillation']
+type PreflightState={status:'idle'}|{status:'pending'}|{status:'valid';result:Extract<MetricPreflightResponse,{valid:true}>}|{status:'invalid';result:MetricPreflightFailure}|{status:'request_failure';message:string}
+
+function preflightFailureMessage(error:unknown):string {
+  if (error instanceof ApiError) {
+    if (error.code === 'provider_authentication_failed') return 'Prometheus authentication or authorization failed. Check the configured source and try again.'
+    if (error.code === 'provider_unavailable') return 'Prometheus is unavailable. Try again when the configured source is reachable.'
+    if (error.code === 'provider_failure') return 'Prometheus could not complete the preflight request. Try again.'
+    return error.message
+  }
+  return 'Unable to validate the query. Try again.'
+}
+
+function LabelSet({ labels }: { labels: Record<string, string> }) {
+  const entries=Object.entries(labels)
+  if (!entries.length) return <p className="mt-2 text-sm">No labels were returned.</p>
+  return <dl className="mt-2 grid gap-x-3 gap-y-1 text-sm sm:grid-cols-[max-content_1fr]">{entries.map(([name,value])=><div key={name} className="contents"><dt className="font-medium">{name}</dt><dd className="break-all">{value}</dd></div>)}</dl>
+}
+
+function PreflightResult({ state }: { state: PreflightState }) {
+  if (state.status==='idle') return null
+  if (state.status==='pending') return <InlineNotice>Validating the exact query against the selected source…</InlineNotice>
+  if (state.status==='request_failure') return <InlineNotice tone="error">{state.message}</InlineNotice>
+  if (state.status==='valid') return <InlineNotice tone="success"><p className="font-medium">Query validation succeeded.</p><p className="mt-1">Validation window: {state.result.resolved_start} to {state.result.resolved_end}.</p><p className="mt-1">Sample count: {state.result.samples.length}.</p><div className="mt-2"><p className="font-medium">Returned labels</p><LabelSet labels={state.result.labels}/></div></InlineNotice>
+  const {result}=state
+  if (result.code==='no_series_returned') return <InlineNotice tone="warning">The query returned no series for this validation window. This does not mean the query syntax is invalid.</InlineNotice>
+  if (result.code==='multiple_series_returned') return <InlineNotice tone="warning"><p>The query returned {result.series_count ?? 'multiple'} series. One Metric Lens must resolve to exactly one series.</p><p className="mt-1">Aggregate the query or select one label combination; the query was not changed.</p>{result.label_sets.length?<div className="mt-2"><p className="font-medium">Returned label sets</p>{result.label_sets.map((labels,index)=><div key={index} className="mt-2"><p className="font-medium">Series {index+1}</p><LabelSet labels={labels}/></div>)}</div>:null}</InlineNotice>
+  if (result.code==='query_rejected') return <InlineNotice tone="error"><p className="font-medium">Prometheus rejected this query.</p><p className="mt-1">{result.message}</p></InlineNotice>
+  return <InlineNotice tone="warning"><p className="font-medium">The query could not be validated.</p><p className="mt-1">{result.message}</p></InlineNotice>
+}
 
 /** Edits one aggregate-owned Metric Lens using only current capability choices. */
 export function MetricLensEditorPage(){const {key='new'}=useParams();const {draft,returnRoute}=useObservationDraft();if(!draft)return <Navigate to={returnRoute} replace state={{draftLost:true}}/>;const existing=key==='new'?undefined:draft.lenses.find(item=>item.clientKey===key);if(key!=='new'&&!existing)return <Navigate to={returnRoute} replace state={{draftLost:true}}/>;return <MetricLensEditorForm key={key} routeKey={key} seed={existing?structuredClone(existing):newMetric(crypto.randomUUID())}/>}
@@ -15,9 +45,20 @@ function MetricLensEditorForm({ routeKey, seed }: { routeKey: string; seed: Draf
   const { draft, mode, returnRoute, upsertMetric, capabilities, loadCapabilities, cancelCapabilities } = useObservationDraft()
   const [value, setValue] = useState(seed)
   const [errors, setErrors] = useState<DraftErrors>({})
+  const [preflight, setPreflight] = useState<PreflightState>({ status: 'idle' })
   const summaryRef = useRef<HTMLDivElement>(null)
+  const preflightRequest = useRef<{ id: number; controller: AbortController } | null>(null)
+  const preflightSequence = useRef(0)
 
-  useEffect(() => () => cancelCapabilities(), [cancelCapabilities])
+  const cancelPreflight = useCallback((reset = true) => {
+    const active = preflightRequest.current
+    preflightRequest.current = null
+    preflightSequence.current += 1
+    active?.controller.abort()
+    if (reset) setPreflight({ status: 'idle' })
+  }, [])
+
+  useEffect(() => () => { cancelCapabilities(); cancelPreflight(false) }, [cancelCapabilities, cancelPreflight])
   useEffect(() => {
     if (capabilities.status === 'idle') loadCapabilities()
   }, [capabilities.status, loadCapabilities])
@@ -26,7 +67,10 @@ function MetricLensEditorForm({ routeKey, seed }: { routeKey: string; seed: Draf
   if (!draft) return null
 
   const sources = capabilities.capabilities?.metric.flatMap((adapter) => adapter.sources.map((source) => ({ ...source, adapter_type: adapter.adapter_type }))) ?? []
-  const update = (patch: Partial<DraftMetric>) => setValue((current) => ({ ...current, ...patch }))
+  const update = (patch: Partial<DraftMetric>, invalidatesPreflight = false) => {
+    if (invalidatesPreflight) cancelPreflight()
+    setValue((current) => ({ ...current, ...patch }))
+  }
   const generateId = () => {
     if (!value.id && value.name.trim()) update({ id: generateObservationChildId(value.name, 'metric', draft.lenses.map((item) => item.id), crypto.randomUUID()) })
   }
@@ -40,6 +84,24 @@ function MetricLensEditorForm({ routeKey, seed }: { routeKey: string; seed: Draf
     }
   }
   const unavailable = capabilities.status !== 'success'
+  const queryReady = Boolean(value.source_id && value.query.trim())
+  const validateQuery = () => {
+    if (!queryReady) return
+    cancelPreflight(false)
+    const id = ++preflightSequence.current
+    const controller = new AbortController()
+    preflightRequest.current = { id, controller }
+    setPreflight({ status: 'pending' })
+    preflightMetricQuery(value.source_id, value.query, controller.signal).then((result) => {
+      if (preflightRequest.current?.id !== id || controller.signal.aborted) return
+      preflightRequest.current = null
+      setPreflight(result.valid ? { status: 'valid', result } : { status: 'invalid', result })
+    }).catch((error:unknown) => {
+      if (preflightRequest.current?.id !== id || controller.signal.aborted) return
+      preflightRequest.current = null
+      setPreflight({ status: 'request_failure', message: preflightFailureMessage(error) })
+    })
+  }
   const issues: ValidationIssue[] = Object.entries(errors).map(([path, message]) => ({ message, to: path === 'id' ? '#metric-name' : path === 'objectives' ? '#metric-objectives' : path === 'references' ? '#reference-periods' : `#metric-${path}` }))
 
   return (
@@ -88,7 +150,7 @@ function MetricLensEditorForm({ routeKey, seed }: { routeKey: string; seed: Draf
             <Field label="Metric source" description="Configured source used to retrieve this metric." error={errors.source_id}>
               <Select id="metric-source_id" aria-label="Metric source" value={value.source_id} disabled={unavailable} onChange={(event) => {
                 const choice = sources.find((source) => source.id === event.target.value)
-                update({ source_id: event.target.value, adapter_type: choice?.adapter_type ?? 'prometheus' })
+                update({ source_id: event.target.value, adapter_type: choice?.adapter_type ?? 'prometheus' }, true)
               }}>
                 <option value="">Select configured source</option>
                 {sources.map((source) => <option key={`${source.adapter_type}:${source.id}`} value={source.id}>{source.name}</option>)}
@@ -97,9 +159,14 @@ function MetricLensEditorForm({ routeKey, seed }: { routeKey: string; seed: Draf
           </div>
           <div className="mt-4">
             <Field label="Provider query" description="Provider-native query for the selected metric source." error={errors.query}>
-              <Textarea id="metric-query" aria-label="Provider query" placeholder="rate(process_pressure_total[5m])" value={value.query} onChange={(event) => update({ query: event.target.value })} />
+              <Textarea id="metric-query" aria-label="Provider query" placeholder="rate(process_pressure_total[5m])" value={value.query} onChange={(event) => update({ query: event.target.value }, true)} />
             </Field>
           </div>
+          <section className="mt-4" aria-label="Metric query preflight">
+            <Button type="button" variant="secondary" onClick={validateQuery} disabled={unavailable || !queryReady} aria-busy={preflight.status==='pending'}>Validate query</Button>
+            <p className="mt-2 text-sm text-[var(--color-text-secondary)]">Advisory only: validates the exact query with the selected source over a fixed 15m window. It does not change this draft or block Apply changes.</p>
+            <div className="mt-3" aria-live="polite" aria-atomic="true" aria-label="Query validation result"><PreflightResult state={preflight}/></div>
+          </section>
           {capabilities.status === 'pending' ? <InlineNotice>Loading configured Metric sources…</InlineNotice> : null}
           {capabilities.status === 'failure' ? <InlineNotice tone="error">Unable to load Metric sources. <button className="font-semibold underline" type="button" onClick={loadCapabilities}>Retry</button></InlineNotice> : null}
           {capabilities.status === 'empty' ? <InlineNotice tone="warning">No Metric source is configured. Metric Lens configuration is unavailable; Alert-only Observation creation remains available.</InlineNotice> : null}

@@ -2,15 +2,29 @@
 
 from __future__ import annotations
 
+import asyncio
+from contextlib import nullcontext
 from dataclasses import dataclass, field
+from datetime import UTC, datetime
 
-from pydantic_ai import Agent, RunContext
+from pydantic_ai import Agent, RunContext, capture_run_messages
 from pydantic_ai.exceptions import UsageLimitExceeded
 from pydantic_ai.messages import ModelResponse, ToolCallPart
 from pydantic_ai.models import Model, ModelRequestParameters, ModelSettings
 from pydantic_ai.models.wrapper import WrapperModel
 from pydantic_ai.usage import UsageLimits
 
+from app.core.diagnostics import OperationalEventEmitter
+from app.infrastructure.agents.tracing import (
+    AgentTraceContext,
+    AgentTraceRecorder,
+    NoOpAgentTraceRecorder,
+    elapsed_duration_ms,
+    emit_agent_failure,
+    model_request_metadata,
+    record_trace_safely,
+    trace_capture_enabled,
+)
 from app.metrics.contracts import (
     MetricAgentCompletion,
     MetricAgentInsufficientRequest,
@@ -31,6 +45,8 @@ class _RunState:
     tools: MetricToolExecutor | None
     tool_outcomes: dict[str, MetricToolOutcome] = field(default_factory=dict)
     model_requests: int = 0
+    trace_enabled: bool = False
+    trace_requests: list[object] = field(default_factory=list)
 
 
 class _PolicyObservingModel(WrapperModel):
@@ -49,6 +65,14 @@ class _PolicyObservingModel(WrapperModel):
         if self._state.model_requests >= _REQUEST_LIMIT:
             raise UsageLimitExceeded("Metrics Agent model request limit is four")
         self._state.model_requests += 1
+        if self._state.trace_enabled:
+            self._state.trace_requests.append(
+                model_request_metadata(
+                    ordinal=self._state.model_requests,
+                    model_settings=model_settings,
+                    model_request_parameters=model_request_parameters,
+                )
+            )
         response = await self.wrapped.request(messages, model_settings, model_request_parameters)
         await self._observe_tool_calls(response, model_request_parameters)
         return response
@@ -98,7 +122,14 @@ class PydanticAIMetricsAnalysisAgent:
     """Injected-model implementation of the framework-neutral MetricsAnalysisAgent port."""
 
     def __init__(
-        self, model: Model, *, timeout_seconds: float = 120, max_output_tokens: int = 12_288
+        self,
+        model: Model,
+        *,
+        timeout_seconds: float = 120,
+        max_output_tokens: int = 12_288,
+        model_name: str = "configured",
+        trace_recorder: AgentTraceRecorder | None = None,
+        emitter: OperationalEventEmitter | None = None,
     ) -> None:
         """Configure one injected model with server-owned request limits."""
         self._model = model
@@ -106,29 +137,87 @@ class PydanticAIMetricsAnalysisAgent:
             "timeout": timeout_seconds,
             "max_tokens": max_output_tokens,
         }
+        self._model_name = model_name
+        self._trace_recorder = trace_recorder or NoOpAgentTraceRecorder()
+        self._emitter = emitter or OperationalEventEmitter()
 
     async def complete(
         self,
         request: MetricAgentRequest,
         tools: MetricToolExecutor | None = None,
     ) -> MetricAgentOutcome:
-        state = _RunState(tools=tools)
-        try:
-            agent = self._build_agent(
-                state,
-                include_tools=not isinstance(request, MetricAgentInsufficientRequest)
-                and tools is not None,
-            )
-            result = await agent.run(
-                request.model_dump_json(by_alias=True),
-                deps=state,
-                retries=0,
-                model_settings=self._settings,
-                usage_limits=UsageLimits(request_limit=_REQUEST_LIMIT),
-            )
-            return MetricAgentCompletion.model_validate(result.output)
-        except Exception:
-            return MetricAgentOperationalFailure()
+        trace_enabled = trace_capture_enabled(self._trace_recorder)
+        state = _RunState(tools=tools, trace_enabled=trace_enabled)
+        input_json = request.model_dump_json(by_alias=True)
+        context = AgentTraceContext(
+            observation_run_id=request.identity.observation_run_id,
+            lens_run_id=request.identity.lens_run_id,
+            lens_id=request.identity.lens_id,
+            agent_role="metric",
+            phase="analysis",
+            model=self._model_name,
+        )
+        started_at = datetime.now(UTC)
+        completion: object | None = None
+        failure: BaseException | None = None
+        usage: object | None = None
+        terminal_state = "framework_failure"
+        capture = capture_run_messages() if trace_enabled else nullcontext([])
+        with capture as messages:
+            try:
+                agent = self._build_agent(
+                    state,
+                    include_tools=not isinstance(request, MetricAgentInsufficientRequest)
+                    and tools is not None,
+                )
+                result = await agent.run(
+                    input_json,
+                    deps=state,
+                    retries=0,
+                    model_settings=self._settings,
+                    usage_limits=UsageLimits(request_limit=_REQUEST_LIMIT),
+                )
+                completion = MetricAgentCompletion.model_validate(result.output)
+                usage = result.usage
+                terminal_state = "validated_completion"
+                return completion
+            except asyncio.CancelledError as error:
+                failure = error
+                terminal_state = "cancelled"
+                emit_agent_failure(
+                    self._emitter,
+                    context,
+                    error,
+                    request_ordinal=state.model_requests or None,
+                    duration_ms=elapsed_duration_ms(started_at),
+                )
+                raise
+            except Exception as error:
+                failure = error
+                emit_agent_failure(
+                    self._emitter,
+                    context,
+                    error,
+                    request_ordinal=state.model_requests or None,
+                    duration_ms=elapsed_duration_ms(started_at),
+                )
+                return MetricAgentOperationalFailure()
+            finally:
+                if trace_enabled:
+                    await record_trace_safely(
+                        self._trace_recorder,
+                        context,
+                        input_json=input_json,
+                        messages=messages,
+                        request_metadata=tuple(state.trace_requests),
+                        completion=completion,
+                        failure=failure,
+                        terminal_state=terminal_state,
+                        started_at=started_at,
+                        finished_at=datetime.now(UTC),
+                        usage=usage,
+                        emitter=self._emitter,
+                    )
 
     def _build_agent(
         self, state: _RunState, *, include_tools: bool

@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import asyncio
+import json
+import logging
 from dataclasses import FrozenInstanceError
 from datetime import UTC, datetime, timedelta
 from types import SimpleNamespace
@@ -9,6 +11,7 @@ from uuid import UUID, uuid4
 import pytest
 from sqlalchemy.exc import IntegrityError
 
+from app.core.diagnostics import OperationalEventEmitter
 from app.execution import (
     AnalysisWindow,
     ExecutionPolicy,
@@ -100,6 +103,7 @@ def _manager(
     reconciler: _Reconciler,
     *,
     sleeps: list[float] | None = None,
+    emitter: OperationalEventEmitter | None = None,
 ) -> ObservationRunManager:
     async def sleep(delay: float) -> None:
         if sleeps is not None:
@@ -112,7 +116,48 @@ def _manager(
         reconciler=reconciler,
         policy=ExecutionPolicy(max_parallel_lens_runs=4, lens_deadline_seconds=300),
         sleep=sleep,
+        emitter=emitter,
     )
+
+
+def test_managed_continuation_failure_is_logged_without_changing_recovery_behavior() -> None:
+    """The detached-task observer retains its existing recovery transition."""
+
+    async def run() -> list[str]:
+        messages: list[str] = []
+        logger = logging.getLogger("test.manager.operational")
+        logger.handlers = [_CollectingHandler(messages)]
+        logger.setLevel(logging.DEBUG)
+        logger.propagate = False
+        lookup = _Lookup()
+        manager = _manager(
+            _Orchestrator(lookup, fail_continuation=True),
+            lookup,
+            _Reconciler(),
+            emitter=OperationalEventEmitter(logger=logger),
+        )
+
+        outcome = await manager.launch(_request())
+        assert isinstance(outcome, LaunchAccepted)
+        await asyncio.sleep(0)
+        await asyncio.sleep(0)
+        assert manager.state is ObservationRunManagerState.READY
+        return messages
+
+    events = [json.loads(message) for message in asyncio.run(run())]
+    assert any(event["event"] == "managed_execution_failed" for event in events)
+
+
+class _CollectingHandler(logging.Handler):
+    """Collect manager events without changing global logging state."""
+
+    def __init__(self, messages: list[str]) -> None:
+        super().__init__()
+        self._messages = messages
+
+    def emit(self, record: logging.LogRecord) -> None:
+        """Capture one formatted operational event."""
+        self._messages.append(record.getMessage())
 
 
 def test_launch_registers_one_detached_continuation_and_immutable_running_snapshot() -> None:

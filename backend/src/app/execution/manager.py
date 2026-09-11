@@ -11,6 +11,7 @@ from uuid import UUID, uuid4
 
 from sqlalchemy.exc import IntegrityError
 
+from app.core.diagnostics import DiagnosticEvent, OperationalEventEmitter
 from app.execution.contracts import (
     ExecutionPolicy,
     ObservationExecutionOutcome,
@@ -119,6 +120,7 @@ class ObservationRunManager:
         policy: ExecutionPolicy,
         sleep: Callable[[float], Awaitable[None]] = asyncio.sleep,
         reconciliation_retry_seconds: float = 5,
+        emitter: OperationalEventEmitter | None = None,
     ) -> None:
         if reconciliation_retry_seconds <= 0:
             raise ValueError("reconciliation retry interval must be positive")
@@ -128,6 +130,7 @@ class ObservationRunManager:
         self._policy = policy
         self._sleep = sleep
         self._retry_seconds = reconciliation_retry_seconds
+        self._emitter = emitter or OperationalEventEmitter()
         self._state_lock = asyncio.Lock()
         self._state = ObservationRunManagerState.READY
         self._generation = 0
@@ -202,9 +205,23 @@ class ObservationRunManager:
         except IntegrityError as error:
             if _is_active_run_index_conflict(error):
                 return await self._resolve_defensive_index_loser(admission.observation_id)
+            self._emit_failure(
+                "execution_initialization_failed",
+                "persistence_failure",
+                error,
+                observation_run_id=None,
+                stage="initialization",
+            )
             self._schedule_recovery()
             return LaunchUnavailable()
-        except BaseException:
+        except BaseException as error:
+            self._emit_failure(
+                "execution_initialization_failed",
+                "initialization_failed",
+                error,
+                observation_run_id=None,
+                stage="initialization",
+            )
             self._schedule_recovery()
             return LaunchUnavailable()
         finally:
@@ -221,7 +238,14 @@ class ObservationRunManager:
             active_run_id = await self._active_run_lookup.get_active_observation_run_id(
                 observation_id
             )
-        except BaseException:
+        except BaseException as error:
+            self._emit_failure(
+                "launch_conflict_resolution_failed",
+                "persistence_failure",
+                error,
+                observation_run_id=None,
+                stage="launch_admission",
+            )
             self._schedule_recovery()
             return LaunchUnavailable()
         if active_run_id is not None:
@@ -258,7 +282,14 @@ class ObservationRunManager:
             task.result()
         except asyncio.CancelledError:
             requires_recovery = self._state is ObservationRunManagerState.READY
-        except BaseException:
+        except BaseException as error:
+            self._emit_failure(
+                "managed_execution_failed",
+                "execution_failed",
+                error,
+                observation_run_id=observation_run_id,
+                stage="managed_continuation",
+            )
             requires_recovery = True
         finally:
             async with self._state_lock:
@@ -295,7 +326,14 @@ class ObservationRunManager:
                     raise RuntimeError("active ObservationRuns remain after reconciliation")
             except asyncio.CancelledError:
                 raise
-            except BaseException:
+            except BaseException as error:
+                self._emit_failure(
+                    "execution_recovery_failed",
+                    "persistence_failure",
+                    error,
+                    observation_run_id=None,
+                    stage="recovery",
+                )
                 await self._sleep(self._retry_seconds)
                 continue
             async with self._state_lock:
@@ -335,6 +373,27 @@ class ObservationRunManager:
             managed.users -= 1
             if managed.users == 0 and not managed.lock.locked():
                 self._observation_locks.pop(observation_id, None)
+
+    def _emit_failure(
+        self,
+        event: str,
+        category: str,
+        error: BaseException,
+        *,
+        observation_run_id: UUID | None,
+        stage: str,
+    ) -> None:
+        """Emit a safe lifecycle failure event without affecting manager recovery."""
+        self._emitter.emit(
+            DiagnosticEvent(
+                event=event,
+                category=category,
+                observation_run_id=observation_run_id,
+                component="observation_run_manager",
+                stage=stage,
+            ),
+            error=error,
+        )
 
 
 def _is_active_run_index_conflict(error: IntegrityError) -> bool:

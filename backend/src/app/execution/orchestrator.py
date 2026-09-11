@@ -6,6 +6,7 @@ import asyncio
 from contextlib import AbstractAsyncContextManager
 from typing import Protocol
 
+from app.core.diagnostics import DiagnosticEvent, OperationalEventEmitter
 from app.execution.contracts import (
     AlertLensSnapshot,
     CompletedObservationExecutionOutcome,
@@ -62,6 +63,7 @@ class ObservationExecutionOrchestrator:
         relationship_evaluator,
         reasoning_executor,
         report_executor,
+        emitter: OperationalEventEmitter | None = None,
     ) -> None:
         self._session_factory = session_factory
         self._definition_loader = definition_loader
@@ -70,6 +72,7 @@ class ObservationExecutionOrchestrator:
         self._relationship_evaluator = relationship_evaluator
         self._reasoning_executor = reasoning_executor
         self._report_executor = report_executor
+        self._emitter = emitter or OperationalEventEmitter()
         self._persistence_aware_factory = _PersistenceAwareSessionFactory(session_factory)
 
     async def execute(
@@ -87,13 +90,23 @@ class ObservationExecutionOrchestrator:
     ) -> InitializedObservationExecution | RejectedObservationExecutionOutcome:
         """Durably create a running runtime graph without starting analytical work."""
 
-        return await initialize_observation_execution(
-            self._persistence_aware_factory,
-            self._definition_loader,
-            self._runtime_repository,
-            request,
-            policy,
-        )
+        try:
+            return await initialize_observation_execution(
+                self._persistence_aware_factory,
+                self._definition_loader,
+                self._runtime_repository,
+                request,
+                policy,
+            )
+        except BaseException as error:
+            self._emit_failure(
+                "execution_initialization_failed",
+                "persistence_failure" if _is_persistence_error(error) else "initialization_failed",
+                error,
+                observation_run_id=None,
+                stage="initialization",
+            )
+            raise
 
     async def continue_execution(
         self, initialized: InitializedObservationExecution, policy: ExecutionPolicy
@@ -177,14 +190,48 @@ class ObservationExecutionOrchestrator:
                 reason=ExecutionReason("report_result_invalid", "report_builder"),
             )
         except asyncio.CancelledError as cancellation:
+            self._emitter.emit(
+                DiagnosticEvent(
+                    event="execution_cancelled",
+                    category="execution_cancelled",
+                    level="WARNING",
+                    observation_run_id=initialized.observation_run_id,
+                    component="observation_orchestrator",
+                    stage=stage,
+                )
+            )
             await self._cancel_after_initialization(initialized, cancellation)
             raise
         except (KeyboardInterrupt, SystemExit):
             raise
         except BaseException as error:
             if _is_persistence_error(error):
+                self._emit_failure(
+                    "execution_persistence_failed",
+                    "persistence_failure",
+                    error,
+                    observation_run_id=initialized.observation_run_id,
+                    stage=stage,
+                )
                 raise
-            await self._abort_after_failure(initialized, stage)
+            self._emit_failure(
+                "execution_stage_failed",
+                "execution_failed",
+                error,
+                observation_run_id=initialized.observation_run_id,
+                stage=stage,
+            )
+            try:
+                await self._abort_after_failure(initialized, stage)
+            except BaseException as persistence_error:
+                self._emit_failure(
+                    "execution_abort_persistence_failed",
+                    "persistence_failure",
+                    persistence_error,
+                    observation_run_id=initialized.observation_run_id,
+                    stage=stage,
+                )
+                raise
             return FailedObservationExecutionOutcome(
                 observation_run_id=initialized.observation_run_id,
                 reason=ExecutionReason("execution_failed", stage),
@@ -233,6 +280,13 @@ class ObservationExecutionOrchestrator:
         try:
             cleanup.result()
         except BaseException as error:
+            self._emit_failure(
+                "execution_cancellation_persistence_failed",
+                "persistence_failure",
+                error,
+                observation_run_id=initialized.observation_run_id,
+                stage="cancellation",
+            )
             raise error from cancellation
 
     async def _cancel_transaction(self, initialized: InitializedObservationExecution) -> None:
@@ -243,6 +297,27 @@ class ObservationExecutionOrchestrator:
             if run is None:
                 raise ValueError("cancellation parent is missing")
             await self._runtime_repository.cancel_observation_execution(session, run)
+
+    def _emit_failure(
+        self,
+        event: str,
+        category: str,
+        error: BaseException,
+        *,
+        observation_run_id,
+        stage: str,
+    ) -> None:
+        """Emit a correlated error without changing orchestration behavior."""
+        self._emitter.emit(
+            DiagnosticEvent(
+                event=event,
+                category=category,
+                observation_run_id=observation_run_id,
+                component="observation_orchestrator",
+                stage=stage,
+            ),
+            error=error,
+        )
 
 
 class _TypeRoutedLensAdapter:

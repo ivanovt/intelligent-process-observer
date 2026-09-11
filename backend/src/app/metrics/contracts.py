@@ -23,6 +23,24 @@ def _utc_datetime(value: datetime) -> datetime:
 
 FiniteFloat = Annotated[float, Field(allow_inf_nan=False)]
 _OFFSET_PATTERN = re.compile(r"^[1-9][0-9]*(m|h|d|w)$")
+MetricProviderDiagnosticCategory = Literal[
+    "source_unavailable",
+    "source_invalid",
+    "capacity_exhausted",
+    "acquisition_timeout",
+    "transport_timeout",
+    "transport_failure",
+    "request_invalid",
+    "response_too_large",
+    "query_rejected",
+    "authentication_failed",
+    "http_status_failure",
+    "response_invalid",
+    "provider_warning",
+    "multiple_series_returned",
+    "invalid_sample_data",
+    "provider_failure",
+]
 
 
 class MetricIdentity(StrictMetricModel):
@@ -103,6 +121,8 @@ class MetricSeriesUnavailable(StrictMetricModel):
 
     state: Literal["unavailable"] = "unavailable"
     diagnostic: str = Field(min_length=1, max_length=512)
+    diagnostic_category: MetricProviderDiagnosticCategory = "source_unavailable"
+    attempt_count: int = Field(default=0, ge=0, le=3)
 
 
 class MetricSeriesAcquisitionFailure(StrictMetricModel):
@@ -110,6 +130,10 @@ class MetricSeriesAcquisitionFailure(StrictMetricModel):
 
     state: Literal["failure"] = "failure"
     diagnostic: str = Field(min_length=1, max_length=512)
+    diagnostic_category: MetricProviderDiagnosticCategory = "provider_failure"
+    attempt_count: int = Field(default=0, ge=0, le=3)
+    http_status: int | None = Field(default=None, ge=100, le=599)
+    observed_series_count: int | None = Field(default=None, ge=0)
 
 
 class MetricSeriesAcquisitionTimeout(StrictMetricModel):
@@ -117,6 +141,8 @@ class MetricSeriesAcquisitionTimeout(StrictMetricModel):
 
     state: Literal["timeout"] = "timeout"
     diagnostic: str = Field(min_length=1, max_length=512)
+    diagnostic_category: MetricProviderDiagnosticCategory = "acquisition_timeout"
+    attempt_count: int = Field(default=0, ge=0, le=3)
 
 
 MetricSeriesAcquisitionOutcome = (

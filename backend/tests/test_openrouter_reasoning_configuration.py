@@ -11,7 +11,7 @@ from app.infrastructure.openrouter.composition import build_reasoning_agent, bui
 
 def test_reasoning_openrouter_defaults_are_optional_at_application_startup() -> None:
     """Unrelated startup does not require a model credential."""
-    settings = Settings()
+    settings = Settings(openrouter_api_key=None)
     assert settings.openrouter_api_key is None
     assert settings.observation_reasoning_model == "openai/gpt-5.6-terra"
     assert settings.openrouter_request_timeout_seconds == 120

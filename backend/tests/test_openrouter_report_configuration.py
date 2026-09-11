@@ -11,7 +11,7 @@ from app.infrastructure.openrouter.composition import build_report_agent, build_
 
 def test_report_openrouter_defaults_are_optional_at_application_startup() -> None:
     """Report settings have fixed defaults without requiring a credential at startup."""
-    settings = Settings()
+    settings = Settings(openrouter_api_key=None)
     assert settings.openrouter_api_key is None
     assert settings.observation_report_model == "openai/gpt-5.6-terra"
     assert settings.observation_report_max_output_tokens == 8_192

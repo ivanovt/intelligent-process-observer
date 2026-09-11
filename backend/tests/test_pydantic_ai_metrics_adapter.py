@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 from collections.abc import Callable
 from datetime import UTC, datetime, timedelta
 from uuid import uuid4
@@ -9,6 +10,7 @@ from pydantic_ai.messages import ModelResponse, TextPart, ToolCallPart
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 
 from app.infrastructure.agents.pydantic_ai_metrics import PydanticAIMetricsAnalysisAgent
+from app.infrastructure.agents.tracing import FileAgentTraceRecorder
 from app.metrics.contracts import (
     MetricAgentCompletion,
     MetricAgentInsufficientRequest,
@@ -261,3 +263,28 @@ def test_adapter_exposes_no_tools_for_the_insufficient_projection() -> None:
     messages, info = calls[0]
     assert info.function_tools == []
     assert user_prompt(messages) == request.model_dump_json(by_alias=True)
+
+
+def test_enabled_metric_trace_captures_one_model_invocation_without_changing_completion(
+    tmp_path,
+) -> None:
+    """Enabled development capture persists PydanticAI messages alongside the normal outcome."""
+    model, _ = function_model([completion])
+    request = usable_request()
+    recorder = FileAgentTraceRecorder(root=tmp_path)
+
+    outcome = run(
+        PydanticAIMetricsAnalysisAgent(model, trace_recorder=recorder).complete(
+            request, tool_registry()
+        )
+    )
+
+    path = next(
+        (tmp_path / str(request.identity.observation_run_id)).glob("*-metric-analysis.json")
+    )
+    artifact = json.loads(path.read_text(encoding="utf-8"))
+    assert outcome == MetricAgentCompletion()
+    assert artifact["invocation"]["lens_run_id"] == str(request.identity.lens_run_id)
+    assert artifact["invocation"]["terminal_state"] == "validated_completion"
+    assert artifact["model_visible"]["messages"]
+    assert artifact["requests"][0]["ordinal"] == 1

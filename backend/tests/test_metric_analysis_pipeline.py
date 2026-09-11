@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import asyncio
 import inspect
+import json
+import logging
 import math
 import os
 from collections.abc import Awaitable
@@ -24,6 +26,7 @@ from pydantic_ai.messages import ModelResponse, TextPart, ToolCallPart
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
+from app.core.diagnostics import OperationalEventEmitter
 from app.core.settings import BearerTokenCredentials, PrometheusSourceSettings, get_settings
 from app.infrastructure.agents.pydantic_ai_metrics import PydanticAIMetricsAnalysisAgent
 from app.infrastructure.persistence.models import ObservationModel
@@ -229,6 +232,19 @@ class FakeHistoryReader:
     async def load(self, session, execution_context):
         self.calls.append((session, execution_context))
         return MetricHistoryEmpty()
+
+
+class EventCollector(logging.Handler):
+    """Collect rendered operational events without changing process-wide logging."""
+
+    def __init__(self, messages: list[str]) -> None:
+        super().__init__()
+        self._messages = messages
+
+    def emit(self, record: logging.LogRecord) -> None:
+        """Store one fully rendered structured event."""
+
+        self._messages.append(record.getMessage())
 
 
 class CandidateHistoryReader:
@@ -1351,6 +1367,143 @@ def test_failed_builder_uses_only_fixed_public_error_and_minimal_payload(
             result.model_dump()
             | {"status": {"state": "failed", "error": expected_error | {"x": "y"}}}
         )
+
+
+@pytest.mark.parametrize(
+    ("outcome", "expected_category", "expected_fields"),
+    [
+        (
+            MetricSeriesAcquisitionFailure(
+                diagnostic="provider body contains operator-secret and ignored-label-value",
+                diagnostic_category="multiple_series_returned",
+                attempt_count=2,
+                observed_series_count=2,
+            ),
+            "multiple_series_returned",
+            {"attempt_count": 2, "observed_series_count": 2},
+        ),
+        (
+            MetricSeriesAcquisitionFailure(
+                diagnostic="provider rejected raw-query-secret with its own explanation",
+                diagnostic_category="query_rejected",
+                attempt_count=1,
+                http_status=400,
+            ),
+            "query_rejected",
+            {"attempt_count": 1, "http_status": 400},
+        ),
+    ],
+)
+def test_current_acquisition_failure_logs_safe_correlated_category_without_changing_artifact(
+    outcome: MetricSeriesAcquisitionFailure,
+    expected_category: str,
+    expected_fields: dict[str, int],
+) -> None:
+    """One provider failure produces one safe event and the existing public artifact shape."""
+    messages: list[str] = []
+    logger = logging.getLogger(f"test.metric-acquisition.{expected_category}")
+    logger.handlers = [EventCollector(messages)]
+    logger.setLevel(logging.DEBUG)
+    logger.propagate = False
+    execution_context = context()
+    timestamps = iter((100.0, 100.125))
+    pipeline = MetricAnalysisPipeline(
+        provider=SequencedProvider((outcome,)),
+        agent=FakeAgent(),
+        history_reader=FakeHistoryReader(),
+        repository=RecordingRepository([]),
+        result_builder=MetricResultBuilder(lambda: WINDOW_START + timedelta(minutes=5)),
+        emitter=OperationalEventEmitter(
+            configured_secrets=("operator-secret", "raw-query-secret"), logger=logger
+        ),
+        monotonic_clock=lambda: next(timestamps),
+    )
+
+    analysis = run(pipeline.analyze(execution_context))
+
+    assert len(messages) == 1
+    event = json.loads(messages[0])
+    assert event == {
+        "attempt_count": expected_fields.get("attempt_count"),
+        "category": expected_category,
+        "component": "metrics_pipeline",
+        "duration_ms": 125,
+        "event": "metric_acquisition_failed",
+        "lens_id": execution_context.identity.lens_id,
+        "lens_run_id": str(execution_context.identity.lens_run_id),
+        "level": "error",
+        "observation_run_id": str(execution_context.identity.observation_run_id),
+        "source_id": "plant-prometheus",
+        "stage": "provider_acquisition",
+        **(
+            {"http_status": expected_fields["http_status"]}
+            if "http_status" in expected_fields
+            else {}
+        ),
+        **(
+            {"observed_series_count": expected_fields["observed_series_count"]}
+            if "observed_series_count" in expected_fields
+            else {}
+        ),
+        "timestamp": event["timestamp"],
+    }
+    assert event["timestamp"].endswith("Z")
+    for forbidden in (
+        "operator-secret",
+        "raw-query-secret",
+        "ignored-label-value",
+        "provider body",
+        execution_context.provider_scope.query,
+        "diagnostic",
+    ):
+        assert forbidden not in messages[0]
+    assert analysis.terminal_result.payload["status"] == {
+        "state": "failed",
+        "error": {
+            "code": "current_metric_acquisition_failed",
+            "message": "Current metric data acquisition failed.",
+        },
+    }
+    artifact = json.dumps(analysis.terminal_result.payload, sort_keys=True)
+    assert "diagnostic_category" not in artifact
+    assert "observed_series_count" not in artifact
+    assert "http_status" not in artifact
+
+
+def test_acquisition_exception_logs_only_its_type_without_query_or_secret_content() -> None:
+    """An unexpected provider exception cannot turn into an unsafe traceback event."""
+    messages: list[str] = []
+    logger = logging.getLogger("test.metric-acquisition.exception")
+    logger.handlers = [EventCollector(messages)]
+    logger.setLevel(logging.DEBUG)
+    logger.propagate = False
+    execution_context = context()
+    secret = "configured-prometheus-secret"
+    provider_text = "provider-body-and-label-value"
+    timestamps = iter((100.0, 100.001))
+    pipeline = MetricAnalysisPipeline(
+        provider=SequencedProvider(
+            (RuntimeError(f"{secret} {provider_text} {execution_context.provider_scope.query}"),)
+        ),
+        agent=FakeAgent(),
+        history_reader=FakeHistoryReader(),
+        repository=RecordingRepository([]),
+        emitter=OperationalEventEmitter(configured_secrets=(secret,), logger=logger),
+        monotonic_clock=lambda: next(timestamps),
+    )
+
+    analysis = run(pipeline.analyze(execution_context))
+
+    assert len(messages) == 1
+    event = json.loads(messages[0])
+    assert event["category"] == "provider_failure"
+    assert event["exception_type"] == "RuntimeError"
+    assert event["duration_ms"] == 1
+    for forbidden in (secret, provider_text, execution_context.provider_scope.query, "traceback"):
+        assert forbidden not in messages[0]
+    assert analysis.terminal_result.payload["status"]["error"]["code"] == (
+        "current_metric_acquisition_failed"
+    )
 
 
 class FailingSufficientBuilder(MetricResultBuilder):

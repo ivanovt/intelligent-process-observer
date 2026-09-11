@@ -599,6 +599,77 @@ Use `frontend/.env.example` and `frontend/.env` for client-side Vite variables o
 
 Any `VITE_*` value may become visible in the browser bundle. Never place an API key, password, LLM secret, database credential, or other secret there.
 
+### 8.3 Runtime diagnostics and development agent traces
+
+The backend emits compact, structured operational events through its normal server log
+output. Events use safe categories and available correlation IDs such as
+`observation_run_id`, `lens_run_id`, and `lens_id`. Use an ObservationRun ID from the
+existing run API/UI to correlate a launch with its backend events. Operational logs do
+not expose PromQL, provider bodies, labels, credentials, prompts, completions, or trace
+paths. Expected validation and business-rule `4xx` responses are not internal-error
+events.
+
+Full agent-interaction tracing is a separate, sensitive developer diagnostic. It is
+disabled by default. To enable it locally, keep `APP_ENV=development` and set the
+backend-only root environment variable:
+
+```text
+AGENT_TRACE_ENABLED=true
+```
+
+Any enabled value outside `APP_ENV=development` is rejected before application
+composition. There is no API field, UI toggle, public trace route, or `VITE_*` setting
+for this capability. Restart the backend after changing the setting. Disabling it
+creates no trace directory and records no interactions.
+
+When enabled, the fixed lookup root is:
+
+```text
+tmp/agent-traces/<observation-run-id>/<invocation-id>-<role>-<phase>.json
+```
+
+`<role>` and `<phase>` are server-controlled values. Each file is an atomically written
+artifact for one Metric, Alert, Observation Reasoning, or Report invocation. Search by
+the `observation_run_id` in an operational event or normal run response; no filesystem
+path is returned by public APIs. Trace write failures are logged as safe
+`trace_write_failed` events and do not alter the original execution result.
+
+Treat the entire `tmp/agent-traces/` directory as sensitive operational data. Although
+configured known secrets and credential-shaped metadata are removed, traces deliberately
+retain model-visible instructions, inputs, messages, and completion material for local
+debugging. They are neither PostgreSQL records nor Observation artifacts, are not
+automatically retained or deleted, and can grow until manually cleaned up. After closing
+the investigation, explicitly remove only the local trace root:
+
+```bash
+rm -rf tmp/agent-traces
+```
+
+Never commit, copy into issue trackers, or serve files from that directory.
+
+#### Error-boundary coverage matrix
+
+This matrix is maintained when application-owned normalization boundaries change. An
+entry marked **expected rejection** is intentionally excluded from internal-error logging;
+all other rows require a focused operational-event assertion and preservation of the
+existing result, lifecycle, or exception behavior.
+
+| Boundary owner | Failure or rejection boundary | Coverage evidence |
+| --- | --- | --- |
+| Diagnostics emitter | scalar admission, UTC JSON, configured-secret traceback scrubbing | `backend/tests/test_operational_diagnostics.py` |
+| Lifespan and FastAPI | startup failure, uncaught HTTP exception, safe API normalization | `backend/tests/test_http_operational_logging.py` |
+| FastAPI validation and domain/API `4xx` | request validation, business conflict/not-found/rejection | **expected rejection**; `backend/tests/test_http_operational_logging.py` |
+| Run manager | initialization, detached continuation, recovery/reconciliation failure | `backend/tests/test_observation_run_manager.py` |
+| Execution orchestrator and fan-out | stage failure, persistence propagation, cancellation/deadline cleanup | `backend/tests/test_observation_execution_orchestrator.py`, `backend/tests/test_observation_execution_fanout.py` |
+| Lens execution adapters | Metric/Alert timeout, unexpected analysis, invalid result normalization | `backend/tests/test_observation_execution_adapters.py` |
+| Metric acquisition | source/query/status, multiple-series, timeout/transport, invalid response/sample normalization | `backend/tests/test_metric_analysis_pipeline.py`, `backend/tests/test_prometheus_metric_provider_resilience.py` |
+| Agent, reasoning, report, and retrieval | provider, timeout, policy, schema, grounding, report-render, retrieval failure | `backend/tests/test_agent_tracing.py`, `backend/tests/test_pydantic_ai_*_adapter.py`, `backend/tests/test_reasoning_executor.py`, `backend/tests/test_reporting.py`, `backend/tests/test_knowledge_retrieval.py` |
+| Trace recorder | serialization/write failure | `backend/tests/test_agent_tracing.py` |
+
+The matrix deliberately does not convert expected client rejection into an exception
+traceback. New `except`-based normalization code must be added to the appropriate row
+with either an event assertion or an explicit expected-rejection rationale.
+
 ## 9. Database workflow
 
 PostgreSQL runs in Docker Compose, while SQLAlchemy/Alembic run from the backend process environment in WSL.
@@ -1085,6 +1156,43 @@ Verify the database service is running and the root `DATABASE_URL` matches the C
 ### Frontend environment value is sensitive
 
 Do not use it in the frontend. Browser-visible environment values are not secrets. Move the sensitive value to the backend environment and expose only the minimum server-mediated behavior needed by the UI.
+
+### Manual verification: Prometheus multiple-series query
+
+Use a local configured Prometheus source and the Metric Lens editor's **Validate query**
+action, or invoke the same supported backend endpoint directly:
+
+```bash
+curl -sS -X POST http://localhost:8000/api/v1/observation-lens-validations/metric \
+  -H 'Content-Type: application/json' \
+  -d '{"source_id":"<configured-source-id>","query":"up","validation_window":{"duration":"15m"}}'
+```
+
+Choose a query that intentionally returns at least two series for the configured source;
+`up` is only an example and may need replacement in a small deployment. The advisory
+response should report `multiple_series_returned` with bounded label-set feedback. It
+does not rewrite or persist the query. Run an Observation containing the same Lens when
+verifying runtime behavior: public run detail must retain its existing safe
+`current_metric_acquisition_failed` reason, while the backend operational event records
+`multiple_series_returned`, bounded series count, run/Lens correlation, and no raw query
+or label values.
+
+### Manual verification: invalid hypothesis grounding trace
+
+Use an enabled development trace only with a controlled fake/local model scenario that
+returns a syntactically valid Observation Reasoning hypothesis referencing unavailable
+knowledge. Do not use a production or untrusted model endpoint for this check. Launch a
+fresh ObservationRun, then locate its directory by `observation_run_id` under
+`tmp/agent-traces/`. The Observation Reasoning hypothesis trace must preserve the model
+completion and append the later deterministic validation outcome:
+
+```json
+{"category":"hypothesis_grounding","outcome":"rejected"}
+```
+
+The public run API must not expose that trace, model output, grounding detail, or trace
+path; it retains only its existing safe result/failure behavior. Disable tracing and
+remove the local trace root after verification.
 
 ## 21. When to extend the development environment
 
