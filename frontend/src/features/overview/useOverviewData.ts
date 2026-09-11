@@ -1,11 +1,12 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { listObservations } from '../observations/api'
 import type { ObservationSummary } from '../observations/types'
-import { getObservationRun, listObservationRuns } from '../runs/api'
-import { hasActiveRuns, mergeRunHistory } from '../runs/runHistory'
-import type { ObservationRunDetail, ObservationRunSummary } from '../runs/types'
+import { getObservationRun } from '../runs/api'
+import type { ExecutionStatus, ObservationRunDetail } from '../runs/types'
 import { useSequentialPolling, type PollingState } from '../runs/useSequentialPolling'
-import { selectFindingCandidates, type FindingCandidate } from './projections'
+import { getOverviewRuntime } from './api'
+import { runtimeId, runtimeStatus, selectFindingCandidates, type FindingCandidate } from './projections'
+import type { OverviewRuntimeFeed } from './types'
 
 /** Independent request state for a source whose successful data remains visible after a failed refresh. */
 export type OverviewSourceState<T> = PollingState<T>
@@ -23,15 +24,15 @@ export interface UseOverviewDataOptions {
   readonly now?: () => Date
 }
 
-/** Read-only Overview data snapshot composed from existing public APIs. */
+/** Read-only Overview data snapshot composed from independent public APIs. */
 export interface OverviewDataCoordinator {
   readonly definitions: OverviewSourceState<readonly ObservationSummary[]>
-  readonly runHistory: OverviewSourceState<readonly ObservationRunSummary[]>
+  readonly runHistory: OverviewSourceState<OverviewRuntimeFeed>
   readonly findingCandidates: readonly FindingCandidate[]
   readonly findingDetails: OverviewFindingDetailState
   /** The latest client time at which definitions or run history loaded successfully. */
   readonly lastSuccessfulRefreshAt: Date | null
-  /** Refreshes independent definition and history sources plus retryable finding details. */
+  /** Refreshes independent definition and resilient runtime sources plus retryable finding details. */
   readonly refresh: () => void
 }
 
@@ -50,16 +51,16 @@ export function useOverviewData(options: UseOverviewDataOptions = {}): OverviewD
   const recordSuccessfulRefresh = useCallback(() => setLastSuccessfulRefreshAt(now()), [now])
   const { state: definitionsState, refresh: refreshDefinitions } = useOverviewDefinitions(recordSuccessfulRefresh)
   const loadRunHistory = useCallback(async (signal: AbortSignal) => {
-    const runs = await listObservationRuns(signal)
+    const runtime = await getOverviewRuntime(signal)
     if (!signal.aborted) recordSuccessfulRefresh()
-    return runs
+    return runtime
   }, [recordSuccessfulRefresh])
-  const { state: runHistoryState, refresh: refreshRunHistory } = useSequentialPolling<readonly ObservationRunSummary[]>({
+  const { state: runHistoryState, refresh: refreshRunHistory } = useSequentialPolling<OverviewRuntimeFeed>({
     load: loadRunHistory,
-    isActive: hasActiveRuns,
-    merge: mergeRunHistory,
+    isActive: hasActiveOverviewRuntime,
+    merge: mergeOverviewRuntime,
   })
-  const findingCandidates = useMemo(() => selectFindingCandidates(runHistoryState.data ?? []), [runHistoryState.data])
+  const findingCandidates = useMemo(() => selectFindingCandidates(runHistoryState.data?.items ?? []), [runHistoryState.data])
   const candidateKey = findingCandidates.map(({ run }) => run.id).join(',')
   const cache = useRef(new Map<string, ObservationRunDetail>())
   const detailErrors = useRef(new Set<string>())
@@ -172,4 +173,28 @@ function useOverviewDefinitions(onSuccessfulReceipt: () => void) {
 
 function isAbortError(error: unknown) {
   return error instanceof DOMException && error.name === 'AbortError'
+}
+
+/** Identifies resilient feed items whose independently valid lifecycle remains active. */
+export function hasActiveOverviewRuntime(feed: OverviewRuntimeFeed) {
+  return feed.items.some((item) => runtimeStatus(item) === 'pending' || runtimeStatus(item) === 'running')
+}
+
+/** Preserves a previously observed terminal lifecycle while retaining the incoming feed order and coverage count. */
+export function mergeOverviewRuntime(previous: OverviewRuntimeFeed | null, incoming: OverviewRuntimeFeed): OverviewRuntimeFeed {
+  if (previous === null) return incoming
+  const previousById = new Map(previous.items.map((item) => [runtimeId(item), item]))
+  const items = incoming.items.map((item) => {
+    const old = previousById.get(runtimeId(item))
+    return old !== undefined && isTerminal(runtimeStatus(old)) && isActiveStatus(runtimeStatus(item)) ? old : item
+  })
+  return { ...incoming, items, limited_run_count: items.filter((item) => item.availability === 'limited').length }
+}
+
+function isTerminal(status: ExecutionStatus | null) {
+  return status === 'completed' || status === 'failed' || status === 'cancelled'
+}
+
+function isActiveStatus(status: ExecutionStatus | null) {
+  return status === 'pending' || status === 'running'
 }
