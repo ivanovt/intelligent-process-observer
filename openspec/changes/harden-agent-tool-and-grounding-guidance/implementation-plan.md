@@ -48,7 +48,7 @@ integration proof.
 | Slice | Increment | Depends on | Risk | Status | Commit | Handoff/review |
 | --- | --- | --- | --- | --- | --- | --- |
 | VS-01 | Tool-enabled Metric and hypothesis invocations receive server-owned guidance and non-parallel steering; deterministic policy remains unchanged. | approved planning state | high-risk | COMPLETE | `44c0122` | `implementation/VS-01-handoff.md`; high-risk review PASS |
-| FINAL | Verify whole approved change without corrective work. | accepted VS-01 | normal | PLANNED | — | `implementation/FINAL-handoff.md`; independent implementation review |
+| FINAL | Verify whole approved change without corrective work. | accepted VS-01 | normal | IN_PROGRESS | — | `implementation/FINAL-handoff.md`; independent implementation review |
 
 ## Slice definitions
 
@@ -276,9 +276,10 @@ Mutable Coordinator-owned metadata only; do not add requirements or redesign dec
 
 | Item | Current value |
 | --- | --- |
-| Coordinator status | VS-01 accepted — Home DEV smoke pending before FINAL |
-| Active assignment | none |
+| Coordinator status | EXECUTING — FINAL conformance in progress |
+| Active assignment | Coordinator final verification; independent review pending |
 | Approved planning anchor | `11e037f5548d80fc355e30d0cfa1822ddb225500` |
 | Last accepted slice | VS-01 (`44c0122`; high-risk review PASS) |
 | Bounded correction | none |
 | Stop/escalation reason | none |
+| Home DEV smoke | PASS — run `b0ddf4df-f220-4955-8b87-36c3f10c8a4e`; both target paths exercised, no trace content recorded |
