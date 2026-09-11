@@ -8,29 +8,35 @@ Refine the approved Overview into a dense, responsive monitoring workspace that 
 
 ### Requirement: Present a compact monitoring header and state summary
 
-The Overview SHALL retain its `Overview` identity while using a concise current-state description, the existing manual Refresh action, and a visible last-successful-refresh time after at least one monitoring source has loaded successfully. The refresh time SHALL describe client receipt of the latest successful definition or run-history response; it SHALL NOT imply a backend event time, data-source collection time, or globally consistent snapshot.
+The Overview SHALL retain its `Overview` identity, concise current-state description, manual Refresh action, and honest client-receipt refresh time.
 
-The summary SHALL present six compact counts:
+The summary SHALL present compact counts for total configured Observations, active Observations, latest `no_significant_findings`, latest `uncertain`, latest `significant_findings_present`, and latest failed execution. Limited latest-runtime coverage SHALL be shown as a separate compact limitation count or notice rather than as an analytical or execution state.
 
-- total configured Observations;
-- active Observations whose latest run is `pending` or `running`;
-- Observations whose latest analytical state is `no_significant_findings`;
-- Observations whose latest analytical state is `uncertain`;
-- Observations whose latest analytical state is `significant_findings_present`;
-- Observations whose latest execution status is `failed`.
+Summary cards SHALL use neutral surface backgrounds. Semantic color SHALL accent the relevant number, icon, or small indicator: no findings uses the analytical no-findings token, uncertain uses the analytical uncertain token, significant findings uses the analytical significant token, active uses an execution-active token, and failed uses the execution-failed token. Zero, unavailable, and limited values SHALL remain legible and SHALL not fill entire cards with reassuring or alarming color. Each card SHALL include an existing Lucide icon or status indicator with an accessible text label; icon and color SHALL not carry meaning alone.
 
-Each analytical count SHALL derive only from the latest run's explicit analytical state. Never-run Observations and runs without analysis SHALL be excluded from all three analytical counts rather than classified as normal. Execution failure SHALL remain independent, so one latest run MAY contribute to both a failed-execution count and one analytical-state count. Each count SHALL be independently unavailable when its required source data has never loaded successfully.
+#### Scenario: Scan complete colored summary
+
+- **WHEN** complete monitoring data renders
+- **THEN** six compact neutral cards use distinct semantic value/icon accents
+- **AND** analytical and execution colors retain separate token ownership
+
+#### Scenario: Scan incomplete summary
+
+- **GIVEN** limited latest-runtime items exist
+- **WHEN** summary renders
+- **THEN** usable counts remain visible and limited coverage is stated separately
+- **AND** unavailable values do not appear as successful or failed classifications
 
 #### Scenario: Scan a complete compact summary
 
-- **GIVEN** definitions and newest-first run history loaded successfully
+- **GIVEN** definitions and newest-first runtime data loaded successfully
 - **WHEN** the Overview summary renders
 - **THEN** all six counts appear in a compact scan-oriented row or responsive grid
-- **AND** no-finding, uncertain, significant-finding, active, and failed values retain distinct labels and semantic treatment
+- **AND** analytical, active, failed, and limited meanings remain distinct
 
 #### Scenario: Keep analytical absence out of state counts
 
-- **GIVEN** an Observation has no run or its latest run has no analytical state
+- **GIVEN** an Observation has no run or its latest item has no analytical state
 - **WHEN** summary counts are derived
 - **THEN** it contributes to none of the three analytical-state counts
 - **AND** its absence is not interpreted as `no_significant_findings`
@@ -81,34 +87,41 @@ An empty query SHALL show all loaded Observation rows. A non-empty query with no
 
 ### Requirement: Render Observations as a dense semantic table/list
 
-At desktop widths, the Observation collection SHALL use a compact aligned header and row structure with these scan columns:
+At desktop widths, the Observation collection SHALL use one shared non-overflowing grid definition for header and rows with columns for Observation identity, latest run time, analytical state, execution status/duration, recent runs, and a compact unlabeled action affordance. The grid SHALL fit inside the primary panel at the supported desktop breakpoint; fixed minimums SHALL not push headers or actions into the insights rail. Equivalent header and row fields SHALL align.
 
-- Observation identity and optional description;
-- latest run time;
-- latest analytical state;
-- latest execution status and duration;
-- up to seven newest run states;
-- an action to open the latest run when available.
+Each row SHALL use a safe composition-derived Lucide icon: Metric-only, Alert-only, mixed Metric/Alert, or a neutral unavailable/legacy composition. These icons SHALL describe configured composition only and SHALL NOT imply health, severity, process category, or analytical state.
 
-The collection SHALL use lightweight dividers and row hover/focus treatment rather than a separate large bordered card for every Observation. It SHALL remain a project-owned lightweight component and SHALL NOT require advanced table behavior or introduce TanStack Table solely for this presentation.
+Runtime-unavailable and limited rows SHALL retain the column structure and render field-local placeholders instead of one message spanning all runtime columns. Available analytical and execution states SHALL use compact project-owned dot/icon-plus-text treatments aligned with the reference hierarchy while preserving exact accepted labels. At narrow widths, rows SHALL stack with visible field labels and no horizontal page scrolling.
 
-At narrow widths, each row SHALL reflow into a compact stacked item while retaining the same information and navigation. Observation identity SHALL continue to open Observation detail. Never-run and runtime-unavailable rows SHALL retain their explicit accepted labels and SHALL not receive invented status values.
+Each recent-run marker SHALL retain a unique visible status/availability cue, keyboard detail, and accessible exact-state label. Completed, cancelled, and limited markers SHALL remain distinguishable without color.
 
-Each recent-run marker SHALL have a unique visible status cue, keyboard-available explanatory text or tooltip, and an accessible label containing run time, exact execution status, and analytical state or analysis-unavailable state. `completed` and `cancelled` SHALL not use the same visible text token without another non-color distinction.
+#### Scenario: Align headers and data
+
+- **GIVEN** the primary desktop panel and insights rail render side by side
+- **WHEN** Observation rows contain available, limited, and unavailable values
+- **THEN** every field remains under its matching header within the primary panel
+- **AND** the action affordance does not overlap the rail
+
+#### Scenario: Derive composition icon safely
+
+- **GIVEN** Metric-only, Alert-only, mixed, and legacy/empty definitions
+- **WHEN** their rows render
+- **THEN** each uses the corresponding composition icon and accessible label
+- **AND** no icon claims a health or process-category meaning
 
 #### Scenario: Scan aligned desktop rows
 
-- **GIVEN** multiple loaded Observations have mixed latest states
+- **GIVEN** multiple loaded Observations have mixed latest states and availability
 - **WHEN** the desktop collection renders
 - **THEN** equivalent fields align under stable scan columns
-- **AND** analytical state and execution status remain visually separate
+- **AND** analytical state, execution status, and availability remain visually separate
 
 #### Scenario: Distinguish recent execution markers
 
-- **GIVEN** recent runs include both `completed` and `cancelled`
+- **GIVEN** recent runs include completed, cancelled, and limited items
 - **WHEN** their markers render
 - **THEN** they are distinguishable without relying only on color
-- **AND** their full durable state descriptions are available to keyboard and assistive-technology users
+- **AND** their full durable descriptions are available to keyboard and assistive-technology users
 
 ### Requirement: Keep true findings and exact execution activity visible
 
@@ -132,13 +145,26 @@ Run Activity SHALL retain its fourteen-newest-run bound and exact `pending`, `ru
 
 ### Requirement: Treat the visual reference as informative and preserve failure honesty
 
-The refined Overview SHALL follow the accepted ObserveAI shell, typography, semantic tokens, domain components, and responsive behavior. The supplied dashboard screenshot MAY inform density, spacing, hierarchy, and column proportions but SHALL NOT be a parity requirement or authority for product semantics.
+The refined Overview SHALL follow the accepted ObserveAI shell, typography, semantic tokens, domain components, and responsive behavior. The supplied dashboard screenshot SHALL guide density, white-surface cards, restrained borders/shadows, icon placement, dot/icon-plus-text states, and column proportions, but SHALL NOT override product semantics.
 
-The refinement SHALL NOT add a user avatar or identity, authentication behavior, global time-range control, arbitrary Observation category icons, new health classification, runtime mutation, backend endpoint, credential exposure, or data repair. If run history remains unavailable because the public API rejects invalid durable data, the page SHALL continue to show the accepted unavailable/stale state while keeping successfully loaded definitions searchable and visible; it SHALL NOT fabricate dashboard counts or suppress the failure to resemble the reference.
+The refinement SHALL NOT add user identity, global time-range control, arbitrary category icons, health classification, ObservationRun `partial`, runtime mutation, credential exposure, data repair, or fabricated findings. Invalid durable runtime data SHALL appear through the explicit resilient Overview limitation contract; it SHALL not be silently dropped, rewritten, or used to weaken the strict Runs API.
+
+#### Scenario: Follow visual hierarchy without copying unsupported semantics
+
+- **WHEN** the Overview is compared with the reference
+- **THEN** its surfaces, accents, icons, state treatments, density, and column alignment follow the reference hierarchy
+- **AND** unsupported avatar, global range, `partial` run, and fabricated status entries remain absent
+
+#### Scenario: Show useful content during inconsistent data
+
+- **GIVEN** some runtime items are limited and others are valid
+- **WHEN** the Overview renders
+- **THEN** valid definitions, states, findings, and activity remain visible with explicit limitations
+- **AND** no invalid value is inferred or hidden as healthy data
 
 #### Scenario: Render partial runtime failure after refinement
 
-- **GIVEN** definitions load successfully and run history fails before any successful runtime snapshot
+- **GIVEN** definitions load successfully and the Overview runtime request fails before any successful snapshot
 - **WHEN** the refined Overview renders
 - **THEN** definitions remain searchable in the dense collection and runtime-dependent values remain unavailable
 - **AND** the page does not display invented analytical or execution results
