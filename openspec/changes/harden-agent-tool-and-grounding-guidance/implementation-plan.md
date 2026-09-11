@@ -276,11 +276,11 @@ Mutable Coordinator-owned metadata only; do not add requirements or redesign dec
 
 | Item | Current value |
 | --- | --- |
-| Coordinator status | EXECUTING — FINAL conformance in progress |
-| Active assignment | Coordinator final verification; independent review pending |
+| Coordinator status | EXECUTING — bounded handoff reconciliation after whole-change review |
+| Active assignment | `terra_handoff_correction` — IR-001 handoff metadata only |
 | Approved planning anchor | `11e037f5548d80fc355e30d0cfa1822ddb225500` |
 | Last accepted slice | VS-01 (`44c0122`; high-risk review PASS) |
-| Bounded correction | none |
+| Bounded correction | IR-001 LOW — append later Home DEV PASS evidence to VS-01 handoff; IN_PROGRESS |
 | Stop/escalation reason | none |
 | Home DEV smoke | PASS — run `b0ddf4df-f220-4955-8b87-36c3f10c8a4e`; both target paths exercised, no trace content recorded |
 | Final local verification | PASS — `make check`; 974 backend passed, 84 skipped; 176 frontend passed; strict OpenSpec 21/21 |
