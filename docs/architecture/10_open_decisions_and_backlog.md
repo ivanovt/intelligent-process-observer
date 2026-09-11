@@ -97,7 +97,10 @@
 - Database technology/schema.
 - Multi-process task ownership/claim/lease и distributed worker model; ADR-168 фиксира
   single-process managed `asyncio` host за on-demand MVP execution.
-- Observability/telemetry на самата multi-agent система.
+- Production observability остава Open само за aggregation/export backend, dashboards,
+  alerting, distributed tracing и automatic retention policy. ADR-171 фиксира минималния
+  MVP boundary за correlated backend operational logs, safe failure classification и
+  opt-in development-only full agent interaction traces.
 - Data retention policy за persisted results.
 
 ## 9. RAG / knowledge layer

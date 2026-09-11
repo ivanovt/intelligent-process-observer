@@ -1,14 +1,14 @@
-# UI Implementation Handoff — v1.6
+# UI Implementation Handoff — v1.7
 
 **Project:** ObserveAI / Master Thesis
-**Status:** Accepted living major-v1 implementation handoff for MVP UI Direction v1.6
-**Date:** 2026-09-10
+**Status:** Accepted living major-v1 implementation handoff for MVP UI Direction v1.7
+**Date:** 2026-09-11
 
 ## 1. Purpose
 
 This document translates the accepted current UI direction into implementation-oriented rules for the MVP frontend.
 
-UI Direction v1.6 includes the original monitoring/investigation experience, global run management, Observation Management configuration UX, and read-only Data Sources visibility. It retains UI-generated Observation-child identity as typed, compact metadata beside Name, adds an on-demand secret-safe Prometheus configuration disclosure for each configured source, and retains the global Runs history/launch screen and initial routable run-detail foundation. The frontend must preserve the architecture's semantic boundaries and must not invent new product-level classifications, lifecycle semantics, or administrative capabilities that are not supported by accepted backend contracts.
+UI Direction v1.7 includes the original monitoring/investigation experience, global run management, Observation Management configuration UX, and read-only Data Sources visibility. It retains UI-generated Observation-child identity as typed, compact metadata beside Name, the on-demand secret-safe Prometheus configuration disclosure for each configured source, the global Runs history/launch screen and initial routable run-detail foundation, and adds advisory Metric query preflight in the nested Metric Lens editor. The frontend must preserve the architecture's semantic boundaries and must not invent new product-level classifications, lifecycle semantics, or administrative capabilities that are not supported by accepted backend contracts.
 
 ## 2. Accepted frontend visual stack
 
@@ -48,7 +48,7 @@ https://magicpath.ai/files/447597481925181440
 
 MagicPath can inform look and feel but does not require 1:1 parity or canvas synchronization for an approved implementation. It is not permission to invent API fields or backend lifecycle operations. Accepted architecture/contracts remain authoritative for domain semantics.
 
-## 4. Screen set — v1.6
+## 4. Screen set — v1.7
 
 ### Monitoring and investigation
 
@@ -572,6 +572,28 @@ Reference periods and persisted history are separate temporal concepts.
 
 Primary nested-editor action: `Apply changes`.
 
+Metric query preflight is an advisory editor-local action:
+
+```text
+Validate query
+-> exact selected source + exact provider query + fixed 15m window
+-> existing Metric preflight API
+-> valid | invalid | request failure feedback
+```
+
+The action is available only when source/query fields are locally valid. It displays
+the resolved window, returned labels and sample count for one series; distinguishes no
+series from invalid syntax; and shows bounded series count/label sets when multiple
+series violate the one-Metric-Lens/one-metric boundary. Provider-authored messages and
+labels are rendered only as untrusted text. Authentication/availability failures expose
+only the existing safe API error.
+
+Preflight never rewrites PromQL, mutates the Observation draft, persists validation
+state, or gates `Apply changes`. Editing source/query clears stale results; a newer
+request supersedes an older one; leaving the editor aborts pending validation. Backend
+operational logs and full agent interaction traces remain backend-only and are not
+shown or controlled here.
+
 ### Alert Lens Configuration
 
 Drive the form from the accepted Alert Lens contract, including:
@@ -660,6 +682,10 @@ Use repeatable compact values/rows. Reject duplicates and invalid offsets accord
 
 Prefer local field validation plus aggregate-level review before final create.
 
+Metric provider query preflight is the explicit advisory exception described by Metric
+Lens Configuration. It validates point-in-time provider compatibility without becoming
+an aggregate persistence prerequisite or future availability guarantee.
+
 Do not expose prompts, agent models, tool-call budgets, orchestration internals or backend implementation details as user configuration.
 
 ## 11. Library usage
@@ -732,7 +758,7 @@ If `add-observation-management-ui` is the first frontend OpenSpec change, it may
 
 ## 15. Versioning and change-control rule
 
-**UI Direction v1.6 is the accepted current direction.**
+**UI Direction v1.7 is the accepted current direction.**
 
 Implementation may make minor technical adjustments for responsive fit, accessibility, browser behavior, real data length and actual API constraints, but must not silently change:
 

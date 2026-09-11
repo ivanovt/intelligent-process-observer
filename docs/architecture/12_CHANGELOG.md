@@ -1,5 +1,24 @@
 # Changelog
 
+## 6.8 — 2026-09-11
+
+- добавен ADR-171 за minimum viable self-observability: correlated backend operational
+  logs за application errors и safe failure classifications;
+- full Metric/Alert/Observation Reasoning/Report interaction tracing е explicit opt-in,
+  development-only, disabled by default и пази model-visible prompts/input,
+  request/response/tool sequence, validation outcome, timing и usage като sensitive
+  ephemeral backend artifacts извън PostgreSQL/public API;
+- secrets, credential objects, auth headers и non-allowlisted provider transport metadata
+  никога не се trace/log-ват; current unauthenticated UI няма trace viewer/download;
+- Prometheus runtime failures получават safe internal categorical diagnostics, а
+  query-authoring feedback reuse-ва existing Metric preflight с bounded label/error
+  details без да става mandatory persistence gate;
+- UI Direction v1.7 version-ва advisory `Validate query` workflow в nested Metric Lens
+  editor, включително stale-request handling и explicit non-exposure на backend logs и
+  full agent traces;
+- production aggregation/export, dashboards, alerting, distributed tracing и automatic
+  retention policy остават Open; не се избира external observability dependency.
+
 ## 6.7 — 2026-09-09
 
 - добавен ADR-168: on-demand public Observation execution използва single-process

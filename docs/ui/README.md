@@ -5,11 +5,11 @@ This directory contains the accepted current UI direction, frontend technology d
 ## Files
 
 - `frontend_ui_stack_adr.md` — accepted frontend visual technology stack and related trade-offs.
-- `ui_implementation_handoff_v1.md` — living major-v1 implementation handoff (currently v1.6) covering monitoring/investigation, run management, Observation Management, and Data Sources UX.
+- `ui_implementation_handoff_v1.md` — living major-v1 implementation handoff (currently v1.7) covering monitoring/investigation, run management, Observation Management, and Data Sources UX.
 
 ## Status
 
-**UI Direction v1.6 is the accepted current direction.**
+**UI Direction v1.7 is the accepted current direction.**
 
 v1.2 retained the monitoring/investigation and Observation Management direction, and added:
 
@@ -48,6 +48,13 @@ URL is rendered as omitted, without a replacement, validity or health inference,
 diagnostic. Bearer tokens and Basic-auth passwords remain absent from the browser-visible
 contract; expanding a disclosure does not fetch, test, or mutate a source.
 
+v1.7 retains the complete v1.6 direction and adds an advisory `Validate query` action
+to Metric Lens Configuration. It reuses the existing Metric preflight API with a fixed
+`15m` validation window, displays actionable single/zero/multiple-series and safe
+provider feedback, never rewrites PromQL, and never gates `Apply changes` or persists
+preflight state in the Observation draft. Full backend agent traces and operational
+logs remain unavailable to the browser.
+
 The implementation must preserve accepted information architecture, terminology, analytical/execution semantics, aggregate ownership, Lens configuration boundaries, and evidence/knowledge boundaries.
 
 Minor implementation adjustments are allowed for responsive fit, accessibility, browser behavior, real data length, and actual API constraints. Meaningful visual, UX, or semantic changes require an explicit UI version change.
@@ -68,7 +75,7 @@ Observation UI - Master Thesis
 https://magicpath.ai/files/447597481925181440
 ```
 
-MagicPath can guide look and feel, but an approved change does not require 1:1 canvas parity or synchronization. Historical v1.1 through v1.5 wording remains historical; ADR-167 and this current v1.6 documentation govern new work.
+MagicPath can guide look and feel, but an approved change does not require 1:1 canvas parity or synchronization. Historical v1.1 through v1.6 wording remains historical; ADR-167 and this current v1.7 documentation govern new work.
 
 ## Usage
 
