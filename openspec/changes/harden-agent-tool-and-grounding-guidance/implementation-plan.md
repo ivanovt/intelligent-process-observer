@@ -47,7 +47,7 @@ integration proof.
 
 | Slice | Increment | Depends on | Risk | Status | Commit | Handoff/review |
 | --- | --- | --- | --- | --- | --- | --- |
-| VS-01 | Tool-enabled Metric and hypothesis invocations receive server-owned guidance and non-parallel steering; deterministic policy remains unchanged. | approved planning state | high-risk | PLANNED | — | `implementation/VS-01-handoff.md`; fresh high-risk review |
+| VS-01 | Tool-enabled Metric and hypothesis invocations receive server-owned guidance and non-parallel steering; deterministic policy remains unchanged. | approved planning state | high-risk | IN_PROGRESS | — | `implementation/VS-01-handoff.md`; fresh high-risk review |
 | FINAL | Verify whole approved change without corrective work. | accepted VS-01 | normal | PLANNED | — | `implementation/FINAL-handoff.md`; independent implementation review |
 
 ## Slice definitions
@@ -276,8 +276,8 @@ Mutable Coordinator-owned metadata only; do not add requirements or redesign dec
 
 | Item | Current value |
 | --- | --- |
-| Coordinator status | HUMAN_APPROVED — ready to dispatch VS-01 |
-| Active assignment | none |
+| Coordinator status | EXECUTING — VS-01 delegated |
+| Active assignment | `terra_vs01` — VS-01 implementation |
 | Approved planning anchor | `11e037f5548d80fc355e30d0cfa1822ddb225500` |
 | Last accepted slice | none |
 | Bounded correction | none |
