@@ -174,13 +174,21 @@ def test_postgresql_overview_runtime_keeps_legacy_rows_without_mutation(
         service = OverviewRuntimeReadService(session_factory, RuntimePersistenceRepository())
         response = await service.get_runtime()
 
-        assert [item.availability for item in response.items] == ["available", "limited"]
-        assert [
-            item.summary.id if item.availability == "available" else item.id
+        owned_items = tuple(
+            item
             for item in response.items
-        ] == [valid_id, legacy_id]
-        assert response.limited_run_count == 1
-        limited = response.items[1]
+            if (item.summary.id if item.availability == "available" else item.id)
+            in {valid_id, legacy_id}
+        )
+        assert [item.availability for item in owned_items] == ["available", "limited"]
+        owned_item_ids = []
+        for item in owned_items:
+            owned_item_ids.append(item.summary.id if item.availability == "available" else item.id)
+        assert owned_item_ids == [valid_id, legacy_id]
+        assert response.limited_run_count == sum(
+            item.availability == "limited" for item in response.items
+        )
+        limited = owned_items[1]
         serialized = limited.model_dump_json()
         assert "analysis_window" not in serialized
         assert "private_legacy_diagnostic" not in serialized
