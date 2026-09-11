@@ -161,10 +161,12 @@ class MetricAnalysisPipeline:
         try:
             prepared = prepare_series(available.samples, context.analysis_window)
         except MetricSeriesMalformedError as error:
+            self._emit_failure(context, "metric_schema_rejected", "current_preparation", error)
             return self._failed_analysis(
                 context, MetricCurrentSeriesMalformed(diagnostic=_diagnostic(error))
             )
         except Exception as error:
+            self._emit_failure(context, "metric_internal_failed", "current_preparation", error)
             return self._failed_analysis(
                 context, MetricMandatoryAnalysisFailure(diagnostic=_diagnostic(error))
             )
@@ -178,11 +180,13 @@ class MetricAnalysisPipeline:
             try:
                 outcome = await self._agent.complete(request)
                 completion = MetricAgentCompletion.model_validate(outcome)
-            except Exception:
+            except Exception as error:
+                self._emit_failure(context, "metric_internal_failed", "agent_execution", error)
                 completion = MetricAgentOperationalFailure()
             try:
                 _, terminal_result = self._result_builder.completed_insufficient(context)
             except Exception as error:
+                self._emit_failure(context, "metric_internal_failed", "result_builder", error)
                 return self._failed_analysis(
                     context, MetricMandatoryAnalysisFailure(diagnostic=_diagnostic(error))
                 )
@@ -200,6 +204,9 @@ class MetricAnalysisPipeline:
         try:
             semantics = semanticize_mandatory(usable_prepared, context.analysis_window)
         except Exception as error:
+            self._emit_failure(
+                context, "metric_internal_failed", "mandatory_semanticization", error
+            )
             return self._failed_analysis(
                 context, MetricMandatoryAnalysisFailure(diagnostic=_diagnostic(error))
             )
@@ -221,7 +228,8 @@ class MetricAnalysisPipeline:
             completion = MetricAgentCompletion.model_validate(
                 await self._agent.complete(request, registry)
             )
-        except Exception:
+        except Exception as error:
+            self._emit_failure(context, "metric_internal_failed", "agent_execution", error)
             completion = MetricAgentOperationalFailure()
         tool_ledger = registry.ledger
         optional_projections = project_successful_optional_tools(tool_ledger)
@@ -268,6 +276,7 @@ class MetricAnalysisPipeline:
                     optional=optional_projections,
                 )
         except Exception as error:
+            self._emit_failure(context, "metric_internal_failed", "result_builder", error)
             return self._failed_analysis(
                 context, MetricMandatoryAnalysisFailure(diagnostic=_diagnostic(error))
             )
@@ -480,6 +489,29 @@ class MetricAnalysisPipeline:
                 http_status=http_status,
                 observed_series_count=observed_series_count,
                 exception_type=exception_type,
+            )
+        )
+
+    def _emit_failure(
+        self,
+        context: MetricLensExecutionContext,
+        category: str,
+        stage: str,
+        error: BaseException,
+    ) -> None:
+        """Emit safe normalized Metric-stage failure metadata without agent/provider content."""
+        self._emitter.emit(
+            DiagnosticEvent(
+                event="metric_failure_normalized",
+                category=category,
+                observation_run_id=context.identity.observation_run_id,
+                lens_run_id=context.identity.lens_run_id,
+                lens_id=context.identity.lens_id,
+                source_id=context.provider_scope.source_id,
+                agent_role="metric" if stage == "agent_execution" else None,
+                stage=stage,
+                component="metrics_pipeline",
+                exception_type=type(error).__name__,
             )
         )
 

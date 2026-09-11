@@ -288,3 +288,22 @@ def test_enabled_metric_trace_captures_one_model_invocation_without_changing_com
     assert artifact["invocation"]["terminal_state"] == "validated_completion"
     assert artifact["model_visible"]["messages"]
     assert artifact["requests"][0]["ordinal"] == 1
+
+
+def test_policy_rejected_metric_trace_retains_the_raw_model_response(tmp_path) -> None:
+    """Trace capture precedes policy rejection, preserving the response that triggered it."""
+    model, _ = function_model([lambda _: ModelResponse(parts=[ToolCallPart("drift", {})])])
+    request = usable_request()
+
+    outcome = run(
+        PydanticAIMetricsAnalysisAgent(
+            model, trace_recorder=FileAgentTraceRecorder(root=tmp_path)
+        ).complete(request, tool_registry())
+    )
+
+    path = next(
+        (tmp_path / str(request.identity.observation_run_id)).glob("*-metric-analysis.json")
+    )
+    artifact = json.loads(path.read_text(encoding="utf-8"))
+    assert isinstance(outcome, MetricAgentOperationalFailure)
+    assert artifact["raw_model_responses"][0]["parts"][0]["tool_name"] == "drift"

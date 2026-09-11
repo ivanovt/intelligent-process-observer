@@ -99,7 +99,9 @@ def build_production_execution_composition(
         trace_recorder=trace_recorder,
         emitter=emitter,
     )
-    report_executor = ReportGenerationExecutor(report_agent, trace_recorder=trace_recorder)
+    report_executor = ReportGenerationExecutor(
+        report_agent, trace_recorder=trace_recorder, emitter=emitter
+    )
     orchestrator = ObservationExecutionOrchestrator(
         session_factory=session_factory,
         definition_loader=ObservationRepository(),

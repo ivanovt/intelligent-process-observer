@@ -46,16 +46,23 @@ class _HypothesisState:
     outcomes: dict[str, object] | None = None
     trace_enabled: bool = False
     trace_requests: list[object] = field(default_factory=list)
+    raw_responses: list[ModelResponse] = field(default_factory=list)
 
 
 class _NoToolObservingModel(WrapperModel):
     """Reject function-tool calls in an invocation that permits output only."""
 
     def __init__(
-        self, wrapped: Model, trace_requests: list[object], *, trace_enabled: bool
+        self,
+        wrapped: Model,
+        trace_requests: list[object],
+        raw_responses: list[ModelResponse],
+        *,
+        trace_enabled: bool,
     ) -> None:
         super().__init__(wrapped)
         self._trace_requests = trace_requests
+        self._raw_responses = raw_responses
         self._trace_enabled = trace_enabled
 
     async def request(
@@ -74,6 +81,8 @@ class _NoToolObservingModel(WrapperModel):
                 )
             )
         response = await self.wrapped.request(messages, model_settings, model_request_parameters)
+        if self._trace_enabled:
+            self._raw_responses.append(response)
         output_names = {tool.name for tool in model_request_parameters.output_tools}
         if any(
             isinstance(part, ToolCallPart) and part.tool_name not in output_names
@@ -106,6 +115,8 @@ class _RetrievalObservingModel(WrapperModel):
                 )
             )
         response = await self.wrapped.request(messages, model_settings, model_request_parameters)
+        if self._state.trace_enabled:
+            self._state.raw_responses.append(response)
         output_names = {tool.name for tool in model_request_parameters.output_tools}
         calls = [
             part
@@ -171,8 +182,11 @@ class PydanticAIObservationReasoningAgent:
         """Invoke evidence-only finding formation with no tools."""
         trace_enabled = trace_capture_enabled(self._trace_recorder)
         trace_requests: list[object] = []
+        raw_responses: list[ModelResponse] = []
         agent: Agent[None, FindingCompletion] = Agent(
-            _NoToolObservingModel(self._model, trace_requests, trace_enabled=trace_enabled),
+            _NoToolObservingModel(
+                self._model, trace_requests, raw_responses, trace_enabled=trace_enabled
+            ),
             output_type=FindingCompletion,
             retries=0,
             system_prompt=(
@@ -191,6 +205,7 @@ class PydanticAIObservationReasoningAgent:
                 model=self._model_name,
             ),
             trace_requests,
+            raw_responses,
             completion_type=FindingCompletion,
             trace_enabled=trace_enabled,
         )
@@ -233,6 +248,7 @@ class PydanticAIObservationReasoningAgent:
                 model=self._model_name,
             ),
             state.trace_requests,
+            state.raw_responses,
             completion_type=HypothesisCompletion,
             deps=state,
             request_limit=3,
@@ -243,8 +259,11 @@ class PydanticAIObservationReasoningAgent:
         """Invoke a fresh knowledge-free overall-state assessment."""
         trace_enabled = trace_capture_enabled(self._trace_recorder)
         trace_requests: list[object] = []
+        raw_responses: list[ModelResponse] = []
         agent: Agent[None, OverallStateCompletion] = Agent(
-            _NoToolObservingModel(self._model, trace_requests, trace_enabled=trace_enabled),
+            _NoToolObservingModel(
+                self._model, trace_requests, raw_responses, trace_enabled=trace_enabled
+            ),
             output_type=OverallStateCompletion,
             retries=0,
             system_prompt="Determine only the overall state from supplied Observation evidence, frozen findings, and limitations. No external knowledge is available.",
@@ -259,6 +278,7 @@ class PydanticAIObservationReasoningAgent:
                 model=self._model_name,
             ),
             trace_requests,
+            raw_responses,
             completion_type=OverallStateCompletion,
             trace_enabled=trace_enabled,
         )
@@ -269,6 +289,7 @@ class PydanticAIObservationReasoningAgent:
         input_json: str,
         context: AgentTraceContext,
         trace_requests: list[object],
+        raw_responses: list[ModelResponse],
         *,
         completion_type,
         deps: object = None,
@@ -324,6 +345,7 @@ class PydanticAIObservationReasoningAgent:
                         input_json=input_json,
                         messages=messages,
                         request_metadata=tuple(trace_requests),
+                        raw_responses=tuple(raw_responses),
                         completion=completion,
                         failure=failure,
                         terminal_state=terminal_state,

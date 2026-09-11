@@ -340,3 +340,28 @@ def test_enabled_alert_trace_uses_out_of_band_correlation_without_changing_reque
     assert outcome.overall_importance == "low"
     assert "trace_identity" not in value.model_dump()
     assert artifact["invocation"]["lens_run_id"] == str(trace_context.lens_run_id)
+
+
+def test_policy_transformed_alert_response_remains_raw_in_the_trace(tmp_path) -> None:
+    """The trace retains the pre-transformation tool name that the policy rejected."""
+    injected, _ = model([lambda _: ModelResponse(parts=[ToolCallPart("scope_expansion", {})])])
+    recorder = FileAgentTraceRecorder(root=tmp_path)
+    trace_context = AgentTraceContext(
+        observation_run_id=uuid4(),
+        lens_run_id=uuid4(),
+        lens_id="temperature-alerts",
+        agent_role="alert",
+        phase="analysis",
+        model="test/model",
+    )
+
+    with activate_trace_context(trace_context), pytest.raises(IndexError):
+        run(
+            PydanticAIAlertAnalysisAgent(injected, trace_recorder=recorder).complete(
+                request(), registry()
+            )
+        )
+
+    path = next((tmp_path / str(trace_context.observation_run_id)).glob("*-alert-analysis.json"))
+    artifact = json.loads(path.read_text(encoding="utf-8"))
+    assert artifact["raw_model_responses"][0]["parts"][0]["tool_name"] == "scope_expansion"

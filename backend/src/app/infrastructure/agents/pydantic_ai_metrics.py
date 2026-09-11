@@ -47,6 +47,7 @@ class _RunState:
     model_requests: int = 0
     trace_enabled: bool = False
     trace_requests: list[object] = field(default_factory=list)
+    raw_responses: list[ModelResponse] = field(default_factory=list)
 
 
 class _PolicyObservingModel(WrapperModel):
@@ -74,6 +75,8 @@ class _PolicyObservingModel(WrapperModel):
                 )
             )
         response = await self.wrapped.request(messages, model_settings, model_request_parameters)
+        if self._state.trace_enabled:
+            self._state.raw_responses.append(response)
         await self._observe_tool_calls(response, model_request_parameters)
         return response
 
@@ -210,6 +213,7 @@ class PydanticAIMetricsAnalysisAgent:
                         input_json=input_json,
                         messages=messages,
                         request_metadata=tuple(state.trace_requests),
+                        raw_responses=tuple(state.raw_responses),
                         completion=completion,
                         failure=failure,
                         terminal_state=terminal_state,

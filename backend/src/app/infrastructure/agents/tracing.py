@@ -105,6 +105,7 @@ class AgentTraceRecorder(Protocol):
         input_json: str,
         messages: list[object],
         request_metadata: tuple[AgentTraceRequestMetadata, ...],
+        raw_responses: tuple[object, ...] = (),
         completion: object | None = None,
         failure: BaseException | None = None,
         terminal_state: str,
@@ -175,6 +176,7 @@ class FileAgentTraceRecorder:
         input_json: str,
         messages: list[object],
         request_metadata: tuple[AgentTraceRequestMetadata, ...],
+        raw_responses: tuple[object, ...] = (),
         completion: object | None = None,
         failure: BaseException | None = None,
         terminal_state: str,
@@ -189,6 +191,7 @@ class FileAgentTraceRecorder:
                 context=context,
                 input_json=input_json,
                 messages=messages,
+                raw_responses=raw_responses,
                 request_metadata=request_metadata,
                 completion=completion,
                 failure=failure,
@@ -418,6 +421,7 @@ def _artifact(
     context: AgentTraceContext,
     input_json: str,
     messages: list[object],
+    raw_responses: tuple[object, ...],
     request_metadata: tuple[AgentTraceRequestMetadata, ...],
     completion: object | None,
     failure: BaseException | None,
@@ -429,6 +433,9 @@ def _artifact(
     secrets: tuple[str, ...],
 ) -> dict[str, object]:
     serialized_messages = ModelMessagesTypeAdapter.dump_python(messages, mode="json")
+    serialized_raw_responses = ModelMessagesTypeAdapter.dump_python(
+        list(raw_responses), mode="json"
+    )
     return _redact(
         {
             "trace_version": _TRACE_VERSION,
@@ -446,6 +453,7 @@ def _artifact(
                 "terminal_state": terminal_state,
             },
             "model_visible": {"input": input_json, "messages": serialized_messages},
+            "raw_model_responses": serialized_raw_responses,
             "requests": [asdict(item) for item in request_metadata],
             "completion": _json_value(completion) if completion is not None else None,
             "failure": _failure(failure, secrets=secrets),

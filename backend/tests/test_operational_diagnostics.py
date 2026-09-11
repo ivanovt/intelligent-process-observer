@@ -8,6 +8,7 @@ from datetime import UTC, datetime
 from uuid import UUID
 
 from app.core.diagnostics import DiagnosticEvent, OperationalEventEmitter, format_safe_traceback
+from app.core.settings import Settings
 
 
 def test_emitter_writes_deterministic_json_with_utc_timestamp_and_uuid_scalars() -> None:
@@ -39,8 +40,8 @@ def test_emitter_writes_deterministic_json_with_utc_timestamp_and_uuid_scalars()
     ]
 
 
-def test_traceback_is_secret_scrubbed_and_preserves_exception_context() -> None:
-    """Known configured values never survive a traceback rendering."""
+def test_traceback_preserves_stack_and_type_without_exception_message_content() -> None:
+    """Operational traceback rendering cannot serialize arbitrary exception text."""
     secret = "configured-secret-sentinel"
     try:
         raise RuntimeError(f"provider rejected {secret}")
@@ -48,9 +49,9 @@ def test_traceback_is_secret_scrubbed_and_preserves_exception_context() -> None:
         rendered = format_safe_traceback(error, configured_secrets=(secret,))
 
     assert secret not in rendered
-    assert "[REDACTED]" in rendered
     assert "RuntimeError" in rendered
-    assert "provider rejected" in rendered
+    assert "provider rejected" not in rendered
+    assert "test_traceback_preserves_stack" in rendered
 
 
 def test_emitter_rejects_an_arbitrary_payload_value_without_logging_it() -> None:
@@ -68,8 +69,8 @@ def test_emitter_rejects_an_arbitrary_payload_value_without_logging_it() -> None
     assert messages == []
 
 
-def test_error_event_never_serializes_secret_or_raw_exception_outside_traceback() -> None:
-    """The bounded event includes type and scrubbed traceback only."""
+def test_error_event_never_serializes_secret_or_arbitrary_exception_content() -> None:
+    """The bounded event includes type and stack location without exception text."""
     messages: list[str] = []
     logger = logging.getLogger("test.operational.error")
     logger.handlers = [_CollectingHandler(messages)]
@@ -86,7 +87,33 @@ def test_error_event_never_serializes_secret_or_raw_exception_outside_traceback(
     payload = json.loads(messages[0])
     assert payload["exception_type"] == "ValueError"
     assert secret not in messages[0]
-    assert "raw request" in payload["traceback"]
+    assert "raw request" not in payload["traceback"]
+    assert "ValueError" in payload["traceback"]
+
+
+def test_database_url_password_is_included_in_secret_redaction_without_logging_its_url() -> None:
+    """Database credentials are available to diagnostics without admitting a URL field."""
+    password = "database-password-sentinel"
+    database_url = f"postgresql+psycopg://reader:{password}@db.example.invalid:5432/ipo"
+    settings = Settings(_env_file=None, database_url=database_url)
+    messages: list[str] = []
+    logger = logging.getLogger("test.operational.database-password")
+    logger.handlers = [_CollectingHandler(messages)]
+    logger.setLevel(logging.DEBUG)
+    logger.propagate = False
+
+    try:
+        raise RuntimeError(f"database connection failed: {database_url}")
+    except RuntimeError as error:
+        OperationalEventEmitter(
+            logger=logger, configured_secrets=settings.configured_secret_values()
+        ).emit(
+            DiagnosticEvent(event="database_failure", category="persistence_failure"), error=error
+        )
+
+    assert password in settings.configured_secret_values()
+    assert password not in messages[0]
+    assert database_url not in messages[0]
 
 
 class _CollectingHandler(logging.Handler):

@@ -52,10 +52,16 @@ class _NoToolReportModel(WrapperModel):
     """Reject every model tool call except PydanticAI's typed output mechanism."""
 
     def __init__(
-        self, wrapped: Model, trace_requests: list[object], *, trace_enabled: bool
+        self,
+        wrapped: Model,
+        trace_requests: list[object],
+        raw_responses: list[ModelResponse],
+        *,
+        trace_enabled: bool,
     ) -> None:
         super().__init__(wrapped)
         self._trace_requests = trace_requests
+        self._raw_responses = raw_responses
         self._trace_enabled = trace_enabled
 
     async def request(
@@ -74,6 +80,8 @@ class _NoToolReportModel(WrapperModel):
                 )
             )
         response = await self.wrapped.request(messages, model_settings, model_request_parameters)
+        if self._trace_enabled:
+            self._raw_responses.append(response)
         output_names = {tool.name for tool in model_request_parameters.output_tools}
         if any(
             isinstance(part, BaseToolCallPart)
@@ -114,8 +122,11 @@ class PydanticAIReportGenerationAgent:
         """Return one strict English source-keyed presentation draft without tools."""
         trace_enabled = trace_capture_enabled(self._trace_recorder)
         trace_requests: list[object] = []
+        raw_responses: list[ModelResponse] = []
         agent: Agent[None, _ReportPresentationWireDraft] = Agent(
-            _NoToolReportModel(self._model, trace_requests, trace_enabled=trace_enabled),
+            _NoToolReportModel(
+                self._model, trace_requests, raw_responses, trace_enabled=trace_enabled
+            ),
             output_type=_ReportPresentationWireDraft,
             retries=0,
             system_prompt=(
@@ -214,6 +225,7 @@ class PydanticAIReportGenerationAgent:
                         input_json=input_json,
                         messages=messages,
                         request_metadata=tuple(trace_requests),
+                        raw_responses=tuple(raw_responses),
                         completion=completion,
                         failure=failure,
                         terminal_state=terminal_state,

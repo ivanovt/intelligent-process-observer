@@ -3,6 +3,7 @@ from __future__ import annotations
 from functools import lru_cache
 from pathlib import Path
 from typing import Annotated, Literal
+from urllib.parse import unquote, urlsplit
 
 from pydantic import BaseModel, Field, SecretStr, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -100,6 +101,7 @@ class Settings(BaseSettings):
     def configured_secret_values(self) -> tuple[str, ...]:
         """Return configured secret values for local diagnostic redaction only."""
         values: list[str] = []
+        values.extend(_database_password_values(self.database_url))
         if self.openrouter_api_key is not None:
             values.append(self.openrouter_api_key.get_secret_value())
         for source in self.prometheus_sources:
@@ -109,6 +111,15 @@ class Settings(BaseSettings):
             else:
                 values.append(credentials.password.get_secret_value())
         return tuple(value for value in values if value)
+
+
+def _database_password_values(database_url: str) -> tuple[str, ...]:
+    """Extract a configured database password without retaining or logging its URL."""
+    try:
+        password = urlsplit(database_url).password
+    except ValueError:
+        return ()
+    return (unquote(password),) if password else ()
 
 
 @lru_cache

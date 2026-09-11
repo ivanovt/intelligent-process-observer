@@ -56,6 +56,7 @@ class _RunState:
     admitted_tool_attempts: int = 0
     trace_enabled: bool = False
     trace_requests: list[object] = field(default_factory=list)
+    raw_responses: list[ModelResponse] = field(default_factory=list)
 
 
 class _DomainToolObservingModel(WrapperModel):
@@ -83,6 +84,8 @@ class _DomainToolObservingModel(WrapperModel):
                 )
             )
         response = await self.wrapped.request(messages, model_settings, model_request_parameters)
+        if self._state.trace_enabled:
+            self._state.raw_responses.append(response)
         await self._admit_tool_calls(response, model_request_parameters)
         return self._framework_safe_response(response, model_request_parameters)
 
@@ -230,6 +233,7 @@ class PydanticAIAlertAnalysisAgent:
                         input_json=input_json,
                         messages=messages,
                         request_metadata=tuple(state.trace_requests),
+                        raw_responses=tuple(state.raw_responses),
                         completion=completion,
                         failure=failure,
                         terminal_state=terminal_state,

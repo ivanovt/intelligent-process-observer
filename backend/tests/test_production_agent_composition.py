@@ -117,10 +117,12 @@ def test_composition_selects_trace_recorder_from_development_only_setting() -> N
     assert disabled.reasoning_executor._trace_recorder is disabled.trace_recorder
     assert disabled.reasoning_executor._emitter is emitter
     assert disabled.report_executor._trace_recorder is disabled.trace_recorder
+    assert disabled.report_executor._emitter is emitter
     assert isinstance(enabled.trace_recorder, FileAgentTraceRecorder)
     assert enabled.reasoning_executor._trace_recorder is enabled.trace_recorder
     assert enabled.reasoning_executor._emitter is emitter
     assert enabled.report_executor._trace_recorder is enabled.trace_recorder
+    assert enabled.report_executor._emitter is emitter
     assert enabled.trace_recorder.root == enabled_settings.agent_trace_root
 
 

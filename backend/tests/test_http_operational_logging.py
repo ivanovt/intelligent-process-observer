@@ -53,7 +53,7 @@ def test_safe_api_normalization_and_unhandled_error_are_operationally_visible() 
     assert "traceback" not in payloads[0]
     assert payloads[1]["event"] == "http_unhandled_exception"
     assert payloads[1]["exception_type"] == "RuntimeError"
-    assert "unexpected internal failure" in payloads[1]["traceback"]
+    assert "unexpected internal failure" not in payloads[1]["traceback"]
 
 
 def test_unhandled_http_failure_uses_fastapis_existing_default_500_envelope(caplog) -> None:

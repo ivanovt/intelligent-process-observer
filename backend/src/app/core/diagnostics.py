@@ -93,9 +93,17 @@ class OperationalEventEmitter:
 
 
 def format_safe_traceback(error: BaseException, *, configured_secrets: Iterable[str] = ()) -> str:
-    """Render one bounded traceback after replacing known configured secret values."""
+    """Render bounded stack locations and exception types without exception message content."""
 
-    rendered = "".join(traceback_module.format_exception(type(error), error, error.__traceback__))
+    frames = traceback_module.extract_tb(error.__traceback__)
+    lines = ["Traceback (most recent call last):"]
+    lines.extend(
+        f'  File "{frame.filename.rsplit("/", maxsplit=1)[-1]}", '
+        f"line {frame.lineno}, in {frame.name}"
+        for frame in frames
+    )
+    lines.append(type(error).__name__)
+    rendered = "\n".join(lines)
     scrubbed = _scrub(rendered, configured_secrets)
     if len(scrubbed) <= _TRACEBACK_LIMIT:
         return scrubbed

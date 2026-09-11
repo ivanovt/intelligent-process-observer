@@ -21,6 +21,7 @@ from app.alerts.ports import AlertAnalysisAgent, AlertProvider
 from app.alerts.references import acquire_prepared_references
 from app.alerts.result_builder import AlertResultBuilder
 from app.alerts.tools import AlertOptionalToolRegistry, unsuccessful_trace
+from app.core.diagnostics import DiagnosticEvent, OperationalEventEmitter
 from app.infrastructure.agents.tracing import AgentTraceContext, activate_trace_context
 from app.infrastructure.persistence.runtime_contracts import LensRunStatus, StructuredReason
 
@@ -41,6 +42,7 @@ class AlertAnalysisPipeline:
         tool_registry_factory: Callable[
             [tuple, object], AlertOptionalToolRegistry
         ] = AlertOptionalToolRegistry,
+        emitter: OperationalEventEmitter | None = None,
     ) -> None:
         self._provider, self._agent = provider, agent
         self._result_builder, self._record_phase = (
@@ -49,6 +51,7 @@ class AlertAnalysisPipeline:
         )
         self._analyzer = analyzer
         self._tool_registry_factory = tool_registry_factory or AlertOptionalToolRegistry
+        self._emitter = emitter or OperationalEventEmitter()
 
     @staticmethod
     def _failed(code: str, component: str | None = None) -> AlertTerminalOutcome:
@@ -58,6 +61,28 @@ class AlertAnalysisPipeline:
             reason=StructuredReason(code=code, component=component),
         )
 
+    def _emit_failure(
+        self,
+        context: AlertLensExecutionContext,
+        category: str,
+        component: str,
+        error: BaseException | None = None,
+    ) -> None:
+        """Emit safe normalized Alert failure metadata without selector or record content."""
+        self._emitter.emit(
+            DiagnosticEvent(
+                event="alert_failure_normalized",
+                category=category,
+                observation_run_id=context.identity.observation_run_id,
+                lens_run_id=context.identity.lens_run_id,
+                lens_id=context.identity.lens_id,
+                agent_role="alert",
+                phase="analysis",
+                component=component,
+                exception_type=type(error).__name__ if error is not None else None,
+            )
+        )
+
     async def analyze(self, context: AlertLensExecutionContext) -> AlertTerminalOutcome:
         """Acquire, normalize, analyze, and build the completed Alert result."""
         if context.lens_run_status != "running":
@@ -65,19 +90,24 @@ class AlertAnalysisPipeline:
         self._record_phase("provider_acquisition")
         try:
             response = await self._provider.acquire(context.provider_scope, context.analysis_window)
-        except TimeoutError:
+        except TimeoutError as error:
+            self._emit_failure(context, "alert_timeout", "provider_acquisition", error)
             return self._failed("current_query_timeout")
-        except Exception:
+        except Exception as error:
+            self._emit_failure(context, "alert_provider_failed", "provider_acquisition", error)
             return self._failed("current_query_failed")
         if isinstance(response, AlertProviderTimeout):
+            self._emit_failure(context, "alert_timeout", "provider_acquisition")
             return self._failed("current_query_timeout")
         if not isinstance(response, AlertRecordsAvailable):
+            self._emit_failure(context, "alert_provider_failed", "provider_acquisition")
             return self._failed("current_query_failed")
         self._record_phase("current_normalization")
         records, current_rejected = normalize_current_with_rejections(
             response, context.analysis_window, context.analysis_window.to
         )
         if response.records and not records:
+            self._emit_failure(context, "alert_schema_rejected", "current_normalization")
             return self._failed("invalid_records", "current_normalization")
         self._record_phase("reference_acquisition")
         prepared_references, reference_unavailable = await acquire_prepared_references(
@@ -86,6 +116,8 @@ class AlertAnalysisPipeline:
             context.analysis_window,
             context.reference_periods,
         )
+        if reference_unavailable:
+            self._emit_failure(context, "alert_reference_unavailable", "reference_acquisition")
         self._record_phase("mandatory_analysis")
         try:
             evidence = self._analyzer(records)
@@ -94,7 +126,8 @@ class AlertAnalysisPipeline:
                 for offset, reference_records in prepared_references
             )
             evidence = evidence.model_copy(update={"comparisons": comparisons})
-        except Exception:
+        except Exception as error:
+            self._emit_failure(context, "alert_internal_failed", "mandatory_analysis", error)
             return self._failed("deterministic_analysis_failed")
         self._record_phase("zero_record_gate")
         if not evidence.record_count:
@@ -103,7 +136,8 @@ class AlertAnalysisPipeline:
                 return self._result_builder.usable(
                     context, (), evidence, None, current_rejected, reference_unavailable, zero=True
                 )[1]
-            except ValueError:
+            except ValueError as error:
+                self._emit_failure(context, "alert_schema_rejected", "alert_result_builder", error)
                 return self._failed("result_validation_failed", "alert_result_builder")
         self._record_phase("agent_completion")
         request = AlertAgentRequest(
@@ -131,9 +165,11 @@ class AlertAnalysisPipeline:
                     if len(signature(complete).parameters) > 1
                     else complete(request)
                 )
-        except TimeoutError:
+        except TimeoutError as error:
+            self._emit_failure(context, "alert_timeout", "agent_completion", error)
             return self._failed("agent_timeout")
-        except Exception:
+        except Exception as error:
+            self._emit_failure(context, "alert_internal_failed", "agent_completion", error)
             return self._failed("agent_failed")
         try:
             completion = AlertAgentCompletion.model_validate(
@@ -141,7 +177,8 @@ class AlertAnalysisPipeline:
                 if isinstance(completion, AlertAgentCompletion)
                 else completion
             )
-        except ValidationError:
+        except ValidationError as error:
+            self._emit_failure(context, "alert_schema_rejected", "agent_completion", error)
             return self._failed("agent_failed")
         self._record_phase("result_build")
         try:
@@ -154,5 +191,6 @@ class AlertAnalysisPipeline:
                 reference_unavailable,
                 unsuccessful_calls=unsuccessful_trace(tools.ledger),
             )[1]
-        except ValueError:
+        except ValueError as error:
+            self._emit_failure(context, "alert_schema_rejected", "alert_result_builder", error)
             return self._failed("result_validation_failed", "alert_result_builder")
