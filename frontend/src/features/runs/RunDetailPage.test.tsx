@@ -3,9 +3,9 @@ import userEvent from '@testing-library/user-event'
 import { MemoryRouter, Route, Routes } from 'react-router-dom'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { RunDetailPage } from './RunDetailPage'
-import type { AlertRunResult, MetricRunResult, ObservationRunDetail } from './types'
+import type { AlertRunResult, ObservationRunDetail, UsableMetricRunResult } from './types'
 
-const metricResult: MetricRunResult = { schema_version: '1.0', lens_type: 'metric', identity: { observation_id: 'observation', observation_run_id: 'run', lens_id: 'metric-1', lens_run_id: 'lens-metric' }, status: { state: 'completed' }, analysis_window: { from: '2026-09-09T09:00:00Z', to: '2026-09-09T10:00:00Z' }, data_quality: 'good', current_state: { trend: { direction: 'increasing', rate: 'moderate' }, variability: { state: 'low' } }, reference_periods: null, evidence: { current: { mean: 4, std: 1, min: 2, max: 6, slope: 0.3 }, reference_periods: null } }
+const metricResult: UsableMetricRunResult = { schema_version: '1.0', lens_type: 'metric', identity: { observation_id: 'observation', observation_run_id: 'run', lens_id: 'metric-1', lens_run_id: 'lens-metric', metric_ref: 'cooling_temperature', unit: '°C' }, status: { state: 'completed' }, analysis_window: { from: '2026-09-09T09:00:00Z', to: '2026-09-09T10:00:00Z' }, data_quality: 'good', current_state: { trend: { direction: 'increasing', rate: 'moderate' }, variability: { state: 'low' }, spike: null, oscillation: null, stuck_signal: null }, reference_periods: null, history: null, evidence: { current: { mean: 4, std: 1, min: 2, max: 6, slope: 0.3, spike: null, oscillation: null, stuck_signal: null }, reference_periods: null, history: null } }
 const alertResult: AlertRunResult = { schema_version: '1.0', lens_type: 'alert', identity: { observation_id: 'observation', observation_run_id: 'run', lens_id: 'alert-1', lens_run_id: 'lens-alert' }, status: 'completed', analysis_window: { from: '2026-09-09T09:00:00Z', to: '2026-09-09T10:00:00Z' }, alerts: [{ id: 'alert', title: 'CPU alert', description: 'Needs review', started_at: '2026-09-09T09:10:00Z', ended_at: null, duration_seconds: 60, status: { normalized: 'active', source: 'OPEN' }, provider_importance: { type: 'priority', value: 'P1' }, occurrence_count: 1, source_ref: 'OPS-1' }], alert_activity: { record_count: 1, occurrence_count: 1 }, status_distribution: { active: 1, resolved: 0, unknown: 0 }, duration_statistics: { min_seconds: 60, max_seconds: 60, average_seconds: 60 }, provider_importance_distribution: { type: 'priority', values: { P1: 1 } }, comparisons: [], findings: [{ id: 'alert-finding', statement: 'Repeated CPU alert', evidence_refs: ['alert'] }], overall_importance: 'high' }
 
 function detail(overrides: Partial<ObservationRunDetail> = {}): ObservationRunDetail {
@@ -72,11 +72,28 @@ describe('RunDetailPage', () => {
     await screen.findByText('Run summary')
     await userEvent.click(screen.getByRole('tab', { name: 'Metrics' }))
     expect(screen.getByText('Data quality: good')).toBeTruthy()
-    expect(screen.getByText('Current evidence')).toBeTruthy()
+    expect(screen.getByText('Current numerical evidence')).toBeTruthy()
+    expect(screen.getByText('Metric: cooling_temperature')).toBeTruthy()
+    expect(screen.getAllByText('Unavailable in this result.')).toHaveLength(5)
+    expect(document.body.textContent).not.toContain('[object Object]')
     await userEvent.click(screen.getByRole('tab', { name: 'Alerts' }))
     expect(screen.getByText('CPU alert')).toBeTruthy()
     expect(screen.getByText('Repeated CPU alert')).toBeTruthy()
     expect(document.body.textContent).not.toContain('selector.query')
+  })
+
+  it('keeps optional Metric states, reference means, and history semantically distinct', async () => {
+    const enriched: UsableMetricRunResult = { ...metricResult, current_state: { ...metricResult.current_state, spike: { state: 'present' }, oscillation: { state: 'unknown' }, stuck_signal: { state: 'absent' } }, reference_periods: [{ offset: '1d', analysis_window: metricResult.analysis_window, level: { relation: 'higher' }, trend: { direction: 'increasing', rate: 'moderate', direction_relation: 'same', rate_relation: 'same' }, variability: { state: 'low', relation: 'similar' } }], history: { direction: 'increasing', pattern: 'sustained', run_ids: ['earlier-run'] }, evidence: { ...metricResult.evidence, current: { ...metricResult.evidence.current, slope: 0.00000042, spike: { method: 'modified_z', detected_sample_count: 1, detected_timestamps: ['2026-09-09T09:10:00Z'], max_abs_modified_z: 4 }, oscillation: { deadband: 0.1, significant_residual_count: 2, sign_change_count: 3, sign_change_ratio: 0.4 }, stuck_signal: { repeated_value: 2, longest_run_sample_count: 4, longest_run_share: 0.5 } }, reference_periods: [{ offset: '1d', analysis_window: metricResult.analysis_window, mean: 1.04, std: 0.2, min: 0.8, max: 1.2, slope: 0.02, relative_level_change: 0.7456 }], history: { level_change_tolerance: 0.1, classifiable_transitions: 1, unknown_transitions: 0, increasing_transitions: 1, decreasing_transitions: 0, stable_transitions: 0, direction_changes: 0 } } }
+    const current = detail(); renderDetail({ ...current, lens_runs: [{ ...current.lens_runs[0], result: enriched }, current.lens_runs[1]] })
+    await screen.findByText('Run summary'); await userEvent.click(screen.getByRole('tab', { name: 'Metrics' }))
+    expect(screen.getByText('Optional analysis')).toBeTruthy()
+    expect(screen.getByText((_content, element) => element?.tagName === 'P' && element.textContent === 'State: present')).toBeTruthy()
+    expect(screen.getByText((_content, element) => element?.tagName === 'P' && element.textContent === 'State: unknown')).toBeTruthy()
+    expect(screen.getByText((_content, element) => element?.tagName === 'P' && element.textContent === 'State: absent')).toBeTruthy()
+    expect(screen.getByText('Symmetric relative change')).toBeTruthy()
+    expect(screen.getByText('Persisted History')).toBeTruthy()
+    expect(screen.getByText('4.200e-7')).toBeTruthy()
+    expect(document.body.textContent).not.toContain('74.56% higher')
   })
 
   it('renders degraded Metric evidence and a partial LensRun without inventing a run state', async () => {
@@ -108,10 +125,21 @@ describe('RunDetailPage', () => {
     expect(screen.getByText('Applicability: applicable')).toBeTruthy()
     expect(screen.getByText('Evaluation state: inconsistent')).toBeTruthy()
     await userEvent.click(screen.getByRole('tab', { name: 'Analysis' }))
-    expect(screen.getByText(/Evidence · metric_result/)).toBeTruthy()
-    expect(screen.getByText(/Relationship · relationship-1/)).toBeTruthy()
+    expect(screen.getByText(/Metric result · lens-metric · evidence.current/)).toBeTruthy()
+    expect(screen.getByText(/Relationship evaluation · relationship-1 · expectations\[0\]/)).toBeTruthy()
     expect(screen.getByText(/Knowledge · manual: section 4/)).toBeTruthy()
+    await userEvent.click(screen.getByText(/Metric result · lens-metric/))
+    expect(screen.getAllByText('Resolved value:').length).toBeGreaterThan(0)
     expect(screen.queryByText(/root cause|recommendation|confidence/i)).toBeNull()
+  })
+
+  it('keeps a finding visible when its traceability cannot be resolved locally', async () => {
+    const current = detail()
+    renderDetail({ ...current, analysis: { ...current.analysis!, findings: [{ id: 'missing-source', statement: 'Still visible finding', evidence_refs: [{ source_type: 'metric_result', source_id: 'missing-run', locator: ['__proto__'] }] }] } })
+    await screen.findByText('Run summary'); await userEvent.click(screen.getByRole('tab', { name: 'Analysis' }))
+    expect(screen.getByText('Still visible finding')).toBeTruthy()
+    await userEvent.click(screen.getByText(/Metric result · missing-run/))
+    expect(screen.getByText('Traceability unavailable in this run.')).toBeTruthy()
   })
 
   it.each([
@@ -126,8 +154,8 @@ describe('RunDetailPage', () => {
 
   it('distinguishes post-analysis report absence, genuinely empty report, and empty sections', async () => {
     const current = detail(); const first = renderDetail({ ...current, report: null, relationship_evaluations: [] })
-    await screen.findByText('Run summary'); await userEvent.click(screen.getByRole('tab', { name: 'Report' })); expect(screen.getByText('No report artifact was persisted for this run.')).toBeTruthy()
-    first.unmount(); const second = renderDetail({ ...current, report: { ...current.report!, content: '' } }); await screen.findByText('Run summary'); await userEvent.click(screen.getByRole('tab', { name: 'Report' })); expect(screen.getByText('The persisted report is genuinely empty.')).toBeTruthy(); second.unmount()
+    await screen.findByText('Run summary'); await userEvent.click(screen.getByRole('tab', { name: 'Report' })); expect(screen.getByText('No report is available for this completed run.')).toBeTruthy()
+    first.unmount(); const second = renderDetail({ ...current, report: { ...current.report!, content: '' } }); await screen.findByText('Run summary'); await userEvent.click(screen.getByRole('tab', { name: 'Report' })); expect(screen.getByText('This completed run produced an empty report.')).toBeTruthy(); second.unmount()
   })
 
   it('presents a missing run with a route back to Runs', async () => {
@@ -137,13 +165,13 @@ describe('RunDetailPage', () => {
     expect(screen.getByRole('link', { name: 'Back to Runs' }).getAttribute('href')).toBe('/runs')
   })
 
-  it('copies preformatted Markdown without rendering it', async () => {
+  it('copies exact persisted Markdown while presenting it as a safe document', async () => {
     const writeText = vi.fn().mockResolvedValue(undefined)
     Object.defineProperty(navigator, 'clipboard', { configurable: true, value: { writeText } })
     renderDetail()
     await screen.findByText('Run summary'); await userEvent.click(screen.getByRole('tab', { name: 'Report' })); await userEvent.click(screen.getByRole('button', { name: 'Copy Markdown' }))
     expect(writeText).toHaveBeenCalledWith('# Durable report')
     expect(await screen.findByRole('button', { name: 'Copied' })).toBeTruthy()
-    expect(screen.getByText('# Durable report').tagName).toBe('PRE')
+    expect(screen.getByRole('heading', { name: 'Durable report' }).tagName).toBe('H1')
   })
 })

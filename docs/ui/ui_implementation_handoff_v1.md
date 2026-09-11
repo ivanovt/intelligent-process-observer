@@ -1,14 +1,14 @@
-# UI Implementation Handoff — v1.7
+# UI Implementation Handoff — v1.8
 
 **Project:** ObserveAI / Master Thesis
-**Status:** Accepted living major-v1 implementation handoff for MVP UI Direction v1.7
-**Date:** 2026-09-11
+**Status:** Accepted living major-v1 implementation handoff for MVP UI Direction v1.8
+**Date:** 2026-09-12
 
 ## 1. Purpose
 
 This document translates the accepted current UI direction into implementation-oriented rules for the MVP frontend.
 
-UI Direction v1.7 includes the original monitoring/investigation experience, global run management, Observation Management configuration UX, and read-only Data Sources visibility. It retains UI-generated Observation-child identity as typed, compact metadata beside Name, the on-demand secret-safe Prometheus configuration disclosure for each configured source, the global Runs history/launch screen and initial routable run-detail foundation, and adds advisory Metric query preflight in the nested Metric Lens editor. The frontend must preserve the architecture's semantic boundaries and must not invent new product-level classifications, lifecycle semantics, or administrative capabilities that are not supported by accepted backend contracts.
+UI Direction v1.8 includes the original monitoring/investigation experience, global run management, Observation Management configuration UX, and read-only Data Sources visibility. It retains UI-generated Observation-child identity as typed, compact metadata beside Name, the on-demand secret-safe Prometheus configuration disclosure for each configured source, the global Runs history/launch screen and advisory Metric query preflight, and refines the existing Run Detail presentation. The frontend must preserve the architecture's semantic boundaries and must not invent new product-level classifications, lifecycle semantics, or administrative capabilities that are not supported by accepted backend contracts.
 
 ## 2. Accepted frontend visual stack
 
@@ -48,7 +48,7 @@ https://magicpath.ai/files/447597481925181440
 
 MagicPath can inform look and feel but does not require 1:1 parity or canvas synchronization for an approved implementation. It is not permission to invent API fields or backend lifecycle operations. Accepted architecture/contracts remain authoritative for domain semantics.
 
-## 4. Screen set — v1.7
+## 4. Screen set — v1.8
 
 ### Monitoring and investigation
 
@@ -317,6 +317,43 @@ Show evidence coverage, Relationship evidence, limitations, findings, possible e
 
 Presentation-focused document view with Copy Markdown. File/PDF export remains a later
 versioned refinement and is not required by the initial run-detail foundation.
+
+### Run Detail presentation refinement — v1.8
+
+The existing Run Detail tabs and information architecture remain unchanged. For a usable
+Metric result, present the frozen `metric_ref` and unit as the primary identity and the
+Lens ID as compact secondary traceability; do not fetch or join a mutable Observation
+definition. Keep current numerical evidence (mean, standard deviation, minimum,
+maximum, slope), current semantic state, optional spike/oscillation/stuck-signal
+states, reference-period evidence/comparison, and persisted History in distinct
+semantic groups. Use bounded scanning-friendly number formatting that preserves a
+small non-zero value. Label `relative_level_change` as a **symmetric relative change**,
+with current and reference means, rather than narrating it as a percentage increase or
+decrease. Explicit `present`, `absent`, and `unknown` optional states remain distinct;
+a null or omitted optional section is only unavailable in that result.
+
+Evidence and Relationship references are project-owned accessible disclosures. Their
+collapsed label includes source type, compact source ID, and locator; their open state
+shows exact source ID, conventional path, and a locally resolved value when present in
+the loaded immutable run-detail response. Traverse only own properties and valid array
+indexes. Missing sources, hostile/prototype paths, and unresolvable locators show
+traceability unavailable while preserving the owning finding. Knowledge references stay
+visually and structurally separate; no provider data or current definition is fetched.
+
+Render non-empty persisted Report Markdown as a project-owned, dependency-free,
+line-oriented safe subset: renderer-owned headings, paragraphs, blockquotes, unordered
+lists, and inline code use semantic HTML and text children only. Decode only the
+backend renderer's backslash escapes outside inline code. Raw HTML, links, malformed
+or unsupported Markdown remain visible inert text; do not use `dangerouslySetInnerHTML`
+or activate links. `Copy Markdown` copies the exact persisted string byte-for-byte.
+The formatted view neither creates nor alters report content or analytical meaning.
+
+Use meaning-oriented completed-state language: a valid empty analysis says what was not
+produced or identified, unavailable means no artifact is available, and active, failed,
+and cancelled execution remain distinct. v1.8 does not add report export, charts,
+general Markdown support, new APIs, trace/tool diagnostics, provider fetches, severity,
+confidence, recommendations, or a change to finding/hypothesis/evidence/knowledge
+semantics.
 
 ### Runs History and Launch
 
@@ -758,7 +795,7 @@ If `add-observation-management-ui` is the first frontend OpenSpec change, it may
 
 ## 15. Versioning and change-control rule
 
-**UI Direction v1.7 is the accepted current direction.**
+**UI Direction v1.8 is the accepted current direction.**
 
 Implementation may make minor technical adjustments for responsive fit, accessibility, browser behavior, real data length and actual API constraints, but must not silently change:
 
