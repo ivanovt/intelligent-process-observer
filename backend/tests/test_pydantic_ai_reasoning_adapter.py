@@ -8,6 +8,7 @@ import pytest
 from pydantic_ai.exceptions import UnexpectedModelBehavior, UsageLimitExceeded
 from pydantic_ai.messages import ModelResponse, ToolCallPart
 from pydantic_ai.models.function import AgentInfo, FunctionModel
+from synthesis_evaluation_fixtures import SYNTHESIS_EVALUATION_CASES
 
 from app.infrastructure.agents.pydantic_ai_reasoning import PydanticAIObservationReasoningAgent
 from app.knowledge.contracts import (
@@ -177,6 +178,68 @@ def test_findings_are_structured_single_request_with_no_tools_and_exact_projecti
     assert "alert record" in system_prompt and "untrusted" in system_prompt
 
 
+def test_finding_instructions_preserve_objective_context_and_evidence_boundaries() -> None:
+    """Finding guidance supplies every approved synthesis constraint in one request."""
+    request = finding_request()
+    model, calls = scripted_model([output({"findings": ()})])
+
+    run(PydanticAIObservationReasoningAgent(model).form_findings(request))
+
+    instructions = system_prompt(calls[0][0]).lower()
+    for clause in (
+        "relevance context only, never observed evidence",
+        "catalog-grounded evidence",
+        "one or more supplied evidence catalog ids",
+        "directly concerning the observation objective",
+        "auxiliary lens evidence",
+        "caused, explained, confirmed, or contradicted",
+        "relationship evaluation explicitly supports a connection",
+        "compatible current, reference, and history evidence",
+        "do not impose a finding count target",
+        "materially distinct or conflicting conclusions",
+    ):
+        assert clause in instructions
+
+
+def test_finding_instructions_define_symmetric_metric_comparison_without_a_validator() -> None:
+    """Metric comparison guidance is sent to the model but remains outside runtime validation."""
+    request = finding_request()
+    comparison = SYNTHESIS_EVALUATION_CASES["symmetric_relative_change"]
+    forbidden_statement = comparison["forbidden_presentations"][0]
+    model, calls = scripted_model(
+        [
+            output(
+                {
+                    "findings": (
+                        {
+                            "id": "f-1",
+                            "statement": forbidden_statement,
+                            "evidence_ids": ("evidence_0001",),
+                        },
+                    )
+                }
+            )
+        ]
+    )
+
+    completion = run(PydanticAIObservationReasoningAgent(model).form_findings(request))
+
+    assert completion.findings[0].statement == forbidden_statement
+    assert forbidden_statement in comparison["forbidden_presentations"]
+    assert forbidden_statement not in comparison["accepted_presentations"]
+    instructions = system_prompt(calls[0][0]).lower()
+    for clause in (
+        comparison["formula"],
+        "symmetric dimensionless comparison",
+        "ordinary percentage increase or decrease",
+        f"current mean {comparison['current_mean']}",
+        f"reference mean {comparison['reference_mean']}",
+        f"relative_level_change {comparison['relative_level_change']}",
+        "74.56% higher",
+    ):
+        assert str(clause).lower() in instructions
+
+
 def test_hypothesis_retrieval_trajectories_and_refinement_are_bounded() -> None:
     reference = KnowledgeReference(source_id="manual", reference="section-1")
     retriever = Retriever(
@@ -298,6 +361,36 @@ def test_overall_state_is_structured_single_request_without_tools_or_hypothesis_
     sent = prompt(messages)
     assert sent == request.model_dump_json()
     assert "hypotheses" not in sent and "knowledge" not in sent
+
+
+@pytest.mark.parametrize(
+    "overall_state",
+    ["no_significant_findings", "significant_findings_present", "uncertain"],
+)
+def test_overall_state_instructions_are_evidence_sensitive_without_count_invariants(
+    overall_state: str,
+) -> None:
+    """All accepted state values retain a knowledge-free, single-request invocation."""
+    request = overall_request()
+    model, calls = scripted_model([output({"overall_state": overall_state})])
+
+    completion = run(PydanticAIObservationReasoningAgent(model).determine_overall_state(request))
+
+    assert completion.overall_state == overall_state
+    instructions = system_prompt(calls[0][0]).lower()
+    for clause in (
+        "evidence-grounded conclusions deserve attention",
+        "available evidence supports no significant conclusion",
+        "evidence availability prevents a reliable overall assessment",
+        "never the number of findings",
+        "stable finding that answers the objective does not alone force significant findings",
+        "notable auxiliary finding may warrant attention",
+        "valid findings may coexist with uncertain",
+        "do not add rationale, severity, confidence, probability, or ranking",
+    ):
+        assert clause in instructions
+    assert len(calls) == 1
+    assert not calls[0][1].function_tools
 
 
 @pytest.mark.parametrize(

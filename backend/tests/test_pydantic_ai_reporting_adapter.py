@@ -13,8 +13,19 @@ from pydantic_ai.messages import ModelResponse, NativeToolCallPart, ToolCallPart
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 
 from app.infrastructure.agents.pydantic_ai_reporting import PydanticAIReportGenerationAgent
-from app.reasoning.contracts import ObservationAnalysisResult, ObservationIdentity
+from app.knowledge.contracts import KnowledgeReference
+from app.reasoning.contracts import (
+    EvidenceReference,
+    Finding,
+    Hypothesis,
+    MissingLensEvidence,
+    ObservationAnalysisResult,
+    ObservationIdentity,
+)
 from app.reporting.contracts import (
+    FindingPresentation,
+    HypothesisPresentation,
+    LimitationPresentation,
     ReportGenerationRequest,
     ReportPolicyViolation,
     ReportPresentationDraft,
@@ -67,6 +78,92 @@ def _draft(request: ReportGenerationRequest) -> ReportPresentationDraft:
     )
 
 
+def _synthesis_request() -> ReportGenerationRequest:
+    """Build direct, auxiliary, limited, and hypothetical source material for prompt capture."""
+    identity = ObservationIdentity(observation_id=uuid4(), observation_run_id=uuid4())
+    return ReportGenerationRequest(
+        context=ReportSemanticContext(identity=identity, name="Home DEV"),
+        analysis_result=ObservationAnalysisResult(
+            identity=identity,
+            overall_state="uncertain",
+            findings=(
+                Finding(
+                    id="connected-devices-stable",
+                    statement="Connected Devices remained stable.",
+                    evidence_refs=(
+                        EvidenceReference(
+                            source_type="metric_result",
+                            source_id="connected-devices",
+                            locator=("evidence", "current"),
+                        ),
+                    ),
+                ),
+                Finding(
+                    id="pod-logging-spike",
+                    statement=(
+                        "Pod logging showed a symmetric relative change of 0.746 "
+                        "between current mean 2.28 and reference mean 1.04."
+                    ),
+                    evidence_refs=(
+                        EvidenceReference(
+                            source_type="metric_result",
+                            source_id="pod-logging",
+                            locator=("reference_comparisons", 0),
+                        ),
+                    ),
+                ),
+            ),
+            hypotheses=(
+                Hypothesis(
+                    id="possible-logging-explanation",
+                    statement="A deployment change may explain the logging spike.",
+                    supported_by=("pod-logging-spike",),
+                    knowledge_refs=(
+                        KnowledgeReference(source_id="runbook", reference="logging-section"),
+                    ),
+                ),
+            ),
+            limitations=(MissingLensEvidence(lens_id="gateway", lens_type="metric"),),
+        ),
+    )
+
+
+def _synthesis_draft(request: ReportGenerationRequest) -> ReportPresentationDraft:
+    """Build one faithful, source-keyed draft for the report-quality scenario."""
+    return ReportPresentationDraft(
+        overall_state=request.analysis_result.overall_state,
+        overall_assessment=(
+            "Connectivity evidence is stable, while the separate pod logging comparison is "
+            "notable; unavailable gateway evidence limits the overall assessment."
+        ),
+        findings=(
+            FindingPresentation(
+                finding_id="connected-devices-stable",
+                presentation="Connected Devices remained stable.",
+            ),
+            FindingPresentation(
+                finding_id="pod-logging-spike",
+                presentation=(
+                    "Pod logging showed a symmetric relative change of 0.746 between current "
+                    "mean 2.28 and reference mean 1.04."
+                ),
+            ),
+        ),
+        hypotheses=(
+            HypothesisPresentation(
+                hypothesis_id="possible-logging-explanation",
+                presentation="A deployment change may explain the logging spike.",
+            ),
+        ),
+        limitations=(
+            LimitationPresentation(
+                limitation_index=0,
+                presentation="Gateway metric evidence was unavailable.",
+            ),
+        ),
+    )
+
+
 def test_adapter_uses_one_typed_tool_free_request_with_bounded_settings() -> None:
     """The adapter has no function tools, retries, or second request path."""
     request = _request()
@@ -87,10 +184,12 @@ def test_adapter_uses_one_typed_tool_free_request_with_bounded_settings() -> Non
     )
     assert prompt == request.model_dump_json()
     system = " ".join(
-        part.content
-        for message in messages
-        for part in message.parts
-        if part.part_kind == "system-prompt"
+        " ".join(
+            part.content
+            for message in messages
+            for part in message.parts
+            if part.part_kind == "system-prompt"
+        ).split()
     ).lower()
     assert "english" in system and "untrusted data" in system
     assert "faithfully translate or paraphrase" in system and "without omission" in system
@@ -100,6 +199,43 @@ def test_adapter_uses_one_typed_tool_free_request_with_bounded_settings() -> Non
     assert "do not present, translate, quote, repeat, paraphrase, summarize" in system
     assert "raw observation name, description, or analytical objective" in system
     assert "not reportable source material" in system
+
+
+def test_adapter_instructions_cover_evidence_derived_report_synthesis() -> None:
+    """Captured guidance preserves report-only synthesis boundaries for representative evidence."""
+    request = _synthesis_request()
+    draft = _synthesis_draft(request)
+    model, calls = _scripted_model([_output(draft.model_dump(mode="json"))])
+
+    assert _run(PydanticAIReportGenerationAgent(model).complete_presentation(request)) == draft
+    assert len(calls) == 1
+    messages, info = calls[0]
+    assert not info.function_tools
+    system = " ".join(
+        " ".join(
+            part.content
+            for message in messages
+            for part in message.parts
+            if part.part_kind == "system-prompt"
+        ).split()
+    ).lower()
+
+    assert "concise engineering explanation" in system
+    assert "do not merely restate the enum label" in system
+    assert "evidence-backed concern or contrast" in system
+    assert "supplied evidence-availability limitation" in system
+    assert "without claiming universal normality" in system
+    assert "causal, confirming, or contradicting relationship" in system
+    assert "direct and auxiliary evidence" in system
+    assert "exactly once under its matching source key" in system
+    assert "do not merge source keys" in system
+    assert "preserve quantities, units, timestamps, counts" in system
+    assert "current-versus-reference orientation" in system
+    assert "symmetric relative change" in system
+    assert "ordinary percentage increase or decrease" in system
+    assert "possible explanations, never confirmed causes" in system
+    assert "deterministic renderer owns markdown document structure" in system
+    assert "recommendations, root causes, certainty" in system
 
 
 def test_instruction_like_context_remains_user_data_under_the_agent_policy() -> None:
@@ -120,10 +256,12 @@ def test_instruction_like_context_remains_user_data_under_the_agent_policy() -> 
         if part.part_kind == "user-prompt"
     )
     system_prompt = " ".join(
-        part.content
-        for message in messages
-        for part in message.parts
-        if part.part_kind == "system-prompt"
+        " ".join(
+            part.content
+            for message in messages
+            for part in message.parts
+            if part.part_kind == "system-prompt"
+        ).split()
     )
     assert instruction in user_prompt
     assert instruction not in system_prompt
@@ -158,10 +296,12 @@ def test_raw_semantic_context_canaries_remain_user_data_under_the_agent_policy()
         if part.part_kind == "user-prompt"
     )
     system_prompt = " ".join(
-        part.content
-        for message in messages
-        for part in message.parts
-        if part.part_kind == "system-prompt"
+        " ".join(
+            part.content
+            for message in messages
+            for part in message.parts
+            if part.part_kind == "system-prompt"
+        ).split()
     )
     assert name_canary in user_prompt
     assert description_canary in user_prompt
