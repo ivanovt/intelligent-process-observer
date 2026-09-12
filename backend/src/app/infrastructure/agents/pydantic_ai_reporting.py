@@ -64,8 +64,9 @@ identified as a symmetric relative change; never convert it into an ordinary per
 or decrease and never recalculate a metric from unavailable Lens evidence.
 
 The deterministic renderer owns Markdown document structure. Return only the declared structured
-draft fields. Do not add findings, hypotheses, limitations, recommendations, root causes,
-certainty, references, tools, retrieval, or any undeclared output section.
+draft fields. Do not add findings, hypotheses, limitations, severity, confidence, probability,
+ranking, recommendations, root causes, root-cause claims, certainty, references, tools,
+retrieval, or any undeclared output section.
 """.strip()
 
 

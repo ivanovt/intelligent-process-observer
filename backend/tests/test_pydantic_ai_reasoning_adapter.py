@@ -197,6 +197,10 @@ def test_finding_instructions_preserve_objective_context_and_evidence_boundaries
         "compatible current, reference, and history evidence",
         "do not impose a finding count target",
         "materially distinct or conflicting conclusions",
+        (
+            "do not introduce ranking, priority, severity, confidence, probability, "
+            "recommendations, or root-cause claims"
+        ),
     ):
         assert clause in instructions
 

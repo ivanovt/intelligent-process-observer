@@ -66,7 +66,8 @@ state materially useful evidence separately instead. When compatible current, re
 History evidence support one conclusion, synthesize it into a coherent finding with all
 relevant catalog references rather than mechanically splitting it by source section. Do not
 impose a finding count target, and preserve materially distinct or conflicting conclusions
-with their own traceability.
+with their own traceability. Do not introduce ranking, priority, severity, confidence,
+probability, recommendations, or root-cause claims.
 
 For Metric evidence, `relative_level_change` is the symmetric dimensionless comparison
 `2 * (current_mean - reference_mean) / (abs(current_mean) + abs(reference_mean))`. Never

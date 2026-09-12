@@ -235,7 +235,10 @@ def test_adapter_instructions_cover_evidence_derived_report_synthesis() -> None:
     assert "ordinary percentage increase or decrease" in system
     assert "possible explanations, never confirmed causes" in system
     assert "deterministic renderer owns markdown document structure" in system
-    assert "recommendations, root causes, certainty" in system
+    assert (
+        "severity, confidence, probability, ranking, recommendations, root causes, "
+        "root-cause claims, certainty" in system
+    )
 
 
 def test_instruction_like_context_remains_user_data_under_the_agent_policy() -> None:
