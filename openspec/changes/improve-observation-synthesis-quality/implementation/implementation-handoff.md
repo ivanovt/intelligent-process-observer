@@ -19,4 +19,4 @@
 
 - Focused deterministic reasoning, report, production-composition, tracing, and evaluation-fixture tests passed with tracing disabled for the composition default-path assertion.
 - The private finding, overall-state, and report traces completed validation successfully; no trace payload is recorded here.
-- `make check` remains pending as task 5.4.
+- Final verification: `env AGENT_TRACE_ENABLED=false make check` passed — Ruff clean with 161 files formatted; backend 983 passed and 84 skipped; frontend lint, 185 tests, and production build passed; strict OpenSpec validation passed with 21 checks.
