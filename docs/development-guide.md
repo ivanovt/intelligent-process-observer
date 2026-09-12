@@ -693,6 +693,34 @@ escalate model/default evaluation separately. Record only the run ID, outcome, a
 or exercised thresholds. Disable tracing after the run and remove `tmp/agent-traces/`
 locally when the investigation is complete; never add trace content to Git.
 
+#### Manual verification: Home DEV synthesis quality
+
+Use this bounded qualitative rubric only after the Home DEV prerequisites above are
+operator-approved and the completed run exercises the relevant evidence. It is opt-in,
+outside `make check`, and is not a general evaluation framework. Inspect the persisted
+analysis/report and the correlated local traces only as needed; do not copy trace
+payloads, provider input, credentials, or private operational content into Git, tickets,
+or handoffs.
+
+Record only the `observation_run_id` and one outcome per applicable dimension:
+
+| Dimension | PASS | FAIL | INCONCLUSIVE |
+| --- | --- | --- | --- |
+| Objective alignment | Direct connectivity evidence answers the objective and auxiliary logging evidence is clearly separate. | Objective text is treated as evidence, or auxiliary evidence replaces/directly misstates the connectivity conclusion. | The completed window does not exercise both direct connectivity and auxiliary logging evidence. |
+| Non-causal separation | No causal, confirming, or contradicting cross-Lens claim is made without a Relationship evaluation. | Such a claim is made without Relationship evidence. | The run contains no separate cross-Lens evidence to assess. |
+| Consolidation and conflicts | Compatible current/reference/History evidence is coherent, while a material conflict remains explicit and traceable. | Repetition mechanically splits one conclusion, or consolidation hides a material conflict. | The window does not contain compatible temporal evidence or a material conflict. |
+| Comparison accuracy | `relative_level_change` is described as a symmetric relative change, or current/reference means retain their orientation. | It is described as an ordinary percentage increase/decrease (for example, `0.7456` from `2.28` versus `1.04` as “74.56% higher”). | No relevant Metric comparison is present. |
+| State rationale | The overall state follows evidence significance and availability rather than finding count. | Count alone drives state, or material limitations are ignored. | Available evidence does not permit a reasoned state assessment. |
+| Report usefulness | The assessment explains the supplied state through supplied findings/limitations without tautology and preserves source-item meaning. | It merely restates the enum, adds a finding, loses source meaning, or changes hypothesis modality. | Report generation did not complete. |
+| Forbidden semantics | No causal, severity, confidence, probability, ranking, recommendation, or root-cause certainty is introduced. | Any such unsupported semantic is introduced. | No reasoning/report prose was produced. |
+
+An exercised semantic violation is **FAIL**; do not weaken validators, filter prose, or
+retry solely to turn it into a pass. A run may be **PASS** only when every applicable
+dimension passes. If direct/auxiliary evidence is not both exercised, record the affected
+dimension as **INCONCLUSIVE**, not PASS. Keep the note evidence-safe and brief (for
+example, `symmetric comparison present; no percentage wording`), then disable tracing
+and remove the local trace directory after the investigation.
+
 #### Error-boundary coverage matrix
 
 This matrix is maintained when application-owned normalization boundaries change. An
