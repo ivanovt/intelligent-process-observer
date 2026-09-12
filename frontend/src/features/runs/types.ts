@@ -38,14 +38,27 @@ export interface ObservationRunLensRun {
 }
 /** Shared public identity carried by every versioned Lens analytical result. */
 export interface LensResultIdentity { observation_id: string; observation_run_id: string; lens_id: string; lens_run_id: string }
+/** Metric identity freezes the observed reference and unit alongside run identity. */
+export interface MetricResultIdentity extends LensResultIdentity { metric_ref: string; unit: string }
 /** The public Metric schema-1.0 result envelope; individual variants stay discriminated by lifecycle/data quality. */
-export interface MetricCurrentEvidence { mean: number; std: number; min: number; max: number; slope: number }
+/** Frozen state emitted by one optional deterministic Metric analysis. */
+export interface MetricOptionalProperty { state: 'present' | 'absent' | 'unknown' }
+/** Evidence retained when spike analysis was produced. */
+export type SpikeEvidence = { method: 'modified_z'; detected_sample_count: number; detected_timestamps: readonly string[]; max_abs_modified_z: number } | { method: 'mad_zero_exact_deviation'; deviation_count: number; detected_sample_count: number; detected_timestamps: readonly string[] }
+/** Evidence retained when oscillation analysis was produced. */
+export interface OscillationEvidence { deadband: number; significant_residual_count: number; sign_change_count: number; sign_change_ratio: number }
+/** Evidence retained when stuck-signal analysis was produced. */
+export interface StuckSignalEvidence { repeated_value: number; longest_run_sample_count: number; longest_run_share: number }
+/** The numerical current-evidence group from a usable Metric result. */
+export interface MetricCurrentEvidence { mean: number; std: number; min: number; max: number; slope: number; spike: SpikeEvidence | null; oscillation: OscillationEvidence | null; stuck_signal: StuckSignalEvidence | null }
 /** The usable Metric variants retain their evidence and semantic state. */
-export interface UsableMetricRunResult { schema_version: '1.0'; identity: LensResultIdentity; lens_type: 'metric'; status: { state: 'completed' | 'partial' }; data_quality: 'good' | 'degraded'; analysis_window: AnalysisWindow; current_state: { trend: { direction: string; rate: string }; variability: { state: string } }; reference_periods: readonly MetricReferenceComparison[] | null; evidence: { current: MetricCurrentEvidence; reference_periods: readonly MetricReferenceEvidence[] | null }; reason?: StructuredReason }
+export interface MetricHistory { direction: 'increasing' | 'decreasing' | 'stable' | 'mixed' | 'unknown'; pattern: 'sustained' | 'reversing' | 'oscillating' | 'mixed' | 'unknown'; run_ids: readonly string[] }
+export interface MetricHistoryEvidence { level_change_tolerance: number; classifiable_transitions: number; unknown_transitions: number; increasing_transitions: number; decreasing_transitions: number; stable_transitions: number; direction_changes: number }
+export interface UsableMetricRunResult { schema_version: '1.0'; identity: MetricResultIdentity; lens_type: 'metric'; status: { state: 'completed' | 'partial' }; data_quality: 'good' | 'degraded'; analysis_window: AnalysisWindow; current_state: { trend: { direction: string; rate: string }; variability: { state: string }; spike: MetricOptionalProperty | null; oscillation: MetricOptionalProperty | null; stuck_signal: MetricOptionalProperty | null }; reference_periods: readonly MetricReferenceComparison[] | null; history: MetricHistory | null; evidence: { current: MetricCurrentEvidence; reference_periods: readonly MetricReferenceEvidence[] | null; history: MetricHistoryEvidence | null }; reason?: StructuredReason }
 /** A completed Metric result may truthfully contain no usable current evidence. */
-export interface InsufficientMetricRunResult { schema_version: '1.0'; identity: LensResultIdentity; lens_type: 'metric'; status: { state: 'completed' }; data_quality: 'insufficient'; analysis_window: AnalysisWindow }
+export interface InsufficientMetricRunResult { schema_version: '1.0'; identity: MetricResultIdentity; lens_type: 'metric'; status: { state: 'completed' }; data_quality: 'insufficient'; analysis_window: AnalysisWindow }
 /** A failed Metric artifact is deliberately traceability-only. */
-export interface FailedMetricRunResult { schema_version: '1.0'; identity: LensResultIdentity; lens_type: 'metric'; status: { state: 'failed'; error: { code: string; message: string } }; analysis_window: AnalysisWindow }
+export interface FailedMetricRunResult { schema_version: '1.0'; identity: MetricResultIdentity; lens_type: 'metric'; status: { state: 'failed'; error: { code: string; message: string } }; analysis_window: AnalysisWindow }
 export interface MetricReferenceComparison { offset: string; analysis_window: AnalysisWindow; level: { relation: string }; trend: { direction: string; rate: string; direction_relation: string; rate_relation: string }; variability: { state: string; relation: string } }
 export interface MetricReferenceEvidence { offset: string; analysis_window: AnalysisWindow; mean: number; std: number; min: number; max: number; slope: number; relative_level_change: number }
 export type MetricRunResult = UsableMetricRunResult | InsufficientMetricRunResult | FailedMetricRunResult

@@ -6,6 +6,7 @@ import string
 import unicodedata
 from collections.abc import Hashable, Iterable
 from datetime import datetime, timedelta
+from re import findall, fullmatch
 from uuid import UUID
 
 from app.reasoning.contracts import EvidenceReference, Hypothesis, Limitation
@@ -84,19 +85,22 @@ def build_report(
         lines.extend(
             (
                 "",
-                f"### Finding {_markdown_opaque(finding.id)}",
+                f"### Finding ID: {_markdown_opaque(finding.id)}",
                 *_presentation_lines(finding_text[finding.id]),
             )
         )
         lines.extend(_reference_lines("Evidence references", finding.evidence_refs))
     lines.extend(("", "## Possible Explanations"))
     if not result.hypotheses:
-        lines.append("No possible explanations were supplied by the analysis result.")
+        lines.append(
+            "No knowledge-grounded possible explanation was produced by the supplied "
+            "analysis result."
+        )
     for hypothesis in result.hypotheses:
         lines.extend(
             (
                 "",
-                f"### Possible explanation {_markdown_opaque(hypothesis.id)}",
+                f"### Possible explanation ID: {_markdown_opaque(hypothesis.id)}",
                 *_presentation_lines(hypothesis_text[hypothesis.id]),
                 "This is a possible explanation, not a confirmed cause.",
                 "Supported by findings: " + _inline_values(hypothesis.supported_by),
@@ -105,12 +109,12 @@ def build_report(
         lines.extend(_knowledge_reference_lines(hypothesis))
     lines.extend(("", "## Analysis Limitations"))
     if not result.limitations:
-        lines.append("No analysis limitations were supplied by the analysis result.")
+        lines.append("No analysis limitation was identified in the supplied result.")
     for index, limitation in enumerate(result.limitations):
         lines.extend(
             (
                 "",
-                f"### Limitation {index + 1}: {_markdown_opaque(limitation.code)}",
+                f"### Limitation {index + 1} (code: {_markdown_opaque(limitation.code)})",
                 *_presentation_lines(limitation_text[index]),
                 _limitation_details(limitation),
             )
@@ -174,33 +178,70 @@ def _normalize_prose(value: str) -> str:
 
 
 def _markdown_opaque(value: UUID | str | int) -> str:
-    """Render an opaque value as a typed reversible literal escaped for Markdown."""
+    """Render an opaque value as exact, inert, human-readable inline code."""
     if isinstance(value, UUID):
-        value_type = "uuid"
-        serialized_value = ascii(str(value))
+        serialized_value = str(value)
     elif type(value) is str:
-        value_type = "string"
-        serialized_value = ascii(value)
+        serialized_value = value
     elif type(value) is int:
-        value_type = "integer"
-        serialized_value = f"0x{value:x}"
+        serialized_value = _decimal_integer(value)
     else:  # pragma: no cover - callers are constrained by domain contracts.
         raise TypeError("unsupported opaque value type")
-    return _markdown_encoded(f"{value_type}={serialized_value}")
+    return _markdown_inline_code(_display_text(serialized_value))
 
 
-def _markdown_encoded(value: str) -> str:
-    """Render a deterministic traceability encoding as Markdown plain content."""
-    return value.translate(_MARKDOWN_ESCAPE_TABLE)
+def _markdown_inline_code(value: str) -> str:
+    """Fence a renderer-owned value so untrusted content cannot own Markdown syntax."""
+    longest_run = max((len(run) for run in findall(r"`+", value)), default=0)
+    fence = "`" * (longest_run + 1)
+    return f"{fence}{value}{fence}"
+
+
+def _decimal_integer(value: int) -> str:
+    """Render an arbitrarily large integer in decimal without interpreter digit limits."""
+    if value == 0:
+        return "0"
+    sign = "-" if value < 0 else ""
+    remaining = abs(value)
+    digits: list[str] = []
+    while remaining:
+        remaining, digit = divmod(remaining, 10)
+        digits.append(chr(ord("0") + digit))
+    return sign + "".join(reversed(digits))
+
+
+def _display_text(value: str, *, quote_for_locator: bool = False) -> str:
+    """Encode controls reversibly while leaving ordinary visible text readable."""
+    rendered: list[str] = []
+    for character in value:
+        if character == "\\":
+            rendered.append("\\\\")
+        elif quote_for_locator and character == '"':
+            rendered.append('\\"')
+        elif character == "\n":
+            rendered.append("\\n")
+        elif character == "\r":
+            rendered.append("\\r")
+        elif character == "\t":
+            rendered.append("\\t")
+        elif character == "\f":
+            rendered.append("\\f")
+        elif character == "\v":
+            rendered.append("\\v")
+        elif unicodedata.category(character) in {"Cc", "Cf", "Cs"}:
+            rendered.append(f"\\u{ord(character):04X}")
+        else:
+            rendered.append(character)
+    return "".join(rendered)
 
 
 def _reference_lines(label: str, references: tuple[EvidenceReference, ...]) -> list[str]:
     """Format canonical finding evidence references without model-authored content."""
     return [label + ":"] + [
         "- "
-        + f"source type {_markdown_opaque(reference.source_type)}; "
-        + f"source ID {_markdown_opaque(reference.source_id)}; "
-        + f"locator {_locator_text(reference.locator)}"
+        + f"Source type: {_markdown_opaque(reference.source_type)}; "
+        + f"source ID: {_markdown_opaque(reference.source_id)}; "
+        + f"locator: {_locator_text(reference.locator)}"
         for reference in references
     ]
 
@@ -208,28 +249,28 @@ def _reference_lines(label: str, references: tuple[EvidenceReference, ...]) -> l
 def _knowledge_reference_lines(hypothesis: Hypothesis) -> list[str]:
     """Format canonical hypothesis knowledge references from the source artifact."""
     return ["Knowledge references:"] + [
-        f"- source ID {_markdown_opaque(reference.source_id)}; "
-        f"reference {_markdown_opaque(reference.reference)}"
+        f"- Source ID: {_markdown_opaque(reference.source_id)}; "
+        f"reference: {_markdown_opaque(reference.reference)}"
         for reference in hypothesis.knowledge_refs
     ]
 
 
 def _inline_values(values: tuple[str, ...]) -> str:
-    """Render source identifiers as one boundary-preserving typed sequence."""
-    return _markdown_encoded("[" + ",".join(f"string={ascii(value)}" for value in values) + "]")
+    """Render source identifiers as individually inspectable exact code values."""
+    return "[" + ", ".join(_markdown_opaque(value) for value in values) + "]"
 
 
 def _locator_text(locator: tuple[str | int, ...]) -> str:
-    """Render locator segments as a reversible typed literal sequence."""
-    return _markdown_encoded(
-        "["
-        + ",".join(
-            f"{'index' if type(segment) is int else 'key'}="
-            + (f"0x{segment:x}" if type(segment) is int else ascii(segment))
-            for segment in locator
-        )
-        + "]"
-    )
+    """Render exact locator segments in conventional dotted and decimal-index notation."""
+    parts: list[str] = []
+    for segment in locator:
+        if type(segment) is int:
+            parts.append(f"[{_decimal_integer(segment)}]")
+        elif fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", segment):
+            parts.append(("." if parts else "") + segment)
+        else:
+            parts.append(f'["{_display_text(segment, quote_for_locator=True)}"]')
+    return _markdown_inline_code("".join(parts))
 
 
 def _limitation_details(limitation: Limitation) -> str:
