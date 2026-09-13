@@ -1,7 +1,7 @@
 ## 1. Persistence and dependencies
 
-- [ ] 1.1 Replace local Compose and CI PostgreSQL images with pinned `pgvector/pgvector:0.8.6-pg18-bookworm`; verify `CREATE EXTENSION vector` succeeds in both environments before migration tests run.
-- [ ] 1.2 Add user-approved `pypdf>=6,<7` and `pgvector>=0.4,<1` backend dependencies plus server-only embedding, ingestion, retrieval, and scope-suggestion settings; verify dependency resolution and settings validation tests pass.
+- [x] 1.1 Replace local Compose and CI PostgreSQL images with pinned `pgvector/pgvector:0.8.6-pg18-bookworm`; verify `CREATE EXTENSION vector` succeeds in both environments before migration tests run.
+- [x] 1.2 Add user-approved `pypdf>=6,<7` and `pgvector>=0.4,<1` backend dependencies plus server-only embedding, ingestion, retrieval, and scope-suggestion settings; verify dependency resolution and settings validation tests pass.
 - [ ] 1.3 Create an Alembic migration that enables PostgreSQL `vector`, stores immutable knowledge documents/versions/service tags/chunks and optional Observation knowledge scope, and preserves existing unscoped definitions; verify upgrade, empty-corpus/unscoped downgrade and re-upgrade, and downgrade refusal with retained records or non-null scope while the Alembic revision stays unchanged.
 - [ ] 1.4 Implement strict framework-neutral knowledge-management and knowledge-scope contracts with repository persistence and a partial unique approved-version index; verify unit/integration tests cover validation, duplicate-version rejection, one-approved-version behavior, and deprecation.
 
