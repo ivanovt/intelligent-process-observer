@@ -6,6 +6,7 @@ import json
 from collections.abc import Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime
+from math import isfinite
 from uuid import UUID
 
 from sqlalchemy import DateTime, String, cast, delete, exists, func, select, update
@@ -43,6 +44,7 @@ from app.infrastructure.persistence.runtime_contracts import (
     validate_observation_run_transition,
 )
 from app.knowledge.management_contracts import (
+    KNOWLEDGE_EMBEDDING_DIMENSIONS,
     ApprovedServiceCatalogEntry,
     KnowledgeChunkCreate,
     KnowledgeDocumentVersionCreate,
@@ -396,6 +398,7 @@ class KnowledgeRepository:
                 page_ordinal=chunk.page_ordinal,
                 heading_path=list(chunk.heading_path) if chunk.heading_path is not None else None,
                 text=chunk.text,
+                embedding=list(chunk.embedding),
             )
             for chunk in chunks
         )
@@ -429,6 +432,15 @@ class KnowledgeRepository:
             raise ValueError("only imported versions can be approved")
         if version.extraction_state != "ready":
             raise ValueError("only a ready extracted version can be approved")
+        chunks = tuple(
+            await session.scalars(
+                select(KnowledgeChunkModel)
+                .where(KnowledgeChunkModel.document_version_id == version.id)
+                .order_by(KnowledgeChunkModel.ordinal)
+                .with_for_update()
+            )
+        )
+        self._require_complete_index(chunks)
         await session.execute(
             update(KnowledgeDocumentVersionModel)
             .where(
@@ -440,6 +452,23 @@ class KnowledgeRepository:
         version.lifecycle = "approved"
         await session.flush()
         return version
+
+    @staticmethod
+    def _require_complete_index(chunks: Sequence[KnowledgeChunkModel]) -> None:
+        """Reject publication unless every persisted chunk has a complete searchable index."""
+        if not chunks:
+            raise ValueError("a version requires at least one indexed chunk before approval")
+        for chunk in chunks:
+            embedding = chunk.embedding
+            if (
+                not chunk.text.strip()
+                or embedding is None
+                or len(embedding) != KNOWLEDGE_EMBEDDING_DIMENSIONS
+                or any(not isinstance(value, float) or not isfinite(value) for value in embedding)
+            ):
+                raise ValueError(
+                    "all chunks must have non-empty text and finite 1536-dimensional embeddings"
+                )
 
     async def deprecate_version(
         self,

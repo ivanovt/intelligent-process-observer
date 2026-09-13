@@ -6,6 +6,7 @@ import pytest
 from pydantic import ValidationError
 
 from app.knowledge.management_contracts import (
+    KNOWLEDGE_EMBEDDING_DIMENSIONS,
     KnowledgeAuthority,
     KnowledgeChunkCreate,
     KnowledgeDocumentType,
@@ -13,6 +14,8 @@ from app.knowledge.management_contracts import (
     KnowledgeScope,
     KnowledgeServiceTag,
 )
+
+_EMBEDDING = (0.0,) * KNOWLEDGE_EMBEDDING_DIMENSIONS
 
 
 def valid_version(**overrides: object) -> KnowledgeDocumentVersionCreate:
@@ -77,9 +80,36 @@ def test_document_version_rejects_invalid_metadata_and_duplicate_service_tags() 
 
 def test_chunk_location_contract_preserves_pdf_or_markdown_locators() -> None:
     """Chunk location metadata must not leave a half-formed PDF locator."""
-    assert KnowledgeChunkCreate(ordinal=1, text="PDF passage", page_number=2, page_ordinal=1)
-    assert KnowledgeChunkCreate(ordinal=2, text="Markdown passage", heading_path=("Operations",))
+    assert KnowledgeChunkCreate(
+        ordinal=1,
+        text="PDF passage",
+        embedding=_EMBEDDING,
+        page_number=2,
+        page_ordinal=1,
+    )
+    assert KnowledgeChunkCreate(
+        ordinal=2,
+        text="Markdown passage",
+        embedding=_EMBEDDING,
+        heading_path=("Operations",),
+    )
     with pytest.raises(ValidationError, match="provided together"):
-        KnowledgeChunkCreate(ordinal=1, text="invalid", page_number=2)
+        KnowledgeChunkCreate(ordinal=1, text="invalid", embedding=_EMBEDDING, page_number=2)
     with pytest.raises(ValidationError, match="heading_path"):
-        KnowledgeChunkCreate(ordinal=1, text="invalid", heading_path=(" ",))
+        KnowledgeChunkCreate(ordinal=1, text="invalid", embedding=_EMBEDDING, heading_path=(" ",))
+
+
+def test_chunk_rejects_missing_malformed_or_non_finite_embedding() -> None:
+    """A publishable chunk always carries one finite fixed-dimension embedding."""
+    with pytest.raises(ValidationError):
+        KnowledgeChunkCreate(ordinal=1, text="passage")
+    with pytest.raises(ValidationError):
+        KnowledgeChunkCreate(ordinal=1, text="passage", embedding=_EMBEDDING[:-1])
+    with pytest.raises(ValidationError, match="finite"):
+        KnowledgeChunkCreate(
+            ordinal=1,
+            text="passage",
+            embedding=(float("nan"),) + _EMBEDDING[1:],
+        )
+    with pytest.raises(ValidationError, match="non-whitespace"):
+        KnowledgeChunkCreate(ordinal=1, text=" ", embedding=_EMBEDDING)

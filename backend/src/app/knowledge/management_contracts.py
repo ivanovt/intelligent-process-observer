@@ -3,8 +3,11 @@
 from __future__ import annotations
 
 from enum import StrEnum
+from math import isfinite
 
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field, StrictFloat, model_validator
+
+KNOWLEDGE_EMBEDDING_DIMENSIONS = 1_536
 
 
 class StrictKnowledgeManagementModel(BaseModel):
@@ -128,13 +131,20 @@ class KnowledgeChunkCreate(StrictKnowledgeManagementModel):
 
     ordinal: int = Field(gt=0)
     text: str = Field(min_length=1)
+    embedding: tuple[StrictFloat, ...] = Field(
+        min_length=KNOWLEDGE_EMBEDDING_DIMENSIONS,
+        max_length=KNOWLEDGE_EMBEDDING_DIMENSIONS,
+    )
     page_number: int | None = Field(default=None, gt=0)
     page_ordinal: int | None = Field(default=None, gt=0)
     heading_path: tuple[str, ...] | None = None
 
     @model_validator(mode="after")
     def validate_location(self) -> KnowledgeChunkCreate:
-        """Keep PDF page locators paired and Markdown heading entries meaningful."""
+        """Validate one complete, indexed chunk and its source location."""
+        _require_non_whitespace(self.text, "text")
+        if any(not isfinite(value) for value in self.embedding):
+            raise ValueError("embedding must contain only finite values")
         if (self.page_number is None) != (self.page_ordinal is None):
             raise ValueError("page_number and page_ordinal must be provided together")
         if self.heading_path is not None and any(not part.strip() for part in self.heading_path):
