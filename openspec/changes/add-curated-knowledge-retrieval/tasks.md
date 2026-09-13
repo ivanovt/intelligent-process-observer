@@ -20,7 +20,7 @@
 
 ## 4. Observation scope and LLM assistance
 
-- [ ] 4.1 Extend Observation Definition create/replacement/read persistence and a separate run-frozen retriever-only scope carrier with optional knowledge scope, without altering Lens/Relationship semantics or existing `ObservationSemanticContext`; verify API and execution snapshot compatibility tests for scoped and legacy unscoped definitions.
+- [x] 4.1 Extend Observation Definition create/replacement/read persistence and a separate run-frozen retriever-only scope carrier with optional knowledge scope, without altering Lens/Relationship semantics or existing `ObservationSemanticContext`; verify API and execution snapshot compatibility tests for scoped and legacy unscoped definitions.
 - [x] 4.2 Implement the explicit server-side typed LLM scope-suggestion operation using only draft semantic text and the approved service catalog; verify tests reject invented IDs, return safe empty/unavailable outcomes, expose no corpus/provider diagnostics, and perform no persistence.
 - [x] 4.3 Add the optional Knowledge scope draft/review UI and its labelled explicit Lucide `Sparkles` suggestion action; verify frontend tests cover acceptance, rejection, empty/failure, abort/stale-response handling, and no automatic request during editing.
 
