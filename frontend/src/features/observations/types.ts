@@ -5,7 +5,9 @@ export interface ObservationSummary { id:string; name:string; description:string
 export interface MetricLens extends LensReference { description:string|null; metric_id:string; adapter_type:'prometheus'; source_id:string; query:string; unit:string; analysis_objectives:string[]; reference_periods:string[]; observation_href:string }
 export interface AlertLens extends AlertLensReference { description:string|null; source:'jira_track_and_release'; selector:{query:string}; analysis_objectives:string[]; reference_periods:string[]; observation_href:string }
 export interface Relationship extends RelationshipReference { description:string|null; participants:string[]; conditions:Record<string,SemanticDescriptor>; expected:Record<string,SemanticDescriptor>; observation_href:string }
-export interface ObservationResponse extends Omit<ObservationSummary,'lenses'|'alert_lenses'|'relationships'> { lenses:MetricLens[]; alert_lenses:AlertLens[]; relationships:Relationship[] }
+export interface ObservationResponse extends Omit<ObservationSummary,'lenses'|'alert_lenses'|'relationships'> { lenses:MetricLens[]; alert_lenses:AlertLens[]; relationships:Relationship[]; knowledge_scope?:KnowledgeScope|null }
+/** Optional retrieval-only service scope attached to an Observation aggregate. */
+export interface KnowledgeScope { service_ids:string[]; service_version:string|null }
 /** Public aggregate-create shape, deliberately separate from client draft state. */
 export interface AlertLensCreate { id:string; name:string; description:string|null; type:'alert'; source:'jira_track_and_release'; selector:{query:string}; analysis_objectives:string[]; reference_periods:string[] }
 /** Public Metric Lens create shape. */
@@ -28,7 +30,11 @@ export interface PrometheusMetricCapability { adapter_type:'prometheus'; sources
 /** Available acquisition sources supplied by the definition API. */
 export interface DefinitionCapabilities { metric:PrometheusMetricCapability[] }
 /** Public Observation creation request. */
-export interface ObservationCreate { name:string; description:string|null; objective:string; lenses:MetricLensCreate[]; alert_lenses:AlertLensCreate[]; relationships:RelationshipCreate[] }
+export interface ObservationCreate { name:string; description:string|null; objective:string; lenses:MetricLensCreate[]; alert_lenses:AlertLensCreate[]; relationships:RelationshipCreate[]; knowledge_scope?:KnowledgeScope|null }
+/** Transient text projection permitted for an explicit scope suggestion. */
+export interface KnowledgeScopeSuggestionRequest { name:string; description:string|null; objective:string; lenses:{name:string;description:string|null}[] }
+/** Catalog-backed advisory scope returned without persistence. */
+export interface KnowledgeScopeSuggestionResponse { service_ids:string[] }
 export interface ApiErrorEnvelope { code:string; message:string; field?:string }
 export class ApiError extends Error { readonly status:number; readonly code:string; readonly field?:string; constructor(status:number,code:string,message:string,field?:string) { super(message); this.status=status; this.code=code; this.field=field } }
 /** The fixed, non-persisting candidate sent to the Metric query preflight endpoint. */

@@ -5,15 +5,17 @@ import { ActionLink, Button, Field, FormSideRail, InlineNotice, Input, PageHeade
 import { createObservation, updateObservation } from './api'
 import { serializeDraft, useObservationDraft, validateDraft, type DraftErrors, type ObservationDraft } from './draft'
 import { DefinitionReview } from './DefinitionReview'
+import { KnowledgeScopeField } from './KnowledgeScopeField'
 import { ApiError } from './types'
 
-const configurationSections = [['general', 'General'], ['metric-lenses', 'Metric lenses'], ['alert-lenses', 'Alert lenses'], ['relationships', 'Relationships'], ['review', 'Review']] as const
+const configurationSections = [['general', 'General'], ['knowledge-scope', 'Knowledge scope'], ['metric-lenses', 'Metric lenses'], ['alert-lenses', 'Alert lenses'], ['relationships', 'Relationships'], ['review', 'Review']] as const
 type ConfigurationSectionId = (typeof configurationSections)[number][0]
 type NormalizedIssue = ValidationIssue & { path: string; section: ConfigurationSectionId }
 const sectionActivationOffset = 160
 
 function sectionForPath(path: string): ConfigurationSectionId {
   if (['name', 'description', 'objective'].includes(path)) return 'general'
+  if (path.startsWith('knowledge_scope')) return 'knowledge-scope'
   if (path.startsWith('lenses.')) return 'metric-lenses'
   if (path.startsWith('alert_lenses.')) return 'alert-lenses'
   if (path.startsWith('relationships.')) return 'relationships'
@@ -36,7 +38,7 @@ function normalizeIssues(errors: DraftErrors, draft: ObservationDraft): Normaliz
 
 /** Renders the aggregate-owned Observation creation and validation flow. */
 export function CreateObservationPage() {
-  const { draft, mode, targetId, explicitErrors: errors, fresh, clear, setExplicitErrors, updateGeneral, removeChild, moveChild } = useObservationDraft()
+  const { draft, mode, targetId, explicitErrors: errors, fresh, clear, setExplicitErrors, updateGeneral, updateKnowledgeScope, removeChild, moveChild } = useObservationDraft()
   const navigate = useNavigate()
   const location = useLocation()
   const [failure, setFailure] = useState('')
@@ -104,6 +106,7 @@ export function CreateObservationPage() {
           <Field label="Description (optional)" description="Optional context that explains this Observation." error={errors.description}><Textarea id="general-description" placeholder="Monitors cooling-system operating conditions." value={draft.description} onChange={(event) => updateGeneral({ ...draft, description: event.target.value })} /></Field>
           <Field label="Objective" description="Outcome this Observation should evaluate." error={errors.objective}><Textarea id="general-objective" placeholder="Detect unexpected cooling pressure changes." value={draft.objective} onChange={(event) => updateGeneral({ ...draft, objective: event.target.value })} /></Field>
         </div></section>
+        <KnowledgeScopeField draft={draft} onChange={updateKnowledgeScope} />
         <ConfigurationSection id="metric-lenses" icon={<Activity size={18} aria-hidden="true" />} title="Metric lenses" description="Configure the individual metrics this Observation evaluates." addTo="metric-lenses/new" addLabel="Add Metric Lens">{draft.lenses.map((metric, index) => <DraftRow key={metric.clientKey} name={metric.name || 'Unnamed Metric Lens'} to={`metric-lenses/${metric.clientKey}`} errors={childErrors(errors, 'lenses', index)} onRemove={() => removeChild('metric', metric.clientKey)} onMove={(direction) => moveChild('metric', metric.clientKey, direction)} canMoveUp={index > 0} canMoveDown={index < draft.lenses.length - 1} />)}</ConfigurationSection>
         <ConfigurationSection id="alert-lenses" icon={<BellRing size={18} aria-hidden="true" />} title="Alert lenses" description="Configure provider-native alert selectors for this Observation." addTo="alert-lenses/new" addLabel="Add Alert Lens">{draft.alert_lenses.map((alert, index) => <DraftRow key={alert.clientKey} name={alert.name || 'Unnamed Alert Lens'} to={`alert-lenses/${alert.clientKey}`} errors={childErrors(errors, 'alert_lenses', index)} onRemove={() => removeChild('alert', alert.clientKey)} onMove={(direction) => moveChild('alert', alert.clientKey, direction)} canMoveUp={index > 0} canMoveDown={index < draft.alert_lenses.length - 1} />)}</ConfigurationSection>
         <ConfigurationSection id="relationships" icon={<GitFork size={18} aria-hidden="true" />} title="Relationships" description="Engineer-defined current-state rules over Metric Lenses only." addTo="relationships/new" addLabel="Add Relationship">{draft.relationships.map((relationship, index) => <DraftRow key={relationship.clientKey} name={relationship.name || 'Unnamed Relationship'} to={`relationships/${relationship.clientKey}`} errors={childErrors(errors, 'relationships', index)} onRemove={() => removeChild('relationship', relationship.clientKey)} onMove={(direction) => moveChild('relationship', relationship.clientKey, direction)} canMoveUp={index > 0} canMoveDown={index < draft.relationships.length - 1} />)}</ConfigurationSection>
