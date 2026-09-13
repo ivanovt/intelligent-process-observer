@@ -133,8 +133,9 @@ def _catalog_backed_response(
     catalog_ids = {entry.service_id for entry in catalog}
     if not set(response.service_ids).issubset(catalog_ids):
         raise ValueError("scope suggestion includes an ID outside the catalog")
+    ambiguous_service_ids = _ambiguous_draft_service_ids(draft, catalog)
     supported_service_ids = _unambiguous_draft_service_ids(draft, catalog)
-    if not set(response.service_ids).issubset(supported_service_ids):
+    if not (set(response.service_ids) & ambiguous_service_ids).issubset(supported_service_ids):
         raise ValueError("scope suggestion selects an ambiguously matched service ID")
     return response
 
@@ -160,6 +161,24 @@ def _unambiguous_draft_service_ids(
         if len(owners) == 1 and _contains_catalog_term(draft_text, alias):
             supported.update(owners)
     return supported
+
+
+def _ambiguous_draft_service_ids(
+    draft: KnowledgeScopeSuggestionDraft,
+    catalog: tuple[ApprovedServiceCatalogEntry, ...],
+) -> set[str]:
+    """Return every service that owns a shared alias explicitly present in the draft."""
+    draft_text = "\n".join(_draft_text_values(draft))
+    alias_owners: dict[str, set[str]] = {}
+    for entry in catalog:
+        for alias in entry.aliases:
+            alias_owners.setdefault(alias.casefold(), set()).add(entry.service_id)
+    return {
+        service_id
+        for alias, owners in alias_owners.items()
+        if len(owners) > 1 and _contains_catalog_term(draft_text, alias)
+        for service_id in owners
+    }
 
 
 def _draft_text_values(draft: KnowledgeScopeSuggestionDraft) -> tuple[str, ...]:

@@ -164,6 +164,24 @@ def test_service_rejects_a_service_selected_only_from_a_shared_alias() -> None:
     assert _run(service.suggest(None, draft)) == KnowledgeScopeSuggestionResponse()
 
 
+def test_service_keeps_a_semantic_catalog_suggestion_without_a_literal_catalog_term() -> None:
+    """A model may select a catalog ID from draft semantics when no shared alias is present."""
+    draft = KnowledgeScopeSuggestionDraft(
+        name="Hydronic loop health",
+        description="Monitor the plant water circulation.",
+        objective="Detect pressure instability in the chilled-water circuit.",
+        lenses=[],
+    )
+    service = KnowledgeScopeSuggestionService(
+        StubCatalog(_collision_catalog()),
+        lambda: StubAgent(KnowledgeScopeSuggestionResponse(service_ids=("cooling-primary",))),
+    )
+
+    assert _run(service.suggest(None, draft)) == KnowledgeScopeSuggestionResponse(
+        service_ids=("cooling-primary",)
+    )
+
+
 @pytest.mark.parametrize(
     ("draft_name", "expected_service_id"),
     [
