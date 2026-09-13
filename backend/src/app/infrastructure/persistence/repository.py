@@ -7,7 +7,7 @@ from collections.abc import Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from math import isfinite
-from uuid import UUID
+from uuid import UUID, uuid4
 
 from sqlalchemy import DateTime, String, cast, delete, exists, func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
@@ -80,6 +80,13 @@ class ObservationRunDetailRecord:
 
     observation_run: ObservationRunModel
     observation_name: str
+
+
+class KnowledgeLifecycleConflict(RuntimeError):
+    """Signal that a concurrent lifecycle action changed the publication snapshot."""
+
+
+_UNSET_LIFECYCLE_SNAPSHOT = object()
 
 
 class ObservationRepository:
@@ -406,11 +413,124 @@ class KnowledgeRepository:
         await session.flush()
         return persisted
 
+    async def begin_extraction_attempt(
+        self,
+        session: AsyncSession,
+        document_id: UUID,
+        version_number: int,
+        *,
+        attempt_id: UUID | None = None,
+    ) -> UUID:
+        """Fence one explicit extraction attempt to the supplied immutable version."""
+        version = await self.get_version(session, document_id, version_number)
+        if version is None:
+            raise LookupError(f"knowledge document version {version_number} does not exist")
+        if version.lifecycle != "imported":
+            raise ValueError("only imported versions can be extracted")
+        if version.extraction_state == "ready":
+            raise ValueError("ready extraction results cannot be retried")
+        identifier = attempt_id or uuid4()
+        version.extraction_attempt_id = identifier
+        version.extraction_state = "pending"
+        version.extracted_text = None
+        version.extraction_completed_at = None
+        await session.flush()
+        return identifier
+
+    async def complete_extraction_attempt(
+        self,
+        session: AsyncSession,
+        document_id: UUID,
+        version_number: int,
+        attempt_id: UUID,
+        *,
+        extracted_text: str | None,
+        succeeded: bool,
+    ) -> bool:
+        """Persist derived extraction output only when its UUID is still current."""
+        result = await session.execute(
+            update(KnowledgeDocumentVersionModel)
+            .where(
+                KnowledgeDocumentVersionModel.document_id == document_id,
+                KnowledgeDocumentVersionModel.version == version_number,
+                KnowledgeDocumentVersionModel.lifecycle == "imported",
+                KnowledgeDocumentVersionModel.extraction_attempt_id == attempt_id,
+            )
+            .values(
+                extraction_state="ready" if succeeded else "failed",
+                extracted_text=extracted_text if succeeded else None,
+                extraction_completed_at=datetime.now(UTC),
+            )
+        )
+        await session.flush()
+        return result.rowcount == 1
+
+    async def try_acquire_extraction_lock(
+        self, session: AsyncSession, document_version_id: UUID
+    ) -> bool:
+        """Try to claim the PostgreSQL advisory lock for one extraction attempt."""
+        return bool(
+            await session.scalar(
+                select(
+                    func.pg_try_advisory_lock(func.hashtextextended(str(document_version_id), 0))
+                )
+            )
+        )
+
+    async def release_extraction_lock(
+        self, session: AsyncSession, document_version_id: UUID
+    ) -> None:
+        """Release a previously acquired PostgreSQL advisory lock for one version."""
+        await session.execute(
+            select(func.pg_advisory_unlock(func.hashtextextended(str(document_version_id), 0)))
+        )
+
+    async def get_chunk(
+        self,
+        session: AsyncSession,
+        document_id: UUID,
+        version_number: int,
+        ordinal: int,
+        *,
+        page_number: int | None,
+    ) -> KnowledgeChunkModel | None:
+        """Resolve one exact historical chunk without following active-version state."""
+        statement = (
+            select(KnowledgeChunkModel)
+            .join(KnowledgeDocumentVersionModel)
+            .where(
+                KnowledgeDocumentVersionModel.document_id == document_id,
+                KnowledgeDocumentVersionModel.version == version_number,
+            )
+        )
+        if page_number is None:
+            statement = statement.where(
+                KnowledgeChunkModel.ordinal == ordinal,
+                KnowledgeChunkModel.page_number.is_(None),
+            )
+        else:
+            statement = statement.where(
+                KnowledgeChunkModel.page_number == page_number,
+                KnowledgeChunkModel.page_ordinal == ordinal,
+            )
+        return await session.scalar(statement)
+
+    async def approved_version_id(self, session: AsyncSession, document_id: UUID) -> UUID | None:
+        """Return the current approved identity for stale-publication detection."""
+        return await session.scalar(
+            select(KnowledgeDocumentVersionModel.id).where(
+                KnowledgeDocumentVersionModel.document_id == document_id,
+                KnowledgeDocumentVersionModel.lifecycle == "approved",
+            )
+        )
+
     async def approve_version(
         self,
         session: AsyncSession,
         document_id: UUID,
         version_number: int,
+        *,
+        expected_approved_version_id: UUID | None | object = _UNSET_LIFECYCLE_SNAPSHOT,
     ) -> KnowledgeDocumentVersionModel:
         """Publish one ready version and deprecate the document's previous approved version."""
         document = await session.scalar(
@@ -420,6 +540,12 @@ class KnowledgeRepository:
         )
         if document is None:
             raise LookupError(f"knowledge document {document_id} does not exist")
+        current_approved_id = await self.approved_version_id(session, document_id)
+        if (
+            expected_approved_version_id is not _UNSET_LIFECYCLE_SNAPSHOT
+            and current_approved_id != expected_approved_version_id
+        ):
+            raise KnowledgeLifecycleConflict("knowledge publication became stale")
         version = await session.scalar(
             select(KnowledgeDocumentVersionModel).where(
                 KnowledgeDocumentVersionModel.document_id == document_id,
@@ -475,6 +601,8 @@ class KnowledgeRepository:
         session: AsyncSession,
         document_id: UUID,
         version_number: int,
+        *,
+        expected_approved_version_id: UUID | None | object = _UNSET_LIFECYCLE_SNAPSHOT,
     ) -> KnowledgeDocumentVersionModel:
         """Remove one approved version from future retrieval without deleting its history."""
         document = await session.scalar(
@@ -484,6 +612,12 @@ class KnowledgeRepository:
         )
         if document is None:
             raise LookupError(f"knowledge document {document_id} does not exist")
+        current_approved_id = await self.approved_version_id(session, document_id)
+        if (
+            expected_approved_version_id is not _UNSET_LIFECYCLE_SNAPSHOT
+            and current_approved_id != expected_approved_version_id
+        ):
+            raise KnowledgeLifecycleConflict("knowledge lifecycle action became stale")
         version = await session.scalar(
             select(KnowledgeDocumentVersionModel).where(
                 KnowledgeDocumentVersionModel.document_id == document_id,
