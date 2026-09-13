@@ -5,11 +5,11 @@ This directory contains the accepted current UI direction, frontend technology d
 ## Files
 
 - `frontend_ui_stack_adr.md` — accepted frontend visual technology stack and related trade-offs.
-- `ui_implementation_handoff_v1.md` — living major-v1 implementation handoff (currently v1.9) covering monitoring/investigation, run management, Observation Management, Data Sources, and Knowledge Administration UX.
+- `ui_implementation_handoff_v1.md` — living major-v1 implementation handoff (currently v1.10) covering monitoring/investigation, run management, Observation Management, Data Sources, and Knowledge Administration UX.
 
 ## Status
 
-**UI Direction v1.9 is the accepted current direction.**
+**UI Direction v1.10 is the accepted current direction.**
 
 v1.2 retained the monitoring/investigation and Observation Management direction, and added:
 
@@ -77,6 +77,13 @@ roles, or person-level action attribution. Observation Management gains optional
 Knowledge scope plus an operator-initiated advisory LLM suggestion; it never runs on edit,
 never applies automatically, and remains distinct from observation evidence.
 
+v1.10 retains the complete v1.9 direction and gives each selected Observation knowledge
+scope service its own optional opaque version label. Create/Edit pairs each version input
+with its service; review shows each service and its own version or all-versions state.
+Accepting an advisory service suggestion adds an unversioned service entry and leaves
+operator-entered versions unchanged. Knowledge scope remains retriever-only aggregate
+metadata, separate from Lens evidence and execution settings.
+
 The implementation must preserve accepted information architecture, terminology, analytical/execution semantics, aggregate ownership, Lens configuration boundaries, and evidence/knowledge boundaries.
 
 Minor implementation adjustments are allowed for responsive fit, accessibility, browser behavior, real data length, and actual API constraints. Meaningful visual, UX, or semantic changes require an explicit UI version change.
@@ -97,7 +104,7 @@ Observation UI - Master Thesis
 https://magicpath.ai/files/447597481925181440
 ```
 
-MagicPath can guide look and feel, but an approved change does not require 1:1 canvas parity or synchronization. Historical v1.1 through v1.8 wording remains historical; ADR-167 and this current v1.9 documentation govern new work.
+MagicPath can guide look and feel, but an approved change does not require 1:1 canvas parity or synchronization. Historical v1.1 through v1.9 wording remains historical; ADR-167 and this current v1.10 documentation govern new work.
 
 ## Usage
 

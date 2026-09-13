@@ -1,5 +1,16 @@
 # Changelog
 
+## 7.1 — 2026-09-13
+
+- добавен ADR-174: optional Observation knowledge scope вече пази own optional opaque
+  service-version label за всеки selected service, вместо един общ version;
+- legacy shared-version scopes се четат с previous meaning, а canonical API и новите
+  persisted scopes използват per-service entries;
+- version filtering остава exact, metadata-first и retriever-only; unversioned tags,
+  global knowledge, run freeze, evidence boundaries и retrieval budgets не се променят;
+- след new-format writes code-only rollback към стария shared-scope application е
+  unsafe без snapshot или отделно одобрена lossless conversion.
+
 ## 7.0 — 2026-09-13
 
 - добавен ADR-173: manual curated knowledge corpus пази immutable PDF/Markdown source

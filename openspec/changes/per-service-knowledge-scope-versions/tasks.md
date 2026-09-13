@@ -4,8 +4,8 @@
 
 ## 1. Architecture and Observation contract
 
-- [ ] 1.1 After explicit architectural approval, record the narrow ADR-173 supersession for independently optional per-service scope versions, legacy interpretation, and rollback limitation; verify architecture references are consistent.
-- [ ] 1.2 After explicit UI-direction approval, update `docs/ui/README.md` and the living handoff to v1.10 with per-service entry, review pairing, and version-free suggestion semantics; verify the handoff remains consistent with the approved API and ADR.
+- [x] 1.1 After explicit architectural approval, record the narrow ADR-173 supersession for independently optional per-service scope versions, legacy interpretation, and rollback limitation; verify architecture references are consistent.
+- [x] 1.2 After explicit UI-direction approval, update `docs/ui/README.md` and the living handoff to v1.10 with per-service entry, review pairing, and version-free suggestion semantics; verify the handoff remains consistent with the approved API and ADR.
 - [ ] 1.3 Introduce strict canonical per-service scope contracts plus legacy shared-scope normalization; verify tests reject empty/duplicate/blank/mixed shapes and preserve each legacy service's prior version meaning.
 - [ ] 1.4 Extend Observation create/replacement/read and JSONB persistence to accept legacy inputs but return/write only the canonical per-service shape; verify API and PostgreSQL round-trip tests for heterogeneous versions, legacy definitions, unscoped definitions, and atomic rejection.
 

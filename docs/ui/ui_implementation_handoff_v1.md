@@ -1,14 +1,14 @@
-# UI Implementation Handoff — v1.9
+# UI Implementation Handoff — v1.10
 
 **Project:** ObserveAI / Master Thesis
-**Status:** Accepted living major-v1 implementation handoff for MVP UI Direction v1.9
+**Status:** Accepted living major-v1 implementation handoff for MVP UI Direction v1.10
 **Date:** 2026-09-13
 
 ## 1. Purpose
 
 This document translates the accepted current UI direction into implementation-oriented rules for the MVP frontend.
 
-UI Direction v1.9 includes the original monitoring/investigation experience, global run management, Observation Management configuration UX, read-only Data Sources visibility, and manual Knowledge Administration. It retains UI-generated Observation-child identity as typed, compact metadata beside Name, the on-demand secret-safe Prometheus configuration disclosure for each configured source, the global Runs history/launch screen and advisory Metric query preflight, and the existing Run Detail presentation. The frontend must preserve the architecture's semantic boundaries and must not invent new product-level classifications, lifecycle semantics, or administrative capabilities that are not supported by accepted backend contracts.
+UI Direction v1.10 includes the original monitoring/investigation experience, global run management, Observation Management configuration UX, read-only Data Sources visibility, and manual Knowledge Administration. It retains UI-generated Observation-child identity as typed, compact metadata beside Name, the on-demand secret-safe Prometheus configuration disclosure for each configured source, the global Runs history/launch screen and advisory Metric query preflight, and the existing Run Detail presentation. Observation knowledge scope now pairs each selected service with its own optional version. The frontend must preserve the architecture's semantic boundaries and must not invent new product-level classifications, lifecycle semantics, or administrative capabilities that are not supported by accepted backend contracts.
 
 ## 2. Accepted frontend visual stack
 
@@ -561,11 +561,15 @@ Review
 Maintain a local/client-side Observation draft until final `Create Observation` submission. Nested Lens/Relationship editors modify the draft only.
 
 Knowledge scope is optional aggregate metadata for curated-knowledge retrieval. It contains one
-or more explicit service IDs and an optional version; it is not a Lens, data-source selector,
-execution setting, relationship participant, or finding. A labelled Lucide `Sparkles` control
-may explicitly request an advisory scope suggestion. It never calls a model while fields are
+or more explicit, duplicate-free service entries, each with its own optional opaque version
+label. Create/Edit places a version input beside the service it filters; editing or removing
+one service does not alter another service's version. Review pairs every service with its own
+version or an explicit all-versions state. Scope is not a Lens, data-source selector, execution
+setting, relationship participant, or finding. A labelled Lucide `Sparkles` control may
+explicitly request an advisory scope suggestion. It never calls a model while fields are
 edited. Its returned catalog-backed IDs remain a pending local suggestion until the operator
-accepts them; an unavailable, empty, or stale response changes nothing and never blocks Create.
+accepts them; acceptance adds unversioned entries and does not overwrite existing versions.
+An unavailable, empty, or stale response changes nothing and never blocks Create.
 
 At least one Lens must be configured overall.
 
@@ -834,7 +838,7 @@ If `add-observation-management-ui` is the first frontend OpenSpec change, it may
 
 ## 15. Versioning and change-control rule
 
-**UI Direction v1.9 is the accepted current direction.**
+**UI Direction v1.10 is the accepted current direction.**
 
 Implementation may make minor technical adjustments for responsive fit, accessibility, browser behavior, real data length and actual API constraints, but must not silently change:
 

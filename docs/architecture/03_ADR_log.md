@@ -3528,6 +3528,52 @@ guides и incident knowledge, без външен vector service, automatic sour
 
 ---
 
+## ADR-174 — Observation knowledge scope задава optional version отделно за всеки service
+
+**Status:** Accepted
+
+**Context**
+ADR-173 въведе optional `ObservationDefinition.knowledge_scope` с multiple service IDs,
+но един общ optional service-version label. Различни services в една Observation могат
+да имат различни releases; общият label не може да изрази тази конфигурация без
+погрешно filtering-ване на approved knowledge.
+
+**Decision**
+
+- Този ADR supersede-ва само scope-level version формата на ADR-173.
+  `knowledge_scope` остава optional retriever-only Observation metadata, но canonical
+  shape съдържа ordered, duplicate-free service entries. Всеки entry има canonical
+  `service_id` и собствен optional opaque `service_version`.
+- Липсващ version на един service означава, че всички негови matching versioned и
+  unversioned document tags са eligible. Зададен version се сравнява exact само с
+  versioned tags на същия service; unversioned matching tags и global approved
+  documents остават eligible. Друг service entry не наследява този version.
+- Existing persisted legacy scope с общ version се чете като същия version на всеки
+  изброен service, така че previous retrieval meaning се запазва. Валидни legacy API
+  write payloads се приемат и нормализират, но canonical API responses и новите
+  persisted scopes използват per-service entries. Mixed legacy/new fields се reject-ват.
+- Scope entries се freeze-ват при run initialization само за retriever-а. Те не
+  променят Lens/Relationship semantics, observational data scope, findings, overall
+  state, framework-neutral `KnowledgeRetrievalRequest`, retrieval budgets или
+  source-version/chunk provenance.
+- LLM scope suggestion продължава да връща само catalog-backed service IDs. Operator-ът
+  задава version за всеки service explicit; suggestion не присвоява version и не
+  променя existing operator-entered versions.
+- Canonical public scope response е променен и clients трябва да го адаптират.
+  След запис на per-service scopes предишната application версия не може безопасно
+  да чете heterogeneous versions; rollback изисква pre-change database snapshot или
+  отделно одобрена lossless conversion. Различни versions не се collapse-ват silently.
+
+**Consequences**
+
+- Една Observation може да използва, например, `mprm-server@1.0` заедно с
+  `gateway@all versions`, без version на първия service да ограничава втория.
+- Existing shared-version scopes запазват meaning при read и run freeze.
+- JSONB колоната и document service-tag моделът остават без schema промяна;
+  новият canonical API shape и rollback boundary изискват coordinated deployment.
+
+---
+
 # Open decisions
 
 Актуалният и нормативен backlog е в `10_open_decisions_and_backlog.md`. Отворените въпроси **не** са implicit requirements и трябва да получат нов ADR, когато бъдат решени.
