@@ -86,13 +86,12 @@ class KnowledgePublicationService:
         try:
             async with self._session_factory() as session:
                 async with session.begin():
-                    version = await self._repository.get_version(
-                        session, document_id, version_number
+                    version = await self._repository.ensure_publication_current(
+                        session,
+                        document_id,
+                        version_number,
+                        expected_approved_version_id=expected_approved,
                     )
-                    if version is None:
-                        raise LookupError(
-                            f"knowledge document version {version_number} does not exist"
-                        )
                     await self._repository.replace_chunks(session, version.id, chunks)
                     await self._repository.approve_version(
                         session,

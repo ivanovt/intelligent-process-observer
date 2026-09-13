@@ -6,13 +6,19 @@ import asyncio
 import os
 from collections.abc import Generator
 from pathlib import Path
+from uuid import uuid4
 
 import pytest
 from alembic import command
 from alembic.config import Config
 from sqlalchemy import delete, select, text
 from sqlalchemy.exc import IntegrityError
-from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
+from sqlalchemy.ext.asyncio import (
+    AsyncEngine,
+    AsyncSession,
+    async_sessionmaker,
+    create_async_engine,
+)
 
 from app.core.settings import get_settings
 from app.infrastructure.persistence.models import (
@@ -21,7 +27,12 @@ from app.infrastructure.persistence.models import (
     KnowledgeDocumentVersionModel,
     ObservationModel,
 )
-from app.infrastructure.persistence.repository import KnowledgeRepository
+from app.infrastructure.persistence.repository import (
+    KnowledgeLifecycleConflict,
+    KnowledgeRepository,
+)
+from app.knowledge.extraction import KnowledgeExtractionError
+from app.knowledge.ingestion import KnowledgeIngestionService
 from app.knowledge.management_contracts import (
     KNOWLEDGE_EMBEDDING_DIMENSIONS,
     KnowledgeAuthority,
@@ -200,6 +211,239 @@ def test_approval_rejects_empty_or_unindexed_chunks_without_displacing_prior_pub
                 delete(KnowledgeDocumentModel).where(KnowledgeDocumentModel.id == document_id)
             )
             await session.commit()
+
+    asyncio.run(scenario())
+
+
+def test_extraction_attempt_fence_retains_source_and_ignores_a_late_completion(
+    session_factory: async_sessionmaker[AsyncSession],
+) -> None:
+    """A retry retains the immutable source and only its current attempt may publish extraction."""
+
+    async def scenario() -> None:
+        repository = KnowledgeRepository()
+        async with session_factory() as session:
+            document = await repository.create_document(session, source_version("7" * 64))
+            version = document.versions[0]
+            retained_source = version.source_bytes
+            interrupted_attempt = await repository.begin_extraction_attempt(session, document.id, 1)
+            retry_attempt = await repository.begin_extraction_attempt(session, document.id, 1)
+
+            assert version.source_bytes == retained_source
+            assert version.extraction_state == "pending"
+            assert not await repository.complete_extraction_attempt(
+                session,
+                document.id,
+                1,
+                interrupted_attempt,
+                extracted_text="late interrupted output",
+                succeeded=True,
+            )
+            assert await repository.complete_extraction_attempt(
+                session,
+                document.id,
+                1,
+                retry_attempt,
+                extracted_text="retry output",
+                succeeded=True,
+            )
+            await session.refresh(version)
+            assert version.source_bytes == retained_source
+            assert version.extraction_state == "ready"
+            assert version.extracted_text == "retry output"
+            await session.rollback()
+
+    asyncio.run(scenario())
+
+
+def test_committed_image_only_pdf_is_retained_when_initial_extraction_fails(
+    session_factory: async_sessionmaker[AsyncSession],
+) -> None:
+    """The initial extraction failure cannot roll back the already committed immutable source."""
+
+    def image_only_pdf_extractor(*_args, **_kwargs):
+        raise KnowledgeExtractionError("PDF source contains no extractable text")
+
+    async def scenario() -> None:
+        repository = KnowledgeRepository()
+        service = KnowledgeIngestionService(
+            session_factory,
+            repository,
+            max_upload_bytes=10_000,
+            max_extraction_characters=10_000,
+            extractor=image_only_pdf_extractor,
+        )
+        candidate = source_version("d" * 64).model_copy(
+            update={
+                "source_media_type": "application/pdf",
+                "source_bytes": b"%PDF-1.7\nimage-only fixture",
+            }
+        )
+        document_id, version_number = await service.create_document(candidate)
+        try:
+            async with session_factory() as session:
+                version = await repository.get_version(session, document_id, version_number)
+                assert version is not None
+                assert version.source_bytes == candidate.source_bytes
+                assert version.content_hash == candidate.content_hash
+                assert version.lifecycle == "imported"
+                assert version.extraction_state == "failed"
+                assert version.extracted_text is None
+        finally:
+            async with session_factory.begin() as session:
+                await session.execute(
+                    delete(KnowledgeDocumentModel).where(KnowledgeDocumentModel.id == document_id)
+                )
+
+    asyncio.run(scenario())
+
+
+def test_postgresql_extraction_lock_excludes_overlapping_retry_and_releases_after_interrupt(
+    session_factory: async_sessionmaker[AsyncSession],
+) -> None:
+    """One lock holder excludes an overlap, then another session can retry after release."""
+
+    async def scenario() -> None:
+        repository = KnowledgeRepository()
+        engine = session_factory.kw.get("bind")
+        assert isinstance(engine, AsyncEngine)
+        version_id = uuid4()
+        async with engine.connect() as first_connection, engine.connect() as second_connection:
+            async with (
+                AsyncSession(bind=first_connection) as first,
+                AsyncSession(bind=second_connection) as second,
+            ):
+                async with first.begin():
+                    assert await repository.try_acquire_extraction_lock(first, version_id)
+                async with second.begin():
+                    assert not await repository.try_acquire_extraction_lock(second, version_id)
+                await repository.release_extraction_lock(first, version_id)
+                await first.commit()
+                async with second.begin():
+                    assert await repository.try_acquire_extraction_lock(second, version_id)
+                await repository.release_extraction_lock(second, version_id)
+                await second.commit()
+
+    asyncio.run(scenario())
+
+
+def test_stale_lifecycle_preflight_preserves_authoritative_approval_and_candidate_chunks(
+    session_factory: async_sessionmaker[AsyncSession],
+) -> None:
+    """Stale approval/deprecation snapshots fail before candidate chunks are published."""
+
+    async def scenario() -> None:
+        repository = KnowledgeRepository()
+        async with session_factory() as session:
+            document = await repository.create_document(session, source_version("8" * 64))
+            first = document.versions[0]
+            first.extraction_state = "ready"
+            await repository.replace_chunks(session, first.id, (indexed_chunk(),))
+            await repository.approve_version(session, document.id, 1)
+            approved_snapshot = first.id
+
+            replacement = await repository.add_version(
+                session, document.id, source_version("9" * 64)
+            )
+            replacement.extraction_state = "ready"
+            await repository.replace_chunks(session, replacement.id, (indexed_chunk(),))
+            await repository.approve_version(
+                session,
+                document.id,
+                2,
+                expected_approved_version_id=approved_snapshot,
+            )
+
+            stale_candidate = await repository.add_version(
+                session, document.id, source_version("a" * 64)
+            )
+            stale_candidate.extraction_state = "ready"
+            with pytest.raises(KnowledgeLifecycleConflict, match="publication became stale"):
+                await repository.ensure_publication_current(
+                    session,
+                    document.id,
+                    3,
+                    expected_approved_version_id=approved_snapshot,
+                )
+            assert replacement.lifecycle == "approved"
+            assert stale_candidate.lifecycle == "imported"
+            assert stale_candidate.chunks == []
+
+            current_snapshot = replacement.id
+            await repository.deprecate_version(
+                session,
+                document.id,
+                2,
+                expected_approved_version_id=current_snapshot,
+            )
+            with pytest.raises(KnowledgeLifecycleConflict, match="publication became stale"):
+                await repository.ensure_publication_current(
+                    session,
+                    document.id,
+                    3,
+                    expected_approved_version_id=current_snapshot,
+                )
+            assert stale_candidate.chunks == []
+            await session.rollback()
+
+    asyncio.run(scenario())
+
+
+def test_approved_catalog_unions_aliases_and_removes_only_deprecated_unique_tags(
+    session_factory: async_sessionmaker[AsyncSession],
+) -> None:
+    """The derived catalog keeps overlapping aliases visible and drops only absent approved tags."""
+
+    async def scenario() -> None:
+        repository = KnowledgeRepository()
+        async with session_factory() as session:
+            first = await repository.create_document(
+                session,
+                source_version("b" * 64).model_copy(
+                    update={
+                        "service_tags": (
+                            KnowledgeServiceTag(
+                                service_id="cooling-loop", aliases=("cooling", "chiller")
+                            ),
+                            KnowledgeServiceTag(service_id="legacy-gateway", aliases=("shared",)),
+                        )
+                    }
+                ),
+            )
+            second = await repository.create_document(
+                session,
+                source_version("c" * 64).model_copy(
+                    update={
+                        "service_tags": (
+                            KnowledgeServiceTag(
+                                service_id="cooling-loop", aliases=("plant", "chiller")
+                            ),
+                            KnowledgeServiceTag(service_id="heating-loop", aliases=("shared",)),
+                        )
+                    }
+                ),
+            )
+            for document in (first, second):
+                version = document.versions[0]
+                version.extraction_state = "ready"
+                await repository.replace_chunks(session, version.id, (indexed_chunk(),))
+                await repository.approve_version(session, document.id, 1)
+
+            catalog = await repository.approved_service_catalog(session)
+            assert tuple(entry.model_dump() for entry in catalog) == (
+                {"service_id": "cooling-loop", "aliases": ("chiller", "cooling", "plant")},
+                {"service_id": "heating-loop", "aliases": ("shared",)},
+                {"service_id": "legacy-gateway", "aliases": ("shared",)},
+            )
+
+            await repository.deprecate_version(session, first.id, 1)
+            assert tuple(
+                entry.model_dump() for entry in await repository.approved_service_catalog(session)
+            ) == (
+                {"service_id": "cooling-loop", "aliases": ("chiller", "plant")},
+                {"service_id": "heating-loop", "aliases": ("shared",)},
+            )
+            await session.rollback()
 
     asyncio.run(scenario())
 

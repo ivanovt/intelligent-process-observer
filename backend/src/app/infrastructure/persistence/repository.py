@@ -524,6 +524,38 @@ class KnowledgeRepository:
             )
         )
 
+    async def ensure_publication_current(
+        self,
+        session: AsyncSession,
+        document_id: UUID,
+        version_number: int,
+        *,
+        expected_approved_version_id: UUID | None,
+    ) -> KnowledgeDocumentVersionModel:
+        """Lock and validate a publication snapshot before any candidate chunk mutation."""
+        document = await session.scalar(
+            select(KnowledgeDocumentModel)
+            .where(KnowledgeDocumentModel.id == document_id)
+            .with_for_update()
+        )
+        if document is None:
+            raise LookupError(f"knowledge document {document_id} does not exist")
+        if await self.approved_version_id(session, document_id) != expected_approved_version_id:
+            raise KnowledgeLifecycleConflict("knowledge publication became stale")
+        version = await session.scalar(
+            select(KnowledgeDocumentVersionModel)
+            .where(
+                KnowledgeDocumentVersionModel.document_id == document_id,
+                KnowledgeDocumentVersionModel.version == version_number,
+            )
+            .with_for_update()
+        )
+        if version is None:
+            raise LookupError(f"knowledge document version {version_number} does not exist")
+        if version.lifecycle != "imported" or version.extraction_state != "ready":
+            raise KnowledgeLifecycleConflict("knowledge publication candidate became stale")
+        return version
+
     async def approve_version(
         self,
         session: AsyncSession,
