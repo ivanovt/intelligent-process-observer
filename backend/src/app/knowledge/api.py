@@ -71,6 +71,15 @@ class KnowledgeServiceTagResponse(BaseModel):
     supported_versions: tuple[str, ...]
 
 
+class KnowledgeChunkLocationResponse(BaseModel):
+    """Immutable source location summary for one indexed passage without its text."""
+
+    ordinal: int
+    page_number: int | None
+    page_ordinal: int | None
+    heading_path: tuple[str, ...] | None
+
+
 class KnowledgeVersionResponse(BaseModel):
     """Public immutable source-version and derived-state projection."""
 
@@ -85,6 +94,7 @@ class KnowledgeVersionResponse(BaseModel):
     extraction_state: str
     lifecycle_state: str
     service_tags: tuple[KnowledgeServiceTagResponse, ...]
+    indexed_chunk_locations: tuple[KnowledgeChunkLocationResponse, ...] = ()
 
 
 class KnowledgeDocumentResponse(BaseModel):
@@ -511,6 +521,20 @@ def _version_response(version: KnowledgeDocumentVersionModel) -> KnowledgeVersio
         extraction_state=version.extraction_state,
         lifecycle_state=version.lifecycle,
         service_tags=_service_tags(version),
+        indexed_chunk_locations=tuple(
+            _chunk_location_response(chunk)
+            for chunk in sorted(version.chunks, key=lambda item: item.ordinal)
+        ),
+    )
+
+
+def _chunk_location_response(chunk: KnowledgeChunkModel) -> KnowledgeChunkLocationResponse:
+    """Project one stored index location without exposing its inert passage text in detail."""
+    return KnowledgeChunkLocationResponse(
+        ordinal=chunk.ordinal,
+        page_number=chunk.page_number,
+        page_ordinal=chunk.page_ordinal,
+        heading_path=tuple(chunk.heading_path) if chunk.heading_path is not None else None,
     )
 
 

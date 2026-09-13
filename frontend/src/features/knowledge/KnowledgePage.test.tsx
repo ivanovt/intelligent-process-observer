@@ -2,10 +2,11 @@ import { render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { MemoryRouter } from 'react-router-dom'
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { KnowledgePage } from './KnowledgePage'
+import { DocumentDetail, KnowledgePage } from './KnowledgePage'
+import type { KnowledgeChunkLocation, KnowledgeDocument } from './api'
 
 const documentId = '123e4567-e89b-12d3-a456-426614174000'
-const version = (number: number, lifecycleState: 'imported' | 'approved' | 'deprecated', serviceTags = [{ service_id: 'cooling', aliases: ['chiller'], supported_versions: ['2.x'] }]) => ({ version: number, title: 'Cooling runbook', document_type: 'runbook' as const, authority: 'official' as const, owner: 'Operations', source_reference: `DOC-${number}`, media_type: 'application/pdf', content_hash: `hash-${number}`, extraction_state: 'ready' as const, lifecycle_state: lifecycleState, service_tags: serviceTags })
+const version = (number: number, lifecycleState: 'imported' | 'approved' | 'deprecated', serviceTags = [{ service_id: 'cooling', aliases: ['chiller'], supported_versions: ['2.x'] }]) => ({ version: number, title: 'Cooling runbook', document_type: 'runbook' as const, authority: 'official' as const, owner: 'Operations', source_reference: `DOC-${number}`, media_type: 'application/pdf', content_hash: `hash-${number}`, extraction_state: 'ready' as const, lifecycle_state: lifecycleState, service_tags: serviceTags, indexed_chunk_locations: [] as KnowledgeChunkLocation[] })
 const documentWith = (...versions: ReturnType<typeof version>[]) => ({ id: documentId, title: 'Cooling runbook', document_type: 'runbook' as const, authority: 'official' as const, service_tags: versions.flatMap((item) => item.service_tags), active_version: versions.find((item) => item.lifecycle_state === 'approved')?.version ?? null, versions })
 const response = (body: unknown, status = 200) => new Response(JSON.stringify(body), { status, headers: { 'Content-Type': 'application/json' } })
 
@@ -93,5 +94,19 @@ describe('KnowledgePage', () => {
     await user.click(screen.getByRole('button', { name: 'Deprecate version' }))
     expect((await screen.findByRole('alert')).textContent).toContain('The lifecycle action could not be completed. Try again.')
     expect(fetchMock).toHaveBeenCalledWith(`/api/v1/knowledge/documents/${documentId}/versions/2/deprecate`, { method: 'POST', signal: undefined })
+  })
+})
+
+describe('DocumentDetail', () => {
+  it('shows indexed Markdown heading and PDF page-local locations outside citation mode', () => {
+    const document: KnowledgeDocument = documentWith(
+      { ...version(1, 'deprecated', []), media_type: 'text/markdown', indexed_chunk_locations: [{ ordinal: 3, page_number: null, page_ordinal: null, heading_path: ['Operations', 'Cooling'] }] },
+      { ...version(2, 'approved', []), indexed_chunk_locations: [{ ordinal: 5, page_number: 8, page_ordinal: 2, heading_path: null }] },
+    )
+    render(<DocumentDetail document={document} chunk={null} onAction={vi.fn()} onUploaded={vi.fn()} />)
+    expect(screen.getAllByText('Indexed passage locations:')).toHaveLength(2)
+    expect(screen.getByText('Markdown Operations > Cooling, chunk 3')).toBeTruthy()
+    expect(screen.getByText('PDF page 8, chunk 2')).toBeTruthy()
+    expect(screen.queryByText('Referenced knowledge passage')).toBeNull()
   })
 })

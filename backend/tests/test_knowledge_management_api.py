@@ -59,6 +59,14 @@ class StubRepository:
             extraction_state="ready",
             lifecycle="imported",
             service_tags=[tag],
+            chunks=[
+                SimpleNamespace(
+                    ordinal=1,
+                    page_number=None,
+                    page_ordinal=None,
+                    heading_path=["Operations", "Cooling"],
+                )
+            ],
         )
         return SimpleNamespace(id=_DOCUMENT_ID, versions=[version])
 
@@ -226,6 +234,68 @@ def test_upload_retains_exact_trailing_source_bytes_and_source_download_is_inert
     assert source.headers["content-type"] == "application/octet-stream"
     assert source.headers["x-content-type-options"] == "nosniff"
     assert source.headers["content-disposition"].startswith("attachment;")
+
+
+def test_document_detail_includes_pdf_and_markdown_index_locations(monkeypatch) -> None:
+    """Ordinary detail exposes indexed location metadata without loading passage text."""
+
+    class DetailedRepository(StubRepository):
+        """Return retained Markdown and PDF indexed locations for detail projection coverage."""
+
+        async def get_document(self, session, document_id):
+            """Add a historical PDF version alongside the Markdown detail fixture."""
+            document = await super().get_document(session, document_id)
+            document.versions.append(
+                SimpleNamespace(
+                    version=2,
+                    title="Cooling PDF",
+                    document_type="runbook",
+                    authority="internal_approved",
+                    owner="operations",
+                    source_reference=None,
+                    source_media_type="application/pdf",
+                    content_hash="b" * 64,
+                    extraction_state="ready",
+                    lifecycle="approved",
+                    service_tags=[],
+                    chunks=[
+                        SimpleNamespace(
+                            ordinal=4,
+                            page_number=3,
+                            page_ordinal=2,
+                            heading_path=None,
+                        )
+                    ],
+                )
+            )
+            return document
+
+    monkeypatch.setattr(knowledge_api, "KnowledgeRepository", DetailedRepository)
+    app.dependency_overrides[get_session] = _session
+
+    async def scenario() -> httpx.Response:
+        transport = httpx.ASGITransport(app=app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+            return await client.get(f"/api/v1/knowledge/documents/{_DOCUMENT_ID}")
+
+    try:
+        response = asyncio.run(scenario())
+    finally:
+        app.dependency_overrides.clear()
+
+    assert response.status_code == 200
+    markdown, pdf = response.json()["versions"]
+    assert markdown["indexed_chunk_locations"] == [
+        {
+            "ordinal": 1,
+            "page_number": None,
+            "page_ordinal": None,
+            "heading_path": ["Operations", "Cooling"],
+        }
+    ]
+    assert pdf["indexed_chunk_locations"] == [
+        {"ordinal": 4, "page_number": 3, "page_ordinal": 2, "heading_path": None}
+    ]
 
 
 def test_delimiter_aware_parser_retains_embedded_boundary_like_pdf_bytes() -> None:

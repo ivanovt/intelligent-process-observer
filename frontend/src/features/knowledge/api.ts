@@ -3,8 +3,10 @@ export type KnowledgeAuthority = 'official' | 'internal_approved' | 'operator_au
 
 /** Declares one service applicability tag retained with an immutable source version. */
 export interface ServiceTag { service_id: string; aliases: string[]; supported_versions: string[] }
+/** Immutable source location for one indexed passage, without its extracted passage text. */
+export interface KnowledgeChunkLocation { ordinal: number; page_number: number | null; page_ordinal: number | null; heading_path: string[] | null }
 /** Immutable metadata and lifecycle state for one retained source version. */
-export interface KnowledgeVersion { version: number; title: string; document_type: KnowledgeDocumentType; authority: KnowledgeAuthority; owner: string; source_reference: string | null; media_type: string; content_hash: string; extraction_state: 'pending' | 'ready' | 'failed'; lifecycle_state: 'imported' | 'approved' | 'deprecated'; service_tags: ServiceTag[] }
+export interface KnowledgeVersion { version: number; title: string; document_type: KnowledgeDocumentType; authority: KnowledgeAuthority; owner: string; source_reference: string | null; media_type: string; content_hash: string; extraction_state: 'pending' | 'ready' | 'failed'; lifecycle_state: 'imported' | 'approved' | 'deprecated'; service_tags: ServiceTag[]; indexed_chunk_locations: KnowledgeChunkLocation[] }
 /** A document identity plus its immutable retained source-version history. */
 export interface KnowledgeDocument { id: string; title: string; document_type: KnowledgeDocumentType; authority: KnowledgeAuthority; service_tags: ServiceTag[]; active_version: number | null; versions?: KnowledgeVersion[] }
 /** An inert exact chunk projection resolved from a version-specific locator. */
