@@ -145,8 +145,10 @@ def test_repository_serializes_optional_knowledge_scope_as_json_lists() -> None:
     aggregate = asyncio.run(ObservationRepository().create(session, definition))
 
     assert aggregate.knowledge_scope == {
-        "service_ids": ["cooling-loop", "mprm-server"],
-        "service_version": "2.x",
+        "services": [
+            {"service_id": "cooling-loop", "service_version": "2.x"},
+            {"service_id": "mprm-server", "service_version": "2.x"},
+        ],
     }
 
 
@@ -212,7 +214,9 @@ def test_capabilities_and_relative_hrefs_expose_only_safe_configuration(monkeypa
     summary = service.observation_summary(observation)
     assert summary.href == f"/api/v1/observations/{observation.id}"
     assert summary.knowledge_scope is not None
-    assert summary.knowledge_scope.service_ids == ("cooling-loop",)
+    assert tuple(service.service_id for service in summary.knowledge_scope.services) == (
+        "cooling-loop",
+    )
 
 
 @pytest.mark.parametrize(

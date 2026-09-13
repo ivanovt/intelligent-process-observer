@@ -45,7 +45,7 @@ from app.infrastructure.persistence.models import (
     ObservationRunModel,
 )
 from app.infrastructure.persistence.runtime_contracts import ObservationAnalysisIdentity
-from app.knowledge.management_contracts import KnowledgeScope
+from app.knowledge.management_contracts import KnowledgeScope, KnowledgeServiceScope
 from app.metrics.contracts import (
     MetricEvidence,
     MetricIdentity,
@@ -992,7 +992,9 @@ def test_reasoning_projector_excludes_retriever_scope_from_model_input() -> None
     snapshot = replace(
         base,
         metric_lenses=(base.metric_lenses[0],),
-        knowledge_scope=KnowledgeScope(service_ids=("mprm-server",), service_version="2.x"),
+        knowledge_scope=KnowledgeScope(
+            services=(KnowledgeServiceScope(service_id="mprm-server", service_version="2.x"),)
+        ),
     )
     run_id = uuid4()
     assignment = replace(

@@ -293,12 +293,7 @@ class ObservationRepository:
 
 def _knowledge_scope_payload(scope: KnowledgeScope | None) -> dict[str, object] | None:
     """Serialize strict scope values into JSON-compatible definition metadata."""
-    if scope is None:
-        return None
-    return {
-        "service_ids": list(scope.service_ids),
-        "service_version": scope.service_version,
-    }
+    return None if scope is None else scope.model_dump(mode="json")
 
 
 class KnowledgeRepository:

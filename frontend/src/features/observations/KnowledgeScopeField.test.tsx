@@ -21,6 +21,7 @@ describe('KnowledgeScopeField', () => {
     expect(await screen.findByText(/Suggested knowledge scope: mprm-server/)).toBeTruthy()
     await user.click(screen.getByRole('button', { name: 'Accept suggestion' }))
     expect(screen.getByLabelText('Selected knowledge services').textContent).toContain('mprm-server')
+    expect((screen.getByLabelText('Version for mprm-server (optional)') as HTMLInputElement).value).toBe('')
   })
 
   it('dismisses a suggestion without changing the local draft', async () => {
@@ -34,18 +35,40 @@ describe('KnowledgeScopeField', () => {
     expect(screen.queryByLabelText('Selected knowledge services')).toBeNull()
   })
 
-  it('does not carry a shared version to a new scope after the last service is removed', async () => {
+  it('keeps service versions independent through editing and removal', async () => {
     const user = userEvent.setup()
     render(<Field />)
     await user.type(screen.getByLabelText('Service ID'), 'first-service')
     await user.click(screen.getByRole('button', { name: 'Add service' }))
-    const version = screen.getByLabelText('Shared service version (optional)') as HTMLInputElement
-    await user.type(version, '1.0')
-    await user.click(screen.getByRole('button', { name: 'Remove first-service' }))
-    expect(version.value).toBe('')
+    await user.type(screen.getByLabelText('Version for first-service (optional)'), '1.0')
     await user.type(screen.getByLabelText('Service ID'), 'second-service')
     await user.click(screen.getByRole('button', { name: 'Add service' }))
-    expect(version.value).toBe('')
+    const first = screen.getByLabelText('Version for first-service (optional)') as HTMLInputElement
+    const second = screen.getByLabelText('Version for second-service (optional)') as HTMLInputElement
+    expect(first.value).toBe('1.0')
+    expect(second.value).toBe('')
+    await user.type(second, '3.0')
+    expect(first.value).toBe('1.0')
+    await user.click(screen.getByRole('button', { name: 'Remove second-service' }))
+    expect(first.value).toBe('1.0')
+    await user.click(screen.getByRole('button', { name: 'Remove first-service' }))
+    await user.type(screen.getByLabelText('Service ID'), 'third-service')
+    await user.click(screen.getByRole('button', { name: 'Add service' }))
+    expect((screen.getByLabelText('Version for third-service (optional)') as HTMLInputElement).value).toBe('')
+  })
+
+  it('adds suggested services without versions and preserves entered versions', async () => {
+    const user = userEvent.setup()
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(new Response(JSON.stringify({ service_ids: ['second-service'] }))))
+    render(<Field />)
+    await user.type(screen.getByLabelText('Service ID'), 'first-service')
+    await user.click(screen.getByRole('button', { name: 'Add service' }))
+    await user.type(screen.getByLabelText('Version for first-service (optional)'), '1.0')
+    await user.click(screen.getByRole('button', { name: 'Suggest knowledge scope' }))
+    expect(await screen.findByText(/Suggested knowledge scope: second-service/)).toBeTruthy()
+    await user.click(screen.getByRole('button', { name: 'Accept suggestion' }))
+    expect((screen.getByLabelText('Version for first-service (optional)') as HTMLInputElement).value).toBe('1.0')
+    expect((screen.getByLabelText('Version for second-service (optional)') as HTMLInputElement).value).toBe('')
   })
 
   it('keeps empty and failed suggestions advisory and non-blocking', async () => {

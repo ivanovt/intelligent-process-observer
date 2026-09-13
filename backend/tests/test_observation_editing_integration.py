@@ -34,7 +34,7 @@ from app.infrastructure.persistence.repository import (
     ObservationRepository,
     RuntimePersistenceRepository,
 )
-from app.knowledge.management_contracts import KnowledgeScope
+from app.knowledge.management_contracts import KnowledgeScope, KnowledgeServiceScope
 from app.main import app
 from app.observations.api import get_service, get_session
 from app.observations.contracts import ObservationCreate
@@ -161,7 +161,10 @@ def test_replace_persists_or_clears_optional_knowledge_scope(
         scoped = _replacement_definition().model_copy(
             update={
                 "knowledge_scope": KnowledgeScope(
-                    service_ids=("cooling-loop",), service_version="2.x"
+                    services=(
+                        KnowledgeServiceScope(service_id="cooling-loop", service_version="2.x"),
+                        KnowledgeServiceScope(service_id="gateway"),
+                    )
                 )
             }
         )
@@ -171,9 +174,28 @@ def test_replace_persists_or_clears_optional_knowledge_scope(
             restored = await repository.get(session, observation_id)
             assert restored is not None
             assert restored.knowledge_scope == {
-                "service_ids": ["cooling-loop"],
+                "services": [
+                    {"service_id": "cooling-loop", "service_version": "2.x"},
+                    {"service_id": "gateway", "service_version": None},
+                ],
+            }
+
+        async with session_factory.begin() as session:
+            restored = await repository.get(session, observation_id)
+            assert restored is not None
+            restored.knowledge_scope = {
+                "service_ids": ["cooling-loop", "gateway"],
                 "service_version": "2.x",
             }
+        async with session_factory.begin() as session:
+            restored = await repository.get(session, observation_id)
+            assert restored is not None
+            canonical = ObservationDefinitionService().observation_summary(restored)
+            assert canonical.knowledge_scope is not None
+            assert [item.service_version for item in canonical.knowledge_scope.services] == [
+                "2.x",
+                "2.x",
+            ]
 
         async with session_factory.begin() as session:
             replaced = await repository.replace(session, observation_id, _replacement_definition())

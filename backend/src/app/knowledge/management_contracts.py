@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from enum import StrEnum
 from math import isfinite
 
@@ -77,22 +78,68 @@ class KnowledgeServiceTag(StrictKnowledgeManagementModel):
         return self
 
 
-class KnowledgeScope(StrictKnowledgeManagementModel):
-    """Optional retriever-only service applicability for one Observation definition."""
+class KnowledgeServiceScope(StrictKnowledgeManagementModel):
+    """One canonical service and its own optional applicability version."""
 
-    service_ids: tuple[str, ...] = Field(min_length=1)
+    service_id: str = Field(min_length=1)
     service_version: str | None = None
 
     @model_validator(mode="after")
-    def validate_values(self) -> KnowledgeScope:
-        """Require unique canonical service IDs and a meaningful optional version."""
-        for service_id in self.service_ids:
-            _require_non_whitespace(service_id, "service_ids")
-        if len(self.service_ids) != len(set(self.service_ids)):
-            raise ValueError("service_ids must be unique")
+    def validate_values(self) -> KnowledgeServiceScope:
+        """Reject blank service identities and blank supplied version labels."""
+        _require_non_whitespace(self.service_id, "service_id")
         if self.service_version is not None:
             _require_non_whitespace(self.service_version, "service_version")
         return self
+
+
+class KnowledgeScope(StrictKnowledgeManagementModel):
+    """Ordered retriever-only service entries for one Observation definition."""
+
+    services: tuple[KnowledgeServiceScope, ...] = Field(min_length=1)
+
+    @model_validator(mode="after")
+    def validate_values(self) -> KnowledgeScope:
+        """Require each canonical service identity at most once."""
+        service_ids = tuple(service.service_id for service in self.services)
+        if len(service_ids) != len(set(service_ids)):
+            raise ValueError("service IDs must be unique")
+        return self
+
+
+def parse_knowledge_scope(value: object) -> KnowledgeScope:
+    """Normalize canonical or legacy scope data into strict per-service entries."""
+    if isinstance(value, KnowledgeScope):
+        return value
+    if not isinstance(value, Mapping):
+        raise ValueError("knowledge scope must be an object")
+    fields = dict(value)
+    if "services" in fields:
+        if "service_ids" in fields or "service_version" in fields:
+            raise ValueError("knowledge scope cannot mix legacy and per-service fields")
+        services = fields["services"]
+        if isinstance(services, (str, bytes)) or not isinstance(services, (list, tuple)):
+            raise ValueError("knowledge scope services must be a collection")
+        fields["services"] = tuple(services)
+        return KnowledgeScope.model_validate(fields)
+    if set(fields) - {"service_ids", "service_version"} or "service_ids" not in fields:
+        raise ValueError("knowledge scope has unknown or missing fields")
+    service_ids = fields["service_ids"]
+    if isinstance(service_ids, (str, bytes)) or not isinstance(service_ids, (list, tuple)):
+        raise ValueError("legacy service IDs must be a collection")
+    if any(not isinstance(service_id, str) for service_id in service_ids):
+        raise ValueError("legacy service IDs must be text")
+    service_version = fields.get("service_version")
+    if service_version is not None and not isinstance(service_version, str):
+        raise ValueError("legacy service version must be text")
+    return KnowledgeScope.model_validate(
+        {
+            "services": tuple(
+                {"service_id": service_id, "service_version": service_version}
+                for service_id in service_ids
+            )
+        }
+    )
 
 
 class KnowledgeDocumentVersionCreate(StrictKnowledgeManagementModel):

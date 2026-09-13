@@ -52,6 +52,7 @@ from app.knowledge.management_contracts import (
     KnowledgeDocumentType,
     KnowledgeDocumentVersionCreate,
     KnowledgeScope,
+    KnowledgeServiceScope,
     KnowledgeServiceTag,
 )
 from app.knowledge.publication import KnowledgePublicationService
@@ -282,7 +283,7 @@ def _candidate(source: bytes, title: str) -> KnowledgeDocumentVersionCreate:
         source_media_type="text/markdown",
         source_bytes=source,
         content_hash=sha256(source).hexdigest(),
-        service_tags=(KnowledgeServiceTag(service_id="cooling-loop"),),
+        service_tags=(KnowledgeServiceTag(service_id="cooling-loop", supported_versions=("2.x",)),),
     )
 
 
@@ -341,8 +342,18 @@ def test_scoped_run_retrieval_persists_cited_hypothesis_and_freezes_scope(
                 _candidate(source, "Cooling runbook")
             )
             await publication.approve(document_id, version)
-            original_scope = KnowledgeScope(service_ids=("cooling-loop",), service_version="2.x")
-            replacement_scope = KnowledgeScope(service_ids=("other-service",))
+            original_scope = KnowledgeScope(
+                services=(
+                    KnowledgeServiceScope(service_id="cooling-loop", service_version="2.x"),
+                    KnowledgeServiceScope(service_id="gateway"),
+                )
+            )
+            replacement_scope = KnowledgeScope(
+                services=(
+                    KnowledgeServiceScope(service_id="cooling-loop", service_version="9.x"),
+                    KnowledgeServiceScope(service_id="gateway", service_version="4.x"),
+                )
+            )
             async with session_factory.begin() as session:
                 definition = await observation_repository.create(
                     session, _definition(original_scope)
@@ -434,8 +445,10 @@ def test_scoped_run_retrieval_persists_cited_hypothesis_and_freezes_scope(
                 replaced = await observation_repository.get(session, observation_id)
                 assert replaced is not None
                 assert replaced.knowledge_scope == {
-                    "service_ids": ["other-service"],
-                    "service_version": None,
+                    "services": [
+                        {"service_id": "cooling-loop", "service_version": "9.x"},
+                        {"service_id": "gateway", "service_version": "4.x"},
+                    ],
                 }
             unrelated = await BoundedRetrievalExecutor(
                 frozenset(("finding-1",)),
@@ -484,7 +497,7 @@ def test_database_search_failure_and_post_embedding_timeout_stay_typed(
 
     async def scenario() -> None:
         embeddings = StubEmbeddingAdapter()
-        scope = KnowledgeScope(service_ids=("cooling-loop",))
+        scope = KnowledgeScope(services=(KnowledgeServiceScope(service_id="cooling-loop"),))
         failed = await BoundedRetrievalExecutor(
             frozenset(("finding-1",)),
             CuratedKnowledgeRetriever(  # type: ignore[arg-type]

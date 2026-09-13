@@ -57,10 +57,16 @@ def test_projection_freezes_json_scope_as_retriever_only_metadata() -> None:
 
     assert not isinstance(snapshot, RejectedObservationExecutionOutcome)
     assert snapshot.knowledge_scope is not None
-    assert snapshot.knowledge_scope.service_ids == ("mprm-server", "cooling-loop")
-    assert snapshot.knowledge_scope.service_version == "2.x"
+    assert tuple(service.service_id for service in snapshot.knowledge_scope.services) == (
+        "mprm-server",
+        "cooling-loop",
+    )
+    assert all(service.service_version == "2.x" for service in snapshot.knowledge_scope.services)
     definition.knowledge_scope["service_ids"].append("later-definition-change")
-    assert snapshot.knowledge_scope.service_ids == ("mprm-server", "cooling-loop")
+    assert tuple(service.service_id for service in snapshot.knowledge_scope.services) == (
+        "mprm-server",
+        "cooling-loop",
+    )
 
 
 @pytest.mark.parametrize(

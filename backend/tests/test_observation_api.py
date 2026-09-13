@@ -72,12 +72,18 @@ class StubObservationService:
 
     async def create(self, _session, definition):
         self.created_definition = definition
+        self.definition = self.definition.model_copy(
+            update={"knowledge_scope": definition.knowledge_scope}
+        )
         return self.definition
 
     async def replace(self, _session, observation_id, definition):
         if observation_id != self.observation_id:
             raise ApiError(404, "observation_not_found", "Observation definition was not found")
         self.replaced_definition = definition
+        self.definition = self.definition.model_copy(
+            update={"knowledge_scope": definition.knowledge_scope}
+        )
         return self.definition
 
     async def get_lens(self, _session, observation_id, lens_id):
@@ -178,8 +184,10 @@ def test_create_and_follow_lens_link() -> None:
         ],
         "relationships": [],
         "knowledge_scope": {
-            "service_ids": ["cooling-loop"],
-            "service_version": "2.x",
+            "services": [
+                {"service_id": "cooling-loop", "service_version": "2.x"},
+                {"service_id": "gateway", "service_version": None},
+            ],
         },
     }
     try:
@@ -193,8 +201,16 @@ def test_create_and_follow_lens_link() -> None:
     assert service.created_definition is not None
     assert service.created_definition.knowledge_scope is not None
     assert service.created_definition.knowledge_scope.model_dump() == {
-        "service_ids": ("cooling-loop",),
-        "service_version": "2.x",
+        "services": (
+            {"service_id": "cooling-loop", "service_version": "2.x"},
+            {"service_id": "gateway", "service_version": None},
+        ),
+    }
+    assert created.json()["knowledge_scope"] == {
+        "services": [
+            {"service_id": "cooling-loop", "service_version": "2.x"},
+            {"service_id": "gateway", "service_version": None},
+        ]
     }
     assert detail.status_code == 200
     assert lens.status_code == 200
@@ -243,7 +259,12 @@ def test_replace_preserves_identity_and_rejects_response_only_fields() -> None:
     assert replaced.json()["href"] == f"/api/v1/observations/{service.observation_id}"
     assert service.replaced_definition is not None
     assert service.replaced_definition.knowledge_scope is not None
-    assert service.replaced_definition.knowledge_scope.service_ids == ("cooling-loop",)
+    assert tuple(
+        item.service_id for item in service.replaced_definition.knowledge_scope.services
+    ) == ("cooling-loop",)
+    assert replaced.json()["knowledge_scope"] == {
+        "services": [{"service_id": "cooling-loop", "service_version": None}]
+    }
     assert rejected.status_code == 422
     assert rejected.json()["code"] == "validation_error"
     assert missing.status_code == 404
@@ -251,6 +272,46 @@ def test_replace_preserves_identity_and_rejects_response_only_fields() -> None:
         "code": "observation_not_found",
         "message": "Observation definition was not found",
     }
+
+
+@pytest.mark.parametrize(
+    "scope",
+    [
+        {"services": []},
+        {"services": [{"service_id": "mprm-server"}, {"service_id": "mprm-server"}]},
+        {"services": [{"service_id": "mprm-server", "service_version": " "}]},
+        {"services": [{"service_id": "mprm-server"}], "service_ids": ["mprm-server"]},
+    ],
+)
+def test_invalid_per_service_scope_rejects_replacement_before_persistence(scope: object) -> None:
+    """Invalid or mixed scope data cannot reach aggregate replacement."""
+    service = StubObservationService()
+    app.dependency_overrides[get_service] = service_override(service)
+    app.dependency_overrides[get_session] = no_database_session
+    payload = {
+        "name": "Cooling health",
+        "objective": "Observe alerts",
+        "alert_lenses": [
+            {
+                "id": "cooling-alerts",
+                "name": "Cooling alerts",
+                "type": "alert",
+                "source": "jira_track_and_release",
+                "selector": {"query": "project = COOL"},
+            }
+        ],
+        "knowledge_scope": scope,
+    }
+    try:
+        response = request(
+            "PUT", "/api/v1/observations/" + str(service.observation_id), json=payload
+        )
+    finally:
+        app.dependency_overrides.clear()
+
+    assert response.status_code == 422
+    assert service.replaced_definition is None
+    assert service.definition.knowledge_scope is None
 
 
 def test_alert_only_create_and_follow_alert_link_ignores_unknown_input() -> None:

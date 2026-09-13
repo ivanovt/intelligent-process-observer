@@ -280,19 +280,23 @@ def _eligible_chunks(scope: KnowledgeScope | None) -> Select[tuple[object, ...]]
     global_document = ~tag_exists
     eligibility = global_document
     if scope is not None:
+        matching_services = []
+        version_labels = cast(tag.supported_versions, JSONB)
+        for service in scope.services:
+            matching_service = tag.service_id == service.service_id
+            if service.service_version is not None:
+                matching_service = and_(
+                    matching_service,
+                    or_(
+                        func.jsonb_array_length(version_labels) == 0,
+                        version_labels.contains([service.service_version]),
+                    ),
+                )
+            matching_services.append(matching_service)
         matching_tag = and_(
             tag.document_version_id == version.id,
-            tag.service_id.in_(scope.service_ids),
+            or_(*matching_services),
         )
-        if scope.service_version is not None:
-            version_labels = cast(tag.supported_versions, JSONB)
-            matching_tag = and_(
-                matching_tag,
-                or_(
-                    func.jsonb_array_length(version_labels) == 0,
-                    version_labels.contains([scope.service_version]),
-                ),
-            )
         eligibility = or_(global_document, exists(select(tag.id).where(matching_tag)))
     return (
         select(

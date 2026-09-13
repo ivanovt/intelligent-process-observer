@@ -7,7 +7,7 @@ from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
-from app.knowledge.management_contracts import KnowledgeScope
+from app.knowledge.management_contracts import KnowledgeScope, parse_knowledge_scope
 
 IDENTIFIER_PATTERN = r"^[a-z][a-z0-9_-]*$"
 OFFSET_PATTERN = r"^[1-9][0-9]*(m|h|d|w)$"
@@ -167,13 +167,8 @@ class ObservationCreate(ApiModel):
     @field_validator("knowledge_scope", mode="before")
     @classmethod
     def normalize_knowledge_scope(cls, value: object) -> object:
-        """Convert JSON arrays before applying the strict reusable scope contract."""
-        if not isinstance(value, dict):
-            return value
-        normalized = dict(value)
-        if isinstance(normalized.get("service_ids"), list):
-            normalized["service_ids"] = tuple(normalized["service_ids"])
-        return normalized
+        """Normalize canonical or legacy JSON before strict scope validation."""
+        return None if value is None else parse_knowledge_scope(value)
 
     @model_validator(mode="after")
     def validate_topology(self) -> ObservationCreate:

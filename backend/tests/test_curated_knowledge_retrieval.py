@@ -27,7 +27,7 @@ from app.knowledge.contracts import (
     RetrievedKnowledgeItem,
 )
 from app.knowledge.executor import BoundedRetrievalExecutor
-from app.knowledge.management_contracts import KnowledgeScope
+from app.knowledge.management_contracts import KnowledgeScope, KnowledgeServiceScope
 
 _DOCUMENT_ID = UUID("12345678-1234-5678-1234-567812345678")
 
@@ -143,13 +143,15 @@ def test_eligibility_sql_filters_approval_and_global_or_matching_versioned_servi
     global_sql = str(_eligible_chunks(None).compile(dialect=postgresql.dialect()))
     scoped_sql = str(
         _eligible_chunks(
-            KnowledgeScope(service_ids=("cooling-loop",), service_version="2.x")
+            KnowledgeScope(
+                services=(KnowledgeServiceScope(service_id="cooling-loop", service_version="2.x"),)
+            )
         ).compile(dialect=postgresql.dialect())
     )
 
     assert "knowledge_document_versions.lifecycle" in global_sql
     assert "NOT (EXISTS" in global_sql
-    assert "knowledge_document_service_tags.service_id IN" in scoped_sql
+    assert "knowledge_document_service_tags.service_id =" in scoped_sql
     assert "jsonb_array_length" in scoped_sql
     assert " @> " in scoped_sql
 

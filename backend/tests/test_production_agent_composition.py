@@ -31,7 +31,7 @@ from app.infrastructure.openrouter.composition import (
 )
 from app.knowledge.contracts import KnowledgeRetrievalRequest
 from app.knowledge.empty import EmptyKnowledgeRetriever
-from app.knowledge.management_contracts import KnowledgeScope
+from app.knowledge.management_contracts import KnowledgeScope, KnowledgeServiceScope
 from app.metrics.contracts import MetricAgentOperationalFailure
 
 
@@ -175,7 +175,9 @@ def test_composition_creates_an_isolated_curated_retriever_for_each_run_scope() 
         settings=Settings(openrouter_api_key="composition-test-secret", agent_trace_enabled=False),
         session_factory=async_sessionmaker(),
     )
-    scope = KnowledgeScope(service_ids=("mprm-server",), service_version="2.x")
+    scope = KnowledgeScope(
+        services=(KnowledgeServiceScope(service_id="mprm-server", service_version="2.x"),)
+    )
 
     first = composition.knowledge_retriever_factory(scope)
     second = composition.knowledge_retriever_factory(None)
@@ -195,7 +197,9 @@ def test_missing_embedding_configuration_uses_empty_retriever_factory() -> None:
     )
 
     assert isinstance(
-        composition.knowledge_retriever_factory(KnowledgeScope(service_ids=("mprm-server",))),
+        composition.knowledge_retriever_factory(
+            KnowledgeScope(services=(KnowledgeServiceScope(service_id="mprm-server"),))
+        ),
         EmptyKnowledgeRetriever,
     )
 

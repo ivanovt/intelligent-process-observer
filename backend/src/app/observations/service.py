@@ -26,7 +26,7 @@ from app.infrastructure.prometheus.contracts import (
     PrometheusRangeQueryResult,
     PrometheusSourceProfile,
 )
-from app.knowledge.management_contracts import KnowledgeScope
+from app.knowledge.management_contracts import KnowledgeScope, parse_knowledge_scope
 from app.observations.contracts import (
     AlertLensReference,
     AlertLensResponse,
@@ -398,16 +398,4 @@ class ObservationDefinitionService:
 
 def _knowledge_scope_from_model(value: object) -> KnowledgeScope | None:
     """Restore persisted scope metadata through its strict public contract."""
-    if value is None:
-        return None
-    if not isinstance(value, dict):
-        raise ValueError("persisted knowledge scope must be an object")
-    service_ids = value.get("service_ids")
-    if not isinstance(service_ids, list) or any(not isinstance(item, str) for item in service_ids):
-        raise ValueError("persisted knowledge scope service IDs must be strings")
-    service_version = value.get("service_version")
-    if service_version is not None and not isinstance(service_version, str):
-        raise ValueError("persisted knowledge scope version must be text")
-    return KnowledgeScope.model_validate(
-        {"service_ids": tuple(service_ids), "service_version": service_version}
-    )
+    return None if value is None else parse_knowledge_scope(value)

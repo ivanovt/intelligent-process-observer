@@ -15,7 +15,7 @@ from app.infrastructure.persistence.runtime_contracts import (
     LensRunStatus,
     LensType,
 )
-from app.knowledge.management_contracts import KnowledgeScope
+from app.knowledge.management_contracts import KnowledgeScope, parse_knowledge_scope
 
 type PreparationRejectionCode = Literal[
     "invalid_execution_request",
@@ -522,28 +522,7 @@ def _project_definition(
 
 def _knowledge_scope_snapshot(value: object) -> KnowledgeScope | None:
     """Freeze persisted JSON scope as strict retriever-only runtime metadata."""
-    if value is None:
-        return None
-    if not isinstance(value, Mapping):
-        raise ValueError("knowledge scope must be a mapping")
-    service_ids = value.get("service_ids")
-    if isinstance(service_ids, (str, bytes)):
-        raise ValueError("knowledge scope service IDs must be a collection")
-    try:
-        normalized_service_ids = tuple(service_ids)
-    except TypeError as error:
-        raise ValueError("knowledge scope service IDs must be a collection") from error
-    if any(not isinstance(service_id, str) for service_id in normalized_service_ids):
-        raise ValueError("knowledge scope service IDs must be text")
-    service_version = value.get("service_version")
-    if service_version is not None and not isinstance(service_version, str):
-        raise ValueError("knowledge scope version must be text")
-    return KnowledgeScope.model_validate(
-        {
-            "service_ids": normalized_service_ids,
-            "service_version": service_version,
-        }
-    )
+    return None if value is None else parse_knowledge_scope(value)
 
 
 def _reject_unsupported_collections(definition: object) -> None:

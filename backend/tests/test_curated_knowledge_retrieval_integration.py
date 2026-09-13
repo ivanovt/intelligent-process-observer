@@ -28,7 +28,11 @@ from app.infrastructure.persistence.models import (
     KnowledgeDocumentServiceTagModel,
     KnowledgeDocumentVersionModel,
 )
-from app.knowledge.management_contracts import KnowledgeScope
+from app.knowledge.management_contracts import (
+    KnowledgeScope,
+    KnowledgeServiceScope,
+    parse_knowledge_scope,
+)
 
 _BACKEND_ROOT = Path(__file__).resolve().parents[1]
 _EMBEDDING = [1.0, *([0.0] * 1_535)]
@@ -183,7 +187,7 @@ def test_postgresql_retrieval_eligibility_admits_only_approved_global_or_matchin
                         _chunk(deprecated, 1, "deprecated-token"),
                         _tag(versioned, "mprm-server", ["2.x"]),
                         _tag(unversioned, "mprm-server"),
-                        _tag(other, "another-service"),
+                        _tag(other, "another-service", ["4.x"]),
                         _tag(imported, "mprm-server"),
                         _tag(deprecated, "mprm-server"),
                     )
@@ -192,22 +196,64 @@ def test_postgresql_retrieval_eligibility_admits_only_approved_global_or_matchin
 
                 assert await _eligible_texts(session, None) == {"global-token"}
                 assert await _eligible_texts(
-                    session, KnowledgeScope(service_ids=("mprm-server",))
+                    session,
+                    KnowledgeScope(services=(KnowledgeServiceScope(service_id="mprm-server"),)),
                 ) == {
                     "global-token",
                     "unversioned-service-token",
                     "versioned-service-token",
                 }
                 assert await _eligible_texts(
-                    session, KnowledgeScope(service_ids=("mprm-server",), service_version="2.x")
+                    session,
+                    KnowledgeScope(
+                        services=(
+                            KnowledgeServiceScope(service_id="mprm-server", service_version="2.x"),
+                        )
+                    ),
                 ) == {
                     "global-token",
                     "unversioned-service-token",
                     "versioned-service-token",
                 }
                 assert await _eligible_texts(
-                    session, KnowledgeScope(service_ids=("mprm-server",), service_version="3.x")
+                    session,
+                    KnowledgeScope(
+                        services=(
+                            KnowledgeServiceScope(service_id="mprm-server", service_version="3.x"),
+                        )
+                    ),
                 ) == {"global-token", "unversioned-service-token"}
+
+                mixed_scope = KnowledgeScope(
+                    services=(
+                        KnowledgeServiceScope(service_id="mprm-server", service_version="3.x"),
+                        KnowledgeServiceScope(service_id="another-service"),
+                    )
+                )
+                assert await _eligible_texts(session, mixed_scope) == {
+                    "global-token",
+                    "unversioned-service-token",
+                    "other-service-token",
+                }
+                assert await _eligible_texts(
+                    session,
+                    KnowledgeScope(
+                        services=(
+                            KnowledgeServiceScope(service_id="mprm-server", service_version="2.x"),
+                            KnowledgeServiceScope(
+                                service_id="another-service", service_version="5.x"
+                            ),
+                        )
+                    ),
+                ) == {"global-token", "unversioned-service-token", "versioned-service-token"}
+                legacy_scope = parse_knowledge_scope(
+                    {"service_ids": ["mprm-server", "another-service"], "service_version": "2.x"}
+                )
+                assert await _eligible_texts(session, legacy_scope) == {
+                    "global-token",
+                    "unversioned-service-token",
+                    "versioned-service-token",
+                }
 
                 retriever = CuratedKnowledgeRetriever(
                     session_factory,

@@ -12,7 +12,9 @@ from app.knowledge.management_contracts import (
     KnowledgeDocumentType,
     KnowledgeDocumentVersionCreate,
     KnowledgeScope,
+    KnowledgeServiceScope,
     KnowledgeServiceTag,
+    parse_knowledge_scope,
 )
 
 _EMBEDDING = (0.0,) * KNOWLEDGE_EMBEDDING_DIMENSIONS
@@ -42,21 +44,38 @@ def valid_version(**overrides: object) -> KnowledgeDocumentVersionCreate:
 
 def test_scope_is_strict_immutable_and_validates_service_ids() -> None:
     """Knowledge scope must remain explicit, typed, and retriever-only."""
-    scope = KnowledgeScope(service_ids=("mprm-server",), service_version="2.x")
+    scope = KnowledgeScope(
+        services=(KnowledgeServiceScope(service_id="mprm-server", service_version="2.x"),)
+    )
     assert scope.model_dump() == {
-        "service_ids": ("mprm-server",),
-        "service_version": "2.x",
+        "services": ({"service_id": "mprm-server", "service_version": "2.x"},),
     }
     with pytest.raises(ValidationError):
-        KnowledgeScope(service_ids=())
-    with pytest.raises(ValidationError, match="service_ids must be unique"):
-        KnowledgeScope(service_ids=("mprm-server", "mprm-server"))
+        KnowledgeScope(services=())
+    with pytest.raises(ValidationError, match="service IDs must be unique"):
+        KnowledgeScope(services=(KnowledgeServiceScope(service_id="mprm-server"),) * 2)
     with pytest.raises(ValidationError, match="non-whitespace"):
-        KnowledgeScope(service_ids=("mprm-server",), service_version=" ")
+        KnowledgeServiceScope(service_id="mprm-server", service_version=" ")
     with pytest.raises(ValidationError):
-        KnowledgeScope(service_ids=("mprm-server",), unknown="forbidden")
+        KnowledgeScope(services=(KnowledgeServiceScope(service_id="mprm-server"),), unknown="x")
     with pytest.raises(ValidationError):
-        scope.service_ids = ("other-service",)  # type: ignore[misc]
+        scope.services = (KnowledgeServiceScope(service_id="other-service"),)  # type: ignore[misc]
+
+
+def test_scope_normalizes_legacy_shared_versions_without_guessing() -> None:
+    """Every legacy service retains the old shared filter when read canonically."""
+    scope = parse_knowledge_scope(
+        {"service_ids": ["mprm-server", "gateway"], "service_version": "1.0"}
+    )
+    assert scope.model_dump(mode="json") == {
+        "services": [
+            {"service_id": "mprm-server", "service_version": "1.0"},
+            {"service_id": "gateway", "service_version": "1.0"},
+        ]
+    }
+    assert parse_knowledge_scope({"service_ids": ["gateway"]}).services[0].service_version is None
+    with pytest.raises(ValueError, match="mix"):
+        parse_knowledge_scope({"services": [], "service_ids": ["gateway"]})
 
 
 def test_document_version_rejects_invalid_metadata_and_duplicate_service_tags() -> None:

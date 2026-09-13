@@ -6,8 +6,10 @@ export interface MetricLens extends LensReference { description:string|null; met
 export interface AlertLens extends AlertLensReference { description:string|null; source:'jira_track_and_release'; selector:{query:string}; analysis_objectives:string[]; reference_periods:string[]; observation_href:string }
 export interface Relationship extends RelationshipReference { description:string|null; participants:string[]; conditions:Record<string,SemanticDescriptor>; expected:Record<string,SemanticDescriptor>; observation_href:string }
 export interface ObservationResponse extends Omit<ObservationSummary,'lenses'|'alert_lenses'|'relationships'> { lenses:MetricLens[]; alert_lenses:AlertLens[]; relationships:Relationship[]; knowledge_scope?:KnowledgeScope|null }
+/** One service's independently optional knowledge-applicability version. */
+export interface KnowledgeServiceScope { service_id:string; service_version:string|null }
 /** Optional retrieval-only service scope attached to an Observation aggregate. */
-export interface KnowledgeScope { service_ids:string[]; service_version:string|null }
+export interface KnowledgeScope { services:KnowledgeServiceScope[] }
 /** Public aggregate-create shape, deliberately separate from client draft state. */
 export interface AlertLensCreate { id:string; name:string; description:string|null; type:'alert'; source:'jira_track_and_release'; selector:{query:string}; analysis_objectives:string[]; reference_periods:string[] }
 /** Public Metric Lens create shape. */
