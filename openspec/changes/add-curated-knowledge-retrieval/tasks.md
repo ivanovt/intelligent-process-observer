@@ -31,5 +31,5 @@
 
 ## 6. Integrated verification
 
-- [ ] 6.1 Add end-to-end coverage for upload → approve → scoped run retrieval → persisted cited hypothesis → exact historical chunk/source inspection after a newer version is approved, and for unavailable/empty/failure retrieval outcomes; verify no recommendation, causal finding, or sensitive content reaches public contracts.
-- [ ] 6.2 Run `make check` and `openspec validate add-curated-knowledge-retrieval --strict`; resolve all failures before requesting implementation review.
+- [x] 6.1 Add end-to-end coverage for upload → approve → scoped run retrieval → persisted cited hypothesis → exact historical chunk/source inspection after a newer version is approved, and for unavailable/empty/failure retrieval outcomes; verify no recommendation, causal finding, or sensitive content reaches public contracts.
+- [x] 6.2 Run `make check` and `openspec validate add-curated-knowledge-retrieval --strict`; resolve all failures before requesting implementation review.
