@@ -16,10 +16,11 @@ from sqlalchemy import delete
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
 import app.infrastructure.knowledge.retrieval as retrieval_module
-from app.core.settings import get_settings
+from app.core.settings import Settings, get_settings
 from app.execution import AnalysisWindow, ExecutionPolicy, ObservationExecutionRequest
 from app.execution.contracts import CollectedLensArtifact, CollectedLensOutcome
 from app.execution.orchestrator import ObservationExecutionOrchestrator
+from app.infrastructure.execution.composition import build_production_execution_composition
 from app.infrastructure.knowledge.retrieval import (
     CuratedKnowledgeReferenceResolver,
     CuratedKnowledgeRetriever,
@@ -80,6 +81,7 @@ from app.reporting.contracts import ObservationReport, ReportSuccess
 
 _BACKEND_ROOT = Path(__file__).resolve().parents[1]
 _EMBEDDING = (1.0, *([0.0] * 1_535))
+_UNRELATED_EMBEDDING = (0.0, 1.0, *([0.0] * 1_534))
 
 
 @pytest.fixture(scope="module")
@@ -114,6 +116,8 @@ def session_factory(postgres_url: str) -> Generator[async_sessionmaker[AsyncSess
 class StubEmbeddingAdapter:
     """Return deterministic valid embeddings without an external provider call."""
 
+    secret = "provider-secret-must-not-escape"
+
     def __init__(self) -> None:
         self.query_calls: list[str] = []
 
@@ -124,7 +128,7 @@ class StubEmbeddingAdapter:
     async def embed_query(self, text: str) -> tuple[float, ...]:
         """Record and embed the bounded finding-grounded query."""
         self.query_calls.append(text)
-        return _EMBEDDING
+        return _UNRELATED_EMBEDDING if text == "unrelated vocabulary" else _EMBEDDING
 
 
 class MetricFixtureAdapter:
@@ -412,12 +416,47 @@ def test_scoped_run_retrieval_persists_cited_hypothesis_and_freezes_scope(
                 assert historical is not None
                 assert historical.version == version
                 assert historical.text == source.decode().split("\n", 1)[1]
+                retained = await knowledge_repository.get_version(session, document_id, version)
+                assert retained is not None
+                assert retained.source_bytes == source
+                assert retained.lifecycle == "deprecated"
+                public_payload = str(run.observation_analysis_result.payload).lower()
+                for forbidden in (
+                    "knowledge_scope",
+                    "recommendation",
+                    "causal",
+                    "source_bytes",
+                    embeddings.secret,
+                    "provider-secret",
+                    "database detail",
+                ):
+                    assert forbidden not in public_payload
                 replaced = await observation_repository.get(session, observation_id)
                 assert replaced is not None
                 assert replaced.knowledge_scope == {
                     "service_ids": ["other-service"],
                     "service_version": None,
                 }
+            unrelated = await BoundedRetrievalExecutor(
+                frozenset(("finding-1",)),
+                CuratedKnowledgeRetriever(session_factory, embeddings, scope=original_scope),
+            ).execute(
+                KnowledgeRetrievalRequest(query="unrelated vocabulary", finding_ids=("finding-1",))
+            )
+            unavailable_composition = build_production_execution_composition(
+                settings=Settings(openrouter_api_key=None, agent_trace_enabled=False),
+                session_factory=session_factory,
+            )
+            unavailable = await BoundedRetrievalExecutor(
+                frozenset(("finding-1",)),
+                unavailable_composition.knowledge_retriever_factory(original_scope),
+            ).execute(
+                KnowledgeRetrievalRequest(
+                    query="cooling pressure guidance", finding_ids=("finding-1",)
+                )
+            )
+            assert isinstance(unrelated, RetrievalSuccess) and unrelated.items == ()
+            assert isinstance(unavailable, RetrievalSuccess) and unavailable.items == ()
         finally:
             async with session_factory.begin() as session:
                 if run_id is not None:
