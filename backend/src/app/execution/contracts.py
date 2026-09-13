@@ -15,6 +15,7 @@ from app.infrastructure.persistence.runtime_contracts import (
     LensRunStatus,
     LensType,
 )
+from app.knowledge.management_contracts import KnowledgeScope, parse_knowledge_scope
 
 type PreparationRejectionCode = Literal[
     "invalid_execution_request",
@@ -163,6 +164,7 @@ class ObservationExecutionSnapshot:
     metric_lenses: tuple[MetricLensSnapshot, ...]
     alert_lenses: tuple[AlertLensSnapshot, ...]
     relationships: tuple[RelationshipSnapshot, ...]
+    knowledge_scope: KnowledgeScope | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -514,7 +516,13 @@ def _project_definition(
         metric_lenses=metrics,
         alert_lenses=alerts,
         relationships=relationships,
+        knowledge_scope=_knowledge_scope_snapshot(getattr(definition, "knowledge_scope", None)),
     )
+
+
+def _knowledge_scope_snapshot(value: object) -> KnowledgeScope | None:
+    """Freeze persisted JSON scope as strict retriever-only runtime metadata."""
+    return None if value is None else parse_knowledge_scope(value)
 
 
 def _reject_unsupported_collections(definition: object) -> None:

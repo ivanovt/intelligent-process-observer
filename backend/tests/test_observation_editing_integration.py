@@ -34,6 +34,7 @@ from app.infrastructure.persistence.repository import (
     ObservationRepository,
     RuntimePersistenceRepository,
 )
+from app.knowledge.management_contracts import KnowledgeScope, KnowledgeServiceScope
 from app.main import app
 from app.observations.api import get_service, get_session
 from app.observations.contracts import ObservationCreate
@@ -137,6 +138,79 @@ def test_replace_reconciles_owned_collections_and_preserves_retained_row_ids(
                     )
                 )
                 assert orphan is None
+
+    asyncio.run(scenario())
+
+
+def test_replace_persists_or_clears_optional_knowledge_scope(
+    session_factory: async_sessionmaker[AsyncSession],
+) -> None:
+    """Replacement changes retriever-only metadata without changing owned Lens semantics."""
+
+    async def scenario() -> None:
+        repository = ObservationRepository()
+        observation_id = await _create_definition(session_factory, repository)
+        async with session_factory() as session:
+            sql_null_id = await session.scalar(
+                select(ObservationModel.id).where(
+                    ObservationModel.id == observation_id,
+                    ObservationModel.knowledge_scope.is_(None),
+                )
+            )
+            assert sql_null_id == observation_id
+        scoped = _replacement_definition().model_copy(
+            update={
+                "knowledge_scope": KnowledgeScope(
+                    services=(
+                        KnowledgeServiceScope(service_id="cooling-loop", service_version="2.x"),
+                        KnowledgeServiceScope(service_id="gateway"),
+                    )
+                )
+            }
+        )
+        async with session_factory.begin() as session:
+            assert await repository.replace(session, observation_id, scoped) is not None
+        async with session_factory.begin() as session:
+            restored = await repository.get(session, observation_id)
+            assert restored is not None
+            assert restored.knowledge_scope == {
+                "services": [
+                    {"service_id": "cooling-loop", "service_version": "2.x"},
+                    {"service_id": "gateway", "service_version": None},
+                ],
+            }
+
+        async with session_factory.begin() as session:
+            restored = await repository.get(session, observation_id)
+            assert restored is not None
+            restored.knowledge_scope = {
+                "service_ids": ["cooling-loop", "gateway"],
+                "service_version": "2.x",
+            }
+        async with session_factory.begin() as session:
+            restored = await repository.get(session, observation_id)
+            assert restored is not None
+            canonical = ObservationDefinitionService().observation_summary(restored)
+            assert canonical.knowledge_scope is not None
+            assert [item.service_version for item in canonical.knowledge_scope.services] == [
+                "2.x",
+                "2.x",
+            ]
+
+        async with session_factory.begin() as session:
+            replaced = await repository.replace(session, observation_id, _replacement_definition())
+            assert replaced is not None
+        async with session_factory.begin() as session:
+            restored = await repository.get(session, observation_id)
+            assert restored is not None
+            assert restored.knowledge_scope is None
+            sql_null_id = await session.scalar(
+                select(ObservationModel.id).where(
+                    ObservationModel.id == observation_id,
+                    ObservationModel.knowledge_scope.is_(None),
+                )
+            )
+            assert sql_null_id == observation_id
 
     asyncio.run(scenario())
 

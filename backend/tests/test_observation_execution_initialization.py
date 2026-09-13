@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import asyncio
 from contextlib import AbstractAsyncContextManager
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, datetime, timedelta, timezone
 from typing import Never
 from uuid import UUID, uuid4
 
@@ -17,6 +17,7 @@ from app.execution import (
     initialize_observation_execution,
     project_observation_execution,
 )
+from app.execution.initialization import _utc_timestamp
 from app.infrastructure.persistence.models import (
     AlertLensModel,
     LensRunModel,
@@ -24,6 +25,17 @@ from app.infrastructure.persistence.models import (
     ObservationModel,
 )
 from app.infrastructure.persistence.repository import RuntimePersistenceRepository
+
+
+def test_initialized_timestamp_normalizes_aware_database_values() -> None:
+    """Database-returned aware timestamps need not use the UTC singleton."""
+
+    value = datetime(2026, 9, 13, 15, 0, tzinfo=timezone(timedelta(hours=3)))
+    non_singleton_utc = datetime(2026, 9, 13, 12, 0, tzinfo=timezone(timedelta(0), "Etc/UTC"))
+
+    assert _utc_timestamp(value) == datetime(2026, 9, 13, 12, 0, tzinfo=UTC)
+    assert _utc_timestamp(non_singleton_utc).tzinfo is UTC
+    assert _utc_timestamp(value.replace(tzinfo=None)) is None
 
 
 class RecordingSession:

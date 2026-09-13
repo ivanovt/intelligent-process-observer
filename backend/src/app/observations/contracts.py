@@ -5,7 +5,9 @@ from enum import StrEnum
 from typing import Annotated, Literal
 from uuid import UUID
 
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
+
+from app.knowledge.management_contracts import KnowledgeScope, parse_knowledge_scope
 
 IDENTIFIER_PATTERN = r"^[a-z][a-z0-9_-]*$"
 OFFSET_PATTERN = r"^[1-9][0-9]*(m|h|d|w)$"
@@ -160,6 +162,13 @@ class ObservationCreate(ApiModel):
     lenses: list[MetricLensCreate] = Field(default_factory=list)
     alert_lenses: list[AlertLensCreate] = Field(default_factory=list)
     relationships: list[RelationshipCreate] = Field(default_factory=list)
+    knowledge_scope: KnowledgeScope | None = None
+
+    @field_validator("knowledge_scope", mode="before")
+    @classmethod
+    def normalize_knowledge_scope(cls, value: object) -> object:
+        """Normalize canonical or legacy JSON before strict scope validation."""
+        return None if value is None else parse_knowledge_scope(value)
 
     @model_validator(mode="after")
     def validate_topology(self) -> ObservationCreate:
@@ -213,6 +222,7 @@ class ObservationSummary(ApiModel):
     lenses: list[LensReference]
     alert_lenses: list[AlertLensReference] = Field(default_factory=list)
     relationships: list[RelationshipReference]
+    knowledge_scope: KnowledgeScope | None = None
     href: str
 
 

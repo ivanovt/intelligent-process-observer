@@ -192,4 +192,4 @@ Structured `ObservationAnalysisResult`, описан в `08_observation_analysis
 
 ## 12. Related ADRs
 
-ADR-050..052, ADR-064..084 (v3 register).
+ADR-050..052, ADR-064..084 (v3 register), ADR-173.

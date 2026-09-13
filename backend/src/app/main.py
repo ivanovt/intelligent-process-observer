@@ -18,6 +18,7 @@ from app.infrastructure.persistence.repository import (
 )
 from app.infrastructure.prometheus.adapter import HttpxPrometheusQueryAdapter
 from app.infrastructure.prometheus.composition import PrometheusMetricSeriesProvider
+from app.knowledge.api import router as knowledge_router
 from app.observation_runs.api import router as observation_runs_router
 from app.observation_runs.read import ObservationRunReadService
 from app.observations.api import router
@@ -89,6 +90,7 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(title="Intelligent Process Observer", lifespan=lifespan)
 app.include_router(router)
+app.include_router(knowledge_router)
 app.include_router(observation_runs_router)
 app.include_router(overview_runtime_router)
 

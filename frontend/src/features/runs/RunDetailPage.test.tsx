@@ -133,6 +133,14 @@ describe('RunDetailPage', () => {
     expect(screen.queryByText(/root cause|recommendation|confidence/i)).toBeNull()
   })
 
+  it('links a recognized historical citation to its immutable version without substituting a newer approval', async () => {
+    const current = detail()
+    renderDetail({ ...current, analysis: { ...current.analysis!, hypotheses: [{ ...current.analysis!.hypotheses[0], knowledge_refs: [{ source_id: 'knowledge-document:123e4567-e89b-12d3-a456-426614174000:v1', reference: 'pdf:page:7:chunk:2' }] }] } })
+    await screen.findByText('Run summary'); await userEvent.click(screen.getByRole('tab', { name: 'Analysis' }))
+    const citation = screen.getByRole('link', { name: /Knowledge · knowledge-document/ })
+    expect(citation.getAttribute('href')).toBe('/knowledge?document=123e4567-e89b-12d3-a456-426614174000&version=1&reference=pdf%3Apage%3A7%3Achunk%3A2')
+  })
+
   it('keeps a finding visible when its traceability cannot be resolved locally', async () => {
     const current = detail()
     renderDetail({ ...current, analysis: { ...current.analysis!, findings: [{ id: 'missing-source', statement: 'Still visible finding', evidence_refs: [{ source_type: 'metric_result', source_id: 'missing-run', locator: ['__proto__'] }] }] } })

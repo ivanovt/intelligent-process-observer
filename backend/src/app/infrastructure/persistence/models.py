@@ -5,13 +5,16 @@ from __future__ import annotations
 from datetime import datetime
 from uuid import UUID, uuid4
 
+from pgvector.sqlalchemy import Vector
 from sqlalchemy import (
     CheckConstraint,
+    Computed,
     DateTime,
     ForeignKey,
     Identity,
     Index,
     Integer,
+    LargeBinary,
     String,
     Text,
     UniqueConstraint,
@@ -19,13 +22,16 @@ from sqlalchemy import (
     func,
     text,
 )
-from sqlalchemy.dialects.postgresql import JSONB
+from sqlalchemy.dialects.postgresql import JSONB, TSVECTOR
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 from sqlalchemy.types import JSON
 
 from app.infrastructure.persistence.database import Base
 
 JSONType = JSON().with_variant(JSONB, "postgresql")
+KnowledgeScopeJSONType = JSON(none_as_null=True).with_variant(
+    JSONB(none_as_null=True), "postgresql"
+)
 
 
 class ObservationModel(Base):
@@ -35,6 +41,9 @@ class ObservationModel(Base):
     name: Mapped[str] = mapped_column(String(255))
     description: Mapped[str | None] = mapped_column(Text, nullable=True)
     objective: Mapped[str] = mapped_column(Text)
+    knowledge_scope: Mapped[dict[str, object] | None] = mapped_column(
+        KnowledgeScopeJSONType, nullable=True
+    )
     schema_version: Mapped[int] = mapped_column(Integer, default=1)
     creation_order: Mapped[int] = mapped_column(Identity(), unique=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
@@ -54,6 +63,149 @@ class ObservationModel(Base):
         cascade="all, delete-orphan",
         order_by="ObservationRelationshipModel.position",
     )
+
+
+class KnowledgeDocumentModel(Base):
+    """Stable aggregate identity for immutable, manually retained knowledge versions."""
+
+    __tablename__ = "knowledge_documents"
+
+    id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), primary_key=True, default=uuid4)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+    versions: Mapped[list[KnowledgeDocumentVersionModel]] = relationship(
+        back_populates="document",
+        cascade="all, delete-orphan",
+        order_by="KnowledgeDocumentVersionModel.version",
+    )
+
+
+class KnowledgeDocumentVersionModel(Base):
+    """One immutable source snapshot with separately managed derived extraction data."""
+
+    __tablename__ = "knowledge_document_versions"
+    __table_args__ = (
+        UniqueConstraint(
+            "document_id",
+            "version",
+            name="uq_knowledge_document_versions_document_id_version",
+        ),
+        UniqueConstraint(
+            "document_id",
+            "content_hash",
+            name="uq_knowledge_document_versions_document_id_content_hash",
+        ),
+        CheckConstraint("version > 0", name="ck_knowledge_document_versions_version_positive"),
+        CheckConstraint(
+            "document_type IN "
+            "('official_document', 'runbook', 'maintenance_guide', 'incident', 'operator_journal')",
+            name="ck_knowledge_document_versions_document_type",
+        ),
+        CheckConstraint(
+            "authority IN ('official', 'internal_approved', 'operator_authored')",
+            name="ck_knowledge_document_versions_authority",
+        ),
+        CheckConstraint(
+            "lifecycle IN ('imported', 'approved', 'deprecated')",
+            name="ck_knowledge_document_versions_lifecycle",
+        ),
+        CheckConstraint(
+            "extraction_state IN ('pending', 'ready', 'failed')",
+            name="ck_knowledge_document_versions_extraction_state",
+        ),
+        Index(
+            "uq_knowledge_document_versions_one_approved_per_document",
+            "document_id",
+            unique=True,
+            postgresql_where=text("lifecycle = 'approved'"),
+        ),
+    )
+
+    id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), primary_key=True, default=uuid4)
+    document_id: Mapped[UUID] = mapped_column(
+        ForeignKey("knowledge_documents.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    version: Mapped[int] = mapped_column(Integer)
+    title: Mapped[str] = mapped_column(String(255))
+    document_type: Mapped[str] = mapped_column(String(32))
+    authority: Mapped[str] = mapped_column(String(32))
+    owner: Mapped[str] = mapped_column(String(255))
+    source_reference: Mapped[str | None] = mapped_column(Text, nullable=True)
+    source_media_type: Mapped[str] = mapped_column(String(128))
+    source_bytes: Mapped[bytes] = mapped_column(LargeBinary)
+    content_hash: Mapped[str] = mapped_column(String(128))
+    lifecycle: Mapped[str] = mapped_column(String(16), default="imported")
+    extraction_state: Mapped[str] = mapped_column(String(16), default="pending")
+    extraction_attempt_id: Mapped[UUID | None] = mapped_column(Uuid(as_uuid=True), nullable=True)
+    extracted_text: Mapped[str | None] = mapped_column(Text, nullable=True)
+    extraction_completed_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+    document: Mapped[KnowledgeDocumentModel] = relationship(back_populates="versions")
+    service_tags: Mapped[list[KnowledgeDocumentServiceTagModel]] = relationship(
+        back_populates="document_version", cascade="all, delete-orphan"
+    )
+    chunks: Mapped[list[KnowledgeChunkModel]] = relationship(
+        back_populates="document_version",
+        cascade="all, delete-orphan",
+        order_by="KnowledgeChunkModel.ordinal",
+    )
+
+
+class KnowledgeDocumentServiceTagModel(Base):
+    """Version-local service applicability metadata for curated knowledge retrieval."""
+
+    __tablename__ = "knowledge_document_service_tags"
+    __table_args__ = (
+        UniqueConstraint(
+            "document_version_id",
+            "service_id",
+            name="uq_knowledge_document_service_tags_version_service",
+        ),
+    )
+
+    id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), primary_key=True, default=uuid4)
+    document_version_id: Mapped[UUID] = mapped_column(
+        ForeignKey("knowledge_document_versions.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    service_id: Mapped[str] = mapped_column(String(255))
+    aliases: Mapped[list[str]] = mapped_column(JSONType, default=list)
+    supported_versions: Mapped[list[str]] = mapped_column(JSONType, default=list)
+
+    document_version: Mapped[KnowledgeDocumentVersionModel] = relationship(
+        back_populates="service_tags"
+    )
+
+
+class KnowledgeChunkModel(Base):
+    """Immutable indexed passage snapshot for one approved document version."""
+
+    __tablename__ = "knowledge_chunks"
+    __table_args__ = (
+        UniqueConstraint(
+            "document_version_id", "ordinal", name="uq_knowledge_chunks_version_ordinal"
+        ),
+        CheckConstraint("ordinal > 0", name="ck_knowledge_chunks_ordinal_positive"),
+    )
+
+    id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), primary_key=True, default=uuid4)
+    document_version_id: Mapped[UUID] = mapped_column(
+        ForeignKey("knowledge_document_versions.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    ordinal: Mapped[int] = mapped_column(Integer)
+    page_number: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    page_ordinal: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    heading_path: Mapped[list[str] | None] = mapped_column(JSONType, nullable=True)
+    text: Mapped[str] = mapped_column(Text)
+    search_vector: Mapped[object] = mapped_column(
+        TSVECTOR,
+        Computed("to_tsvector('simple', text)", persisted=True),
+    )
+    embedding: Mapped[list[float] | None] = mapped_column(Vector(1536), nullable=True)
+
+    document_version: Mapped[KnowledgeDocumentVersionModel] = relationship(back_populates="chunks")
 
 
 class MetricLensModel(Base):

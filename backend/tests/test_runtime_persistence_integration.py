@@ -3211,7 +3211,21 @@ def test_final_migration_upgrades_and_guards_unsafe_downgrade(
 
     async def insert_legacy_relationship_evaluations() -> tuple[UUID, UUID]:
         async with session_factory() as session:
-            observation = await _seed_observation(session)
+            observation_id = uuid4()
+            await session.execute(
+                text(
+                    """
+                    INSERT INTO observation_definitions (id, name, objective, schema_version)
+                    VALUES (:id, :name, :objective, :schema_version)
+                    """
+                ),
+                {
+                    "id": observation_id,
+                    "name": f"Runtime persistence legacy migration {uuid4()}",
+                    "objective": "Verify legacy migration persistence.",
+                    "schema_version": 1,
+                },
+            )
             run_id = uuid4()
             await session.execute(
                 text(
@@ -3221,7 +3235,7 @@ def test_final_migration_upgrades_and_guards_unsafe_downgrade(
                     ) VALUES (:run_id, :observation_id, 'completed', '{}'::jsonb, '{}'::jsonb)
                     """
                 ),
-                {"run_id": run_id, "observation_id": observation.id},
+                {"run_id": run_id, "observation_id": observation_id},
             )
             relationship_id = f"legacy-relationship-{uuid4()}"
             await session.execute(
@@ -3238,7 +3252,7 @@ def test_final_migration_upgrades_and_guards_unsafe_downgrade(
                 ),
                 {
                     "id": uuid4(),
-                    "observation_id": observation.id,
+                    "observation_id": observation_id,
                     "relationship_id": relationship_id,
                 },
             )

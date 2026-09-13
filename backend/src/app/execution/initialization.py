@@ -136,8 +136,8 @@ async def _create_runtime_graph(
 def _utc_timestamp(value: object) -> datetime | None:
     """Return one concrete UTC timestamp loaded from the runtime graph."""
 
-    if isinstance(value, datetime) and value.tzinfo is UTC:
-        return value
+    if isinstance(value, datetime) and value.tzinfo is not None:
+        return value.astimezone(UTC)
     return None
 
 

@@ -129,6 +129,29 @@ def test_repository_builds_one_owned_aggregate() -> None:
     assert aggregate.relationships[0].participants == ["coolant-temperature", "coolant-pressure"]
 
 
+def test_repository_serializes_optional_knowledge_scope_as_json_lists() -> None:
+    """Strict API scope values persist through the JSONB-compatible aggregate field."""
+    session = RecordingSession()
+    definition = ObservationCreate.model_validate(
+        {
+            **valid_definition(),
+            "knowledge_scope": {
+                "service_ids": ["cooling-loop", "mprm-server"],
+                "service_version": "2.x",
+            },
+        }
+    )
+
+    aggregate = asyncio.run(ObservationRepository().create(session, definition))
+
+    assert aggregate.knowledge_scope == {
+        "services": [
+            {"service_id": "cooling-loop", "service_version": "2.x"},
+            {"service_id": "mprm-server", "service_version": "2.x"},
+        ],
+    }
+
+
 @pytest.mark.parametrize(
     "mutate",
     [
@@ -186,9 +209,14 @@ def test_capabilities_and_relative_hrefs_expose_only_safe_configuration(monkeypa
         lenses=[],
         alert_lenses=[],
         relationships=[],
+        knowledge_scope={"service_ids": ["cooling-loop"], "service_version": "2.x"},
     )
     summary = service.observation_summary(observation)
     assert summary.href == f"/api/v1/observations/{observation.id}"
+    assert summary.knowledge_scope is not None
+    assert tuple(service.service_id for service in summary.knowledge_scope.services) == (
+        "cooling-loop",
+    )
 
 
 @pytest.mark.parametrize(

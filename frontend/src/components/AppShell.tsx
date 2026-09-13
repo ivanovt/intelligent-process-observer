@@ -1,4 +1,4 @@
-import { Activity, Database, FileText, LayoutDashboard, Settings, Telescope } from 'lucide-react'
+import { Activity, BookOpen, Database, FileText, LayoutDashboard, Settings, Telescope } from 'lucide-react'
 import { NavLink, Outlet } from 'react-router-dom'
 
 const navigation = [
@@ -7,6 +7,7 @@ const navigation = [
   ['Runs', Activity],
   ['Reports', FileText],
   ['Data Sources', Database],
+  ['Knowledge', BookOpen],
   ['Settings', Settings],
 ] as const
 
@@ -20,10 +21,10 @@ export function AppShell() {
           <span>ObserveAI</span>
         </div>
         <nav aria-label="Main navigation" className="flex gap-1 overflow-x-auto pb-1 lg:block lg:space-y-1 lg:overflow-visible">
-          {navigation.map(([label, Icon]) => label === 'Overview' || label === 'Observations' || label === 'Data Sources' || label === 'Runs' ? (
+          {navigation.map(([label, Icon]) => label === 'Overview' || label === 'Observations' || label === 'Data Sources' || label === 'Runs' || label === 'Knowledge' ? (
             <NavLink
               key={label}
-              to={label === 'Overview' ? '/overview' : label === 'Observations' ? '/observations' : label === 'Runs' ? '/runs' : '/data-sources'}
+              to={label === 'Overview' ? '/overview' : label === 'Observations' ? '/observations' : label === 'Runs' ? '/runs' : label === 'Knowledge' ? '/knowledge' : '/data-sources'}
               className={({ isActive }) => `flex h-10 shrink-0 items-center gap-3 rounded-lg px-3 text-sm font-medium transition-colors ${isActive ? 'bg-slate-800 text-white shadow-sm' : 'text-slate-400 hover:bg-slate-900 hover:text-white'}`}
             >
               <Icon size={17} strokeWidth={2} aria-hidden="true" />

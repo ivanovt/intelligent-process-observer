@@ -45,6 +45,49 @@ def test_projection_detaches_the_complete_mixed_definition() -> None:
         snapshot.name = "changed"  # type: ignore[misc]
 
 
+def test_projection_freezes_json_scope_as_retriever_only_metadata() -> None:
+    """A run retains the strict scope visible at launch despite later definition mutation."""
+    definition = _definition()
+    definition.knowledge_scope = {
+        "service_ids": ["mprm-server", "cooling-loop"],
+        "service_version": "2.x",
+    }
+
+    snapshot = project_observation_execution(_request(definition.id), _policy(), definition)
+
+    assert not isinstance(snapshot, RejectedObservationExecutionOutcome)
+    assert snapshot.knowledge_scope is not None
+    assert tuple(service.service_id for service in snapshot.knowledge_scope.services) == (
+        "mprm-server",
+        "cooling-loop",
+    )
+    assert all(service.service_version == "2.x" for service in snapshot.knowledge_scope.services)
+    definition.knowledge_scope["service_ids"].append("later-definition-change")
+    assert tuple(service.service_id for service in snapshot.knowledge_scope.services) == (
+        "mprm-server",
+        "cooling-loop",
+    )
+
+
+@pytest.mark.parametrize(
+    "scope",
+    (
+        {"service_ids": []},
+        {"service_ids": ["mprm-server", "mprm-server"]},
+        {"service_ids": ["mprm-server"], "service_version": " "},
+        {"service_ids": "mprm-server"},
+    ),
+)
+def test_projection_rejects_malformed_persisted_knowledge_scope(scope: object) -> None:
+    """Malformed JSONB scope cannot create a partially scoped run snapshot."""
+    definition = _definition()
+    definition.knowledge_scope = scope
+
+    outcome = project_observation_execution(_request(definition.id), _policy(), definition)
+
+    _assert_rejected(outcome, "invalid_observation_definition")
+
+
 def test_preparation_uses_only_controlled_no_run_rejections() -> None:
     cases = (
         (None, _policy(), _definition(), "invalid_execution_request"),

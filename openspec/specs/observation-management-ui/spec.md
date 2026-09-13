@@ -199,7 +199,6 @@ Opening a nested editor SHALL create editor-local working state. `Cancel`, brows
 - **AND** the resulting Create Observation flow contains a neutral draft
 - **AND** no draft mutation or HTTP write request occurs
 
-
 ### Requirement: Generate stable IDs for new Observation children
 The Metric Lens, Alert Lens, and Relationship editors SHALL generate the new child's ID when the user leaves its name field after entering a non-whitespace name and the child does not already have an ID. The generated ID SHALL have the exact composition `<type-prefix>_<normalized-name>_<random-part>` and SHALL match the public identifier syntax `^[a-z][a-z0-9_-]*$`. Metric Lens IDs SHALL use `metr`, Alert Lens IDs SHALL use `alrt`, and Relationship IDs SHALL use `rel` as their type prefix. The random part SHALL contain eight lowercase hexadecimal characters generated from browser-provided randomness. The complete ID SHALL NOT exceed 255 characters.
 
@@ -579,3 +578,69 @@ The frontend SHALL send only the current source ID, exact query, and fixed valid
 - **WHEN** a Metric preflight browser request is created
 - **THEN** its body contains exactly `source_id`, `query`, and `validation_window.duration=15m`
 - **AND** no credential, authorization, trace, or unrelated Observation draft field is present
+
+### Requirement: Let operators explicitly control an Observation knowledge scope
+
+The Create and Edit Observation flows SHALL expose an optional Knowledge scope in the client-side Observation draft. The operator SHALL be able to add or remove canonical service entries and independently set or clear one optional service-version label on each entry. The version control SHALL be visibly associated with its own service; adding, removing, or editing another service SHALL not copy or change that label. The review step SHALL show every service beside its own version or an explicit no-version state as knowledge-retrieval context, not as Lens evidence, an execution setting, a source selector, or a causal assertion. The field SHALL be submitted only with the final aggregate create or replacement request.
+
+An accepted scope suggestion SHALL add only catalog-backed service IDs to the local draft with no version labels. It SHALL not replace an operator-entered version for an already selected service or assign a version to another service. The operator SHALL enter any desired version explicitly.
+
+#### Scenario: Apply a different version to each service in the draft
+- **GIVEN** an operator selects `mprm-server` with version `1.0` and `gateway` without a version
+- **WHEN** the operator reviews and creates the Observation
+- **THEN** the review and submitted aggregate show `1.0` only beside `mprm-server` and no version beside `gateway`
+- **AND** no standalone scope resource or Lens configuration is created
+
+#### Scenario: Apply an explicit scope to the Observation draft
+- **GIVEN** an operator enters `mprm-server` with version `2.x` in Knowledge scope
+- **WHEN** the operator proceeds to review and creates the Observation
+- **THEN** the displayed and submitted aggregate includes that service and its own version
+- **AND** no standalone scope resource or Lens configuration is created
+
+#### Scenario: Editing one service does not change another service's version
+- **GIVEN** the draft contains two services with different version choices
+- **WHEN** the operator clears one service's version or removes that service
+- **THEN** the other service and its version remain unchanged
+
+#### Scenario: Accept a suggestion without inventing versions
+- **GIVEN** an operator has entered a version for one selected service
+- **WHEN** the operator accepts a suggestion for another service
+- **THEN** the suggested service is added without a version
+- **AND** the existing service keeps its operator-entered version
+
+### Requirement: Offer only operator-initiated LLM scope suggestions
+
+The Knowledge scope field SHALL include an accessible, clearly labelled suggestion control using a
+non-semantic AI-assistance icon. It SHALL invoke suggestion only after the operator explicitly
+activates that control; editing an Observation, Lens, description, objective, or scope SHALL not
+make an automatic model request.
+
+For an initiated request, the backend SHALL provide the model only the current Observation name,
+description, objective, Lens names/descriptions, and derived approved service catalog. The model
+SHALL return either zero suggestions or only canonical service IDs present in that supplied
+catalog. It SHALL not receive document passages, embeddings, operational evidence, provider data,
+or existing run results. A suggestion SHALL be advisory, visibly distinct from an applied scope,
+and shall not include a service version unless the operator enters one.
+
+Accepting a suggestion SHALL populate the local draft only; rejecting or ignoring it SHALL have no
+effect. A missing, ambiguous, failed, or stale suggestion SHALL not block draft validation, submit
+a scope, expose model diagnostics, or trigger a corpus search from the browser.
+
+#### Scenario: Accept an operator-initiated service suggestion
+- **GIVEN** current draft text is eligible for the approved service catalog's `mprm-server` ID
+- **WHEN** the operator activates Suggest knowledge scope and accepts the returned suggestion
+- **THEN** `mprm-server` is added to the local Knowledge scope draft
+- **AND** it is persisted only if the final Observation aggregate is submitted
+
+#### Scenario: Return no suggestion without blocking the draft
+- **GIVEN** the model cannot identify a sufficiently supported catalog service from the current
+draft or suggestion execution fails safely
+- **WHEN** the operator activates Suggest knowledge scope
+- **THEN** the UI reports that no scope suggestion is available without model diagnostic detail
+- **AND** the operator may still enter an explicit scope or leave it empty
+
+#### Scenario: Discard a stale suggestion
+- **GIVEN** a scope suggestion request is pending for one draft revision
+- **WHEN** the operator changes relevant Observation or Lens text before it completes
+- **THEN** the returned suggestion is not displayed or applied to the newer draft revision
+- **AND** the operator can initiate a new suggestion explicitly

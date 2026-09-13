@@ -26,6 +26,7 @@ from app.infrastructure.prometheus.contracts import (
     PrometheusRangeQueryResult,
     PrometheusSourceProfile,
 )
+from app.knowledge.management_contracts import KnowledgeScope, parse_knowledge_scope
 from app.observations.contracts import (
     AlertLensReference,
     AlertLensResponse,
@@ -208,6 +209,7 @@ class ObservationDefinitionService:
                 self.relationship_reference(model, relationship)
                 for relationship in model.relationships
             ],
+            knowledge_scope=_knowledge_scope_from_model(getattr(model, "knowledge_scope", None)),
             href=href,
         )
 
@@ -392,3 +394,8 @@ class ObservationDefinitionService:
             value=None,
             value_status="positive_infinity" if value > 0 else "negative_infinity",
         )
+
+
+def _knowledge_scope_from_model(value: object) -> KnowledgeScope | None:
+    """Restore persisted scope metadata through its strict public contract."""
+    return None if value is None else parse_knowledge_scope(value)

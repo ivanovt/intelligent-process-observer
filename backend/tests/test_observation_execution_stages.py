@@ -45,6 +45,7 @@ from app.infrastructure.persistence.models import (
     ObservationRunModel,
 )
 from app.infrastructure.persistence.runtime_contracts import ObservationAnalysisIdentity
+from app.knowledge.management_contracts import KnowledgeScope, KnowledgeServiceScope
 from app.metrics.contracts import (
     MetricEvidence,
     MetricIdentity,
@@ -983,6 +984,36 @@ def test_reasoning_projector_reconstructs_json_metric_and_alert_payloads(
 
     assert {item.lens_type for item in value.usable_results} == {"metric", "alert"}
     assert any(item.status == "partial" for item in value.usable_results) is alert_partial
+
+
+def test_reasoning_projector_excludes_retriever_scope_from_model_input() -> None:
+    """Frozen scope filters retrieval only and cannot become analytical evidence."""
+    base = _stage_snapshot(include_alert=False)
+    snapshot = replace(
+        base,
+        metric_lenses=(base.metric_lenses[0],),
+        knowledge_scope=KnowledgeScope(
+            services=(KnowledgeServiceScope(service_id="mprm-server", service_version="2.x"),)
+        ),
+    )
+    run_id = uuid4()
+    assignment = replace(
+        _assignment(snapshot, snapshot.metric_lenses[0]), observation_run_id=run_id
+    )
+    partition = LensOutcomePartition(
+        usable=(
+            CollectedLensOutcome(
+                assignment=assignment,
+                status="completed",
+                artifact=_metric_artifact(snapshot, assignment),
+            ),
+        ),
+        unavailable=(),
+    )
+
+    value = build_observation_reasoning_input(snapshot, partition, (), observation_run_id=run_id)
+
+    assert "knowledge_scope" not in value.model_dump()
 
 
 def test_reasoning_projector_rejects_malformed_json_payload() -> None:

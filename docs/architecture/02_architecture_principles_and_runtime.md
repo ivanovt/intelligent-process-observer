@@ -2,12 +2,12 @@
 
 **Проект:** „Интелигентна мулти-агентна система за откриване на аномалии и супервизия на технологични процеси“  
 **Статус:** Работна нормативна архитектурна референция за MVP  
-**Версия:** 6.1
-**Актуализирано:** 2026-09-09
+**Версия:** 6.2
+**Актуализирано:** 2026-09-13
 
 ## 1. Предназначение
 
-Документът описва принципите на работа на Observation workflow-а, специализираните Lens pipelines, deterministic и agentic компонентите, междинните артефакти и границите на отговорност. MVP използва plain Python/`asyncio` orchestration и ADR-169 OpenRouter/PydanticAI production agent composition. Multi-process worker ownership, конкретният real KnowledgeRetriever stack и останалите изрично Open infrastructure decisions остават извън текущото решение.
+Документът описва принципите на работа на Observation workflow-а, специализираните Lens pipelines, deterministic и agentic компонентите, междинните артефакти и границите на отговорност. MVP използва plain Python/`asyncio` orchestration, ADR-169 OpenRouter/PydanticAI production agent composition и ADR-173 manual curated KnowledgeRetriever върху PostgreSQL/pgvector. Multi-process worker ownership и останалите изрично Open infrastructure decisions остават извън текущото решение.
 
 ## 2. Основна архитектурна теза
 
@@ -354,6 +354,16 @@ knowledge_refs -> retrieved domain knowledge actually used
 
 При липса на достатъчно knowledge е валидно `hypotheses: []`.
 
+Observation-level direct retrieval в MVP търси само approved manual PDF/Markdown knowledge
+versions, retained в PostgreSQL и indexed чрез pgvector (ADR-173). Eligibility first се
+ограничава от optional explicit Observation knowledge scope и document service metadata;
+unscoped Observation вижда само globally applicable knowledge. Hybrid lexical/vector
+retrieval връща само admitted relevant source text с exact version/chunk provenance,
+която resolve-ва към retained PDF page или Markdown heading. Frozen knowledge scope е
+retriever-only runtime metadata; не влиза в
+finding-formation или overall-state model context. Този corpus и retrieved content са
+knowledge-only и не променят findings или overall assessment.
+
 ### 12.4. ObservationAnalysisResult
 
 Reasoning Agent произвежда structured machine-readable result с минимални полета:
@@ -423,7 +433,9 @@ ObservationAnalysisResult
 ObservationReport
 ```
 
-Конкретният database schema/technology остава Open.
+Observation/runtime persistence остава върху workspace PostgreSQL stack. ADR-173 добавя
+изолирани knowledge document/version/chunk records и `pgvector` extension; тези records не
+са Observation evidence или runtime analytical artifacts.
 
 За Alerts type-specific persistence policy е:
 

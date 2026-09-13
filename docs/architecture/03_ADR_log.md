@@ -3276,9 +3276,8 @@ Production Metric Analysis Agent и Alert Analysis Agent се compose-ват ч�
 - липсващ `OPENROUTER_API_KEY` не блокира application startup или launch; inject-ват се
   unavailable agent adapters и run-ът достига safe existing failure/degradation semantics
   без secret/configuration detail;
-- докато няма приет production knowledge backend, Observation Reasoning получава
-  explicit empty `KnowledgeRetriever`, който връща празен валиден batch и не измисля
-  knowledge refs или hypotheses.
+- при приемането на ADR-169 Observation Reasoning получава explicit empty
+  `KnowledgeRetriever`; тази временна част е superseded от ADR-173.
 
 Model/provider objects, credentials, prompts, token/timeout settings и framework messages
 остават infrastructure-only и не се връщат през public API.
@@ -3288,8 +3287,8 @@ Model/provider objects, credentials, prompts, token/timeout settings и framewor
 - roles могат да се променят независимо в бъдеща одобрена промяна;
 - no-key execution остава durable и audit-able failed/degraded attempt, а не launch
   rejection;
-- real KnowledgeRetriever, prompt refinement/versioning, provider cost limits и
-  production evaluation tuning остават отделни decisions;
+- prompt refinement/versioning, provider cost limits и production evaluation tuning остават
+  отделни decisions; real KnowledgeRetriever е избран по-късно от ADR-173;
 - Alert hard model-request/tool termination се доказва с boundary tests преди
   production activation.
 
@@ -3440,6 +3439,138 @@ notification или други report-rendering decisions.
 - exact persisted Markdown остава interoperable artifact и source за Copy action;
 - export renderers, notification adapters, other report formats, localization и
   general-purpose Markdown engine остават Open/Deferred и изискват отделно решение.
+
+---
+
+## ADR-173 — MVP curated knowledge corpus използва manual PDF/Markdown versions в PostgreSQL + pgvector
+
+**Status:** Accepted
+
+**Context**
+Observation Reasoning има приет bounded retrieval boundary, но production до момента
+използва empty retriever и не може да формира provenance-grounded explanatory hypotheses.
+Нужен е малък durable corpus за approved runbooks, official documentation, maintenance
+guides и incident knowledge, без външен vector service, automatic source sync или
+смесване на retrieved knowledge с observational evidence.
+
+**Decision**
+
+- PostgreSQL е durable owner на original uploaded PDF/Markdown payload, extracted text,
+  immutable document version, service applicability metadata и derived chunks; `pgvector`
+  extension е MVP vector index, не се добавя отделен vector service;
+- upload/import е manual и trusted-MVP operator initiated. Поддържат се само PDF и
+  Markdown; URL/Confluence/Word connectors, scheduled sync, browser document editing и
+  automatic approval са извън MVP;
+- document version преминава през `imported -> approved -> deprecated`. Upload първо
+  persist-ва original bytes и immutable version identity; extraction след това има отделен
+  `pending|ready|failed` state и user-initiated retry без re-upload. Само `ready` imported
+  version може да се approve-не; failed extraction/indexing не измества предишна
+  approved version и original source остава retained за reproducibility. Approval и
+  deprecation се serialize-ват per document, database invariant допуска най-много една
+  approved version, а stale concurrent action се reject-ва без partial publication;
+- всяка extraction attempt има current persisted identity; един active attempt per version
+  се пази с database-level exclusion, а completion от superseded attempt не може да
+  overwrite-не по-нов retry result;
+- service catalog не е отделен aggregate. Той се derive-ва от service IDs/aliases върху
+  approved document versions. Optional `ObservationDefinition.knowledge_scope` съдържа
+  explicit service IDs и optional opaque version label; без scope са eligible само
+  globally applicable sources. Scoped service без version допуска matching service tags
+  независимо от техните version labels; explicit scope version ограничава versioned tags;
+- concrete retriever filter-ва first по approval/service/version scope, после комбинира
+  PostgreSQL full-text и pgvector semantic candidates deterministically. Всеки returned
+  candidate трябва да мине server-owned relevance admission преди ranking; nearest vector
+  neighbor сам по себе си не е evidence за relevance. Curated-corpus `KnowledgeReference`
+  използва `source_id=knowledge-document:<uuid>:v<version>` и `reference` като
+  `pdf:page:<n>:chunk:<n>` или `md:chunk:<n>`; approved chunk metadata resolve-ва PDF
+  one-based page/page-local ordinal или Markdown document-local ordinal/heading path без
+  guessed PDF headings. Този concrete locator не променя opaque shared knowledge contract;
+- successful no-match retrieval връща empty batch; admitted embedding timeout или
+  embedding/database/index failure запазва съществуващия `timed_out`/`failed` outcome.
+  Empty retriever се използва само при composition-time unavailability;
+- Observation-level MVP retrieval връща максимум 4 цели passages и максимум 8 KiB
+  (8192 UTF-8 bytes) за целия serialized model-visible batch, включително refs; passages
+  не се truncate-ват. Един 30s deadline обхваща query embedding, database search,
+  ranking и serialization. Това е enforceable MVP context-size budget без отделен
+  tokenizer; съществуващият max 2 sequential calls не се променя;
+- optional Observation knowledge scope се freeze-ва като retriever-only run metadata,
+  отделно от agent-visible `ObservationSemanticContext`. Findings и overall-state invocations
+  не получават knowledge scope;
+- retained original source се отдава само като attachment с inert content type,
+  safe filename и `nosniff`; upload type се проверява и по content, не само по extension;
+- embeddings са през съществуващия server-side OpenRouter credential, default model
+  `openai/text-embedding-3-small`, 1536 dimensions и separate server-only setting. Не се
+  добавя second provider, browser credential или local ML runtime. При approval operator-ът
+  explicit потвърждава, че extracted approved document text и bounded finding-grounded retrieval
+  query се изпращат към OpenRouter за embeddings; original binary, raw telemetry и provider
+  payload не са embedding input;
+- local Compose и CI използват pinned `pgvector/pgvector:0.8.6-pg18-bookworm`; production
+  трябва да доставя еквивалентен PostgreSQL 18 + pgvector capability;
+- operator може explicit да поиска LLM scope suggestion. Model вижда само transient
+  Observation/Lens semantic text и derived service catalog, връща typed subset of catalog
+  IDs или empty. Suggestion няма rationale/confidence, не се trigger-ва on edit и не се
+  persist/apply без operator acceptance;
+- retrieved content остава untrusted knowledge-only data. То не създава/променя findings,
+  overall state, observational scope или recommendations. Existing max 2 retrieval calls,
+  frozen findings и hypothesis `knowledge_refs` validation остават authoritative.
+
+**Consequences**
+
+- production може да формира traceable possible explanations след manual corpus approval;
+- source/version/chunk reference остава resolvable към retained page/heading location след
+  future source updates;
+- malformed/non-text PDF, embedding outage или retrieval failure не правят startup failure
+  и не фабрикуват hypothesis; existing safe retrieval behavior остава;
+- всички upload/approve/deprecate/suggestion actions са unauthenticated само в deployment
+  boundary на ADR-170 и не носят person-level audit attribution;
+- PDF extraction dependency, pgvector Python integration и Alembic migration са разрешени
+  само в scope на този approved change; OCR, external connectors, automated sync,
+  independent Service Catalog, retention/object storage и authorization остават future work.
+
+---
+
+## ADR-174 — Observation knowledge scope задава optional version отделно за всеки service
+
+**Status:** Accepted
+
+**Context**
+ADR-173 въведе optional `ObservationDefinition.knowledge_scope` с multiple service IDs,
+но един общ optional service-version label. Различни services в една Observation могат
+да имат различни releases; общият label не може да изрази тази конфигурация без
+погрешно filtering-ване на approved knowledge.
+
+**Decision**
+
+- Този ADR supersede-ва само scope-level version формата на ADR-173.
+  `knowledge_scope` остава optional retriever-only Observation metadata, но canonical
+  shape съдържа ordered, duplicate-free service entries. Всеки entry има canonical
+  `service_id` и собствен optional opaque `service_version`.
+- Липсващ version на един service означава, че всички негови matching versioned и
+  unversioned document tags са eligible. Зададен version се сравнява exact само с
+  versioned tags на същия service; unversioned matching tags и global approved
+  documents остават eligible. Друг service entry не наследява този version.
+- Existing persisted legacy scope с общ version се чете като същия version на всеки
+  изброен service, така че previous retrieval meaning се запазва. Валидни legacy API
+  write payloads се приемат и нормализират, но canonical API responses и новите
+  persisted scopes използват per-service entries. Mixed legacy/new fields се reject-ват.
+- Scope entries се freeze-ват при run initialization само за retriever-а. Те не
+  променят Lens/Relationship semantics, observational data scope, findings, overall
+  state, framework-neutral `KnowledgeRetrievalRequest`, retrieval budgets или
+  source-version/chunk provenance.
+- LLM scope suggestion продължава да връща само catalog-backed service IDs. Operator-ът
+  задава version за всеки service explicit; suggestion не присвоява version и не
+  променя existing operator-entered versions.
+- Canonical public scope response е променен и clients трябва да го адаптират.
+  След запис на per-service scopes предишната application версия не може безопасно
+  да чете heterogeneous versions; rollback изисква pre-change database snapshot или
+  отделно одобрена lossless conversion. Различни versions не се collapse-ват silently.
+
+**Consequences**
+
+- Една Observation може да използва, например, `mprm-server@1.0` заедно с
+  `gateway@all versions`, без version на първия service да ограничава втория.
+- Existing shared-version scopes запазват meaning при read и run freeze.
+- JSONB колоната и document service-tag моделът остават без schema промяна;
+  новият canonical API shape и rollback boundary изискват coordinated deployment.
 
 ---
 
