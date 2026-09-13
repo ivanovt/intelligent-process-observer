@@ -3,16 +3,21 @@
 from __future__ import annotations
 
 import json
+from collections.abc import Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from uuid import UUID
 
-from sqlalchemy import DateTime, String, cast, exists, select, update
+from sqlalchemy import DateTime, String, cast, delete, exists, func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from sqlalchemy.orm import joinedload, selectinload
 
 from app.infrastructure.persistence.models import (
     AlertLensModel,
+    KnowledgeChunkModel,
+    KnowledgeDocumentModel,
+    KnowledgeDocumentServiceTagModel,
+    KnowledgeDocumentVersionModel,
     LensAnalysisResultModel,
     LensRunModel,
     MetricLensModel,
@@ -36,6 +41,11 @@ from app.infrastructure.persistence.runtime_contracts import (
     StructuredReason,
     validate_lens_run_transition,
     validate_observation_run_transition,
+)
+from app.knowledge.management_contracts import (
+    ApprovedServiceCatalogEntry,
+    KnowledgeChunkCreate,
+    KnowledgeDocumentVersionCreate,
 )
 from app.metrics.contracts import (
     MetricHistoryCandidate,
@@ -267,6 +277,250 @@ class ObservationRepository:
             model.position = position
             reconciled.append(model)
         return reconciled
+
+
+class KnowledgeRepository:
+    """Persist curated knowledge documents, versions, chunks, and derived service metadata.
+
+    All methods participate in the caller-owned transaction and never commit it. The
+    API and ingestion layers therefore retain control of durable upload and publication
+    boundaries.
+    """
+
+    async def create_document(
+        self, session: AsyncSession, version: KnowledgeDocumentVersionCreate
+    ) -> KnowledgeDocumentModel:
+        """Create one document with its first immutable imported source version."""
+        document = KnowledgeDocumentModel()
+        document.versions.append(self._new_version(version, version_number=1))
+        session.add(document)
+        await session.flush()
+        return document
+
+    async def add_version(
+        self,
+        session: AsyncSession,
+        document_id: UUID,
+        version: KnowledgeDocumentVersionCreate,
+    ) -> KnowledgeDocumentVersionModel:
+        """Append the next immutable imported version to an existing document."""
+        document = await session.scalar(
+            select(KnowledgeDocumentModel)
+            .where(KnowledgeDocumentModel.id == document_id)
+            .with_for_update()
+        )
+        if document is None:
+            raise LookupError(f"knowledge document {document_id} does not exist")
+        current_version = await session.scalar(
+            select(func.max(KnowledgeDocumentVersionModel.version)).where(
+                KnowledgeDocumentVersionModel.document_id == document_id
+            )
+        )
+        persisted = self._new_version(version, version_number=(current_version or 0) + 1)
+        persisted.document_id = document.id
+        session.add(persisted)
+        await session.flush()
+        return persisted
+
+    async def get_document(
+        self, session: AsyncSession, document_id: UUID
+    ) -> KnowledgeDocumentModel | None:
+        """Load one document with its immutable version history and derived artifacts."""
+        return await session.scalar(
+            select(KnowledgeDocumentModel)
+            .where(KnowledgeDocumentModel.id == document_id)
+            .options(
+                selectinload(KnowledgeDocumentModel.versions).selectinload(
+                    KnowledgeDocumentVersionModel.service_tags
+                ),
+                selectinload(KnowledgeDocumentModel.versions).selectinload(
+                    KnowledgeDocumentVersionModel.chunks
+                ),
+            )
+        )
+
+    async def get_version(
+        self, session: AsyncSession, document_id: UUID, version_number: int
+    ) -> KnowledgeDocumentVersionModel | None:
+        """Load one exact immutable version without substituting another version."""
+        return await session.scalar(
+            select(KnowledgeDocumentVersionModel)
+            .where(
+                KnowledgeDocumentVersionModel.document_id == document_id,
+                KnowledgeDocumentVersionModel.version == version_number,
+            )
+            .options(
+                selectinload(KnowledgeDocumentVersionModel.service_tags),
+                selectinload(KnowledgeDocumentVersionModel.chunks),
+            )
+        )
+
+    async def list_documents(self, session: AsyncSession) -> list[KnowledgeDocumentModel]:
+        """List documents with version metadata in stable creation order."""
+        result = await session.scalars(
+            select(KnowledgeDocumentModel)
+            .options(
+                selectinload(KnowledgeDocumentModel.versions).selectinload(
+                    KnowledgeDocumentVersionModel.service_tags
+                )
+            )
+            .order_by(KnowledgeDocumentModel.created_at, KnowledgeDocumentModel.id)
+        )
+        return list(result.unique())
+
+    async def replace_chunks(
+        self,
+        session: AsyncSession,
+        document_version_id: UUID,
+        chunks: Sequence[KnowledgeChunkCreate],
+    ) -> tuple[KnowledgeChunkModel, ...]:
+        """Replace unpublished derived chunks for an imported document version."""
+        version = await session.get(KnowledgeDocumentVersionModel, document_version_id)
+        if version is None:
+            raise LookupError(f"knowledge document version {document_version_id} does not exist")
+        if version.lifecycle != "imported":
+            raise ValueError("chunks can only be replaced for an imported document version")
+        ordinals = tuple(chunk.ordinal for chunk in chunks)
+        if len(ordinals) != len(set(ordinals)):
+            raise ValueError("chunks must use unique ordinals")
+        await session.execute(
+            delete(KnowledgeChunkModel).where(
+                KnowledgeChunkModel.document_version_id == document_version_id
+            )
+        )
+        persisted = tuple(
+            KnowledgeChunkModel(
+                document_version_id=document_version_id,
+                ordinal=chunk.ordinal,
+                page_number=chunk.page_number,
+                page_ordinal=chunk.page_ordinal,
+                heading_path=list(chunk.heading_path) if chunk.heading_path is not None else None,
+                text=chunk.text,
+            )
+            for chunk in chunks
+        )
+        session.add_all(persisted)
+        await session.flush()
+        return persisted
+
+    async def approve_version(
+        self,
+        session: AsyncSession,
+        document_id: UUID,
+        version_number: int,
+    ) -> KnowledgeDocumentVersionModel:
+        """Publish one ready version and deprecate the document's previous approved version."""
+        document = await session.scalar(
+            select(KnowledgeDocumentModel)
+            .where(KnowledgeDocumentModel.id == document_id)
+            .with_for_update()
+        )
+        if document is None:
+            raise LookupError(f"knowledge document {document_id} does not exist")
+        version = await session.scalar(
+            select(KnowledgeDocumentVersionModel).where(
+                KnowledgeDocumentVersionModel.document_id == document_id,
+                KnowledgeDocumentVersionModel.version == version_number,
+            )
+        )
+        if version is None:
+            raise LookupError(f"knowledge document version {version_number} does not exist")
+        if version.lifecycle != "imported":
+            raise ValueError("only imported versions can be approved")
+        if version.extraction_state != "ready":
+            raise ValueError("only a ready extracted version can be approved")
+        await session.execute(
+            update(KnowledgeDocumentVersionModel)
+            .where(
+                KnowledgeDocumentVersionModel.document_id == document_id,
+                KnowledgeDocumentVersionModel.lifecycle == "approved",
+            )
+            .values(lifecycle="deprecated")
+        )
+        version.lifecycle = "approved"
+        await session.flush()
+        return version
+
+    async def deprecate_version(
+        self,
+        session: AsyncSession,
+        document_id: UUID,
+        version_number: int,
+    ) -> KnowledgeDocumentVersionModel:
+        """Remove one approved version from future retrieval without deleting its history."""
+        document = await session.scalar(
+            select(KnowledgeDocumentModel)
+            .where(KnowledgeDocumentModel.id == document_id)
+            .with_for_update()
+        )
+        if document is None:
+            raise LookupError(f"knowledge document {document_id} does not exist")
+        version = await session.scalar(
+            select(KnowledgeDocumentVersionModel).where(
+                KnowledgeDocumentVersionModel.document_id == document_id,
+                KnowledgeDocumentVersionModel.version == version_number,
+            )
+        )
+        if version is None:
+            raise LookupError(f"knowledge document version {version_number} does not exist")
+        if version.lifecycle != "approved":
+            raise ValueError("only an approved version can be deprecated")
+        version.lifecycle = "deprecated"
+        await session.flush()
+        return version
+
+    async def approved_service_catalog(
+        self, session: AsyncSession
+    ) -> tuple[ApprovedServiceCatalogEntry, ...]:
+        """Derive the approved service catalog from active version-local metadata."""
+        rows = await session.execute(
+            select(
+                KnowledgeDocumentServiceTagModel.service_id,
+                KnowledgeDocumentServiceTagModel.aliases,
+            )
+            .join(
+                KnowledgeDocumentVersionModel,
+                KnowledgeDocumentVersionModel.id
+                == KnowledgeDocumentServiceTagModel.document_version_id,
+            )
+            .where(KnowledgeDocumentVersionModel.lifecycle == "approved")
+            .order_by(KnowledgeDocumentServiceTagModel.service_id)
+        )
+        aliases_by_service: dict[str, set[str]] = {}
+        for service_id, aliases in rows:
+            aliases_by_service.setdefault(service_id, set()).update(aliases)
+        return tuple(
+            ApprovedServiceCatalogEntry(service_id=service_id, aliases=tuple(sorted(aliases)))
+            for service_id, aliases in aliases_by_service.items()
+        )
+
+    @staticmethod
+    def _new_version(
+        candidate: KnowledgeDocumentVersionCreate,
+        *,
+        version_number: int,
+    ) -> KnowledgeDocumentVersionModel:
+        return KnowledgeDocumentVersionModel(
+            version=version_number,
+            title=candidate.title,
+            document_type=candidate.document_type.value,
+            authority=candidate.authority.value,
+            owner=candidate.owner,
+            source_reference=candidate.source_reference,
+            source_media_type=candidate.source_media_type,
+            source_bytes=candidate.source_bytes,
+            content_hash=candidate.content_hash,
+            lifecycle="imported",
+            extraction_state="pending",
+            service_tags=[
+                KnowledgeDocumentServiceTagModel(
+                    service_id=tag.service_id,
+                    aliases=list(tag.aliases),
+                    supported_versions=list(tag.supported_versions),
+                )
+                for tag in candidate.service_tags
+            ],
+        )
 
 
 class RuntimePersistenceRepository:
