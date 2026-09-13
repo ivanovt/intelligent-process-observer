@@ -11,7 +11,7 @@ from uuid import uuid4
 import pytest
 from alembic import command
 from alembic.config import Config
-from sqlalchemy import delete, select, text
+from sqlalchemy import delete, func, select, text
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import (
     AsyncEngine,
@@ -31,7 +31,7 @@ from app.infrastructure.persistence.repository import (
     KnowledgeLifecycleConflict,
     KnowledgeRepository,
 )
-from app.knowledge.extraction import KnowledgeExtractionError
+from app.knowledge.extraction import KnowledgeExtractionError, extract_source
 from app.knowledge.ingestion import KnowledgeIngestionService
 from app.knowledge.management_contracts import (
     KNOWLEDGE_EMBEDDING_DIMENSIONS,
@@ -41,6 +41,7 @@ from app.knowledge.management_contracts import (
     KnowledgeDocumentVersionCreate,
     KnowledgeServiceTag,
 )
+from app.knowledge.publication import KnowledgePublicationService
 
 _BACKEND_ROOT = Path(__file__).resolve().parents[1]
 _MIGRATION_REVISION = "20260913_01"
@@ -367,7 +368,14 @@ def test_stale_lifecycle_preflight_preserves_authoritative_approval_and_candidat
                 )
             assert replacement.lifecycle == "approved"
             assert stale_candidate.lifecycle == "imported"
-            assert stale_candidate.chunks == []
+            assert (
+                await session.scalar(
+                    select(func.count())
+                    .select_from(KnowledgeChunkModel)
+                    .where(KnowledgeChunkModel.document_version_id == stale_candidate.id)
+                )
+                == 0
+            )
 
             current_snapshot = replacement.id
             await repository.deprecate_version(
@@ -383,7 +391,14 @@ def test_stale_lifecycle_preflight_preserves_authoritative_approval_and_candidat
                     3,
                     expected_approved_version_id=current_snapshot,
                 )
-            assert stale_candidate.chunks == []
+            assert (
+                await session.scalar(
+                    select(func.count())
+                    .select_from(KnowledgeChunkModel)
+                    .where(KnowledgeChunkModel.document_version_id == stale_candidate.id)
+                )
+                == 0
+            )
             await session.rollback()
 
     asyncio.run(scenario())
@@ -444,6 +459,153 @@ def test_approved_catalog_unions_aliases_and_removes_only_deprecated_unique_tags
                 {"service_id": "heating-loop", "aliases": ("shared",)},
             )
             await session.rollback()
+
+    asyncio.run(scenario())
+
+
+def test_two_session_lifecycle_races_reject_stale_publication_before_chunk_replacement(
+    session_factory: async_sessionmaker[AsyncSession],
+) -> None:
+    """A real PostgreSQL lifecycle race leaves one authoritative state and no stale chunks."""
+
+    class BlockingEmbedder:
+        """Pause one approval after snapshot capture and before publication begins."""
+
+        def __init__(self, started: asyncio.Event, release: asyncio.Event) -> None:
+            self._started = started
+            self._release = release
+
+        async def embed_documents(self, texts):
+            """Signal pre-publication readiness, then return complete deterministic vectors."""
+            self._started.set()
+            await self._release.wait()
+            return tuple(_EMBEDDING for _ in texts)
+
+    async def ready_version(repository, session, document_id, content_hash: str):
+        candidate = source_version(content_hash).model_copy(
+            update={"source_bytes": f"# Version {content_hash[0]}\nRetained text".encode()}
+        )
+        version = await repository.add_version(session, document_id, candidate)
+        extracted = extract_source(
+            version.source_bytes,
+            version.source_media_type,
+            max_characters=10_000,
+        )
+        version.extraction_state = "ready"
+        version.extracted_text = extracted.text
+        return version
+
+    async def prepare_document(repository, session, content_hash: str):
+        document = await repository.create_document(session, source_version(content_hash))
+        first = document.versions[0]
+        extracted = extract_source(
+            first.source_bytes,
+            first.source_media_type,
+            max_characters=10_000,
+        )
+        first.extraction_state = "ready"
+        first.extracted_text = extracted.text
+        await repository.replace_chunks(session, first.id, (indexed_chunk(),))
+        await repository.approve_version(session, document.id, 1)
+        return document, first
+
+    async def chunk_count(session, document_version_id) -> int:
+        return (
+            await session.scalar(
+                select(func.count())
+                .select_from(KnowledgeChunkModel)
+                .where(KnowledgeChunkModel.document_version_id == document_version_id)
+            )
+            or 0
+        )
+
+    async def scenario() -> None:
+        repository = KnowledgeRepository()
+        created_document_ids = []
+        try:
+            async with session_factory() as session:
+                approval_document, approved = await prepare_document(repository, session, "e" * 64)
+                created_document_ids.append(approval_document.id)
+                second = await ready_version(repository, session, approval_document.id, "f" * 64)
+                third = await ready_version(repository, session, approval_document.id, "0" * 64)
+                await session.commit()
+
+                second_started, third_started, release = (
+                    asyncio.Event(),
+                    asyncio.Event(),
+                    asyncio.Event(),
+                )
+                second_service = KnowledgePublicationService(
+                    session_factory,
+                    repository,
+                    BlockingEmbedder(second_started, release),
+                    max_extraction_characters=10_000,
+                )
+                third_service = KnowledgePublicationService(
+                    session_factory,
+                    repository,
+                    BlockingEmbedder(third_started, release),
+                    max_extraction_characters=10_000,
+                )
+                second_task = asyncio.create_task(second_service.approve(approval_document.id, 2))
+                third_task = asyncio.create_task(third_service.approve(approval_document.id, 3))
+                await asyncio.gather(second_started.wait(), third_started.wait())
+                release.set()
+                outcomes = await asyncio.gather(second_task, third_task, return_exceptions=True)
+
+                assert (
+                    sum(isinstance(outcome, KnowledgeLifecycleConflict) for outcome in outcomes)
+                    == 1
+                )
+                assert sum(outcome is None for outcome in outcomes) == 1
+                await session.refresh(approved)
+                await session.refresh(second)
+                await session.refresh(third)
+                approved_candidate = second if second.lifecycle == "approved" else third
+                stale_candidate = third if approved_candidate is second else second
+                assert approved.lifecycle == "deprecated"
+                assert approved_candidate.lifecycle == "approved"
+                assert stale_candidate.lifecycle == "imported"
+                assert await chunk_count(session, stale_candidate.id) == 0
+
+                deprecation_document, deprecated = await prepare_document(
+                    repository, session, "1" * 64
+                )
+                created_document_ids.append(deprecation_document.id)
+                replacement = await ready_version(
+                    repository, session, deprecation_document.id, "2" * 64
+                )
+                await session.commit()
+                approval_started, deprecation_release = asyncio.Event(), asyncio.Event()
+                replacement_service = KnowledgePublicationService(
+                    session_factory,
+                    repository,
+                    BlockingEmbedder(approval_started, deprecation_release),
+                    max_extraction_characters=10_000,
+                )
+                approval_task = asyncio.create_task(
+                    replacement_service.approve(deprecation_document.id, 2)
+                )
+                await approval_started.wait()
+                await replacement_service.deprecate(deprecation_document.id, 1)
+                deprecation_release.set()
+                assert isinstance(
+                    (await asyncio.gather(approval_task, return_exceptions=True))[0],
+                    KnowledgeLifecycleConflict,
+                )
+                await session.refresh(deprecated)
+                await session.refresh(replacement)
+                assert deprecated.lifecycle == "deprecated"
+                assert replacement.lifecycle == "imported"
+                assert await chunk_count(session, replacement.id) == 0
+        finally:
+            if created_document_ids:
+                async with session_factory.begin() as cleanup_session:
+                    await cleanup_session.execute(
+                        delete(KnowledgeDocumentModel).where(
+                            KnowledgeDocumentModel.id.in_(created_document_ids)
+                        )
+                    )
 
     asyncio.run(scenario())
 
