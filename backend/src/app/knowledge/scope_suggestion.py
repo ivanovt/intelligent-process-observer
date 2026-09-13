@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import re
 from collections.abc import Callable
 from typing import Protocol
 
@@ -114,7 +115,7 @@ class KnowledgeScopeSuggestionService:
             result = await self._agent_factory().suggest(
                 KnowledgeScopeSuggestionModelRequest(draft=draft, catalog=catalog)
             )
-            return _catalog_backed_response(result, catalog)
+            return _catalog_backed_response(result, draft, catalog)
         except asyncio.CancelledError:
             raise
         except Exception:
@@ -123,15 +124,59 @@ class KnowledgeScopeSuggestionService:
 
 def _catalog_backed_response(
     response: KnowledgeScopeSuggestionResponse,
+    draft: KnowledgeScopeSuggestionDraft,
     catalog: tuple[ApprovedServiceCatalogEntry, ...],
 ) -> KnowledgeScopeSuggestionResponse:
-    """Reject a completion that is not a unique subset of the supplied catalog."""
+    """Reject a completion outside the catalog or its unambiguous draft matches."""
     if not isinstance(response, KnowledgeScopeSuggestionResponse):
         raise TypeError("scope suggestion agent returned an invalid response")
     catalog_ids = {entry.service_id for entry in catalog}
     if not set(response.service_ids).issubset(catalog_ids):
         raise ValueError("scope suggestion includes an ID outside the catalog")
+    supported_service_ids = _unambiguous_draft_service_ids(draft, catalog)
+    if not set(response.service_ids).issubset(supported_service_ids):
+        raise ValueError("scope suggestion selects an ambiguously matched service ID")
     return response
+
+
+def _unambiguous_draft_service_ids(
+    draft: KnowledgeScopeSuggestionDraft,
+    catalog: tuple[ApprovedServiceCatalogEntry, ...],
+) -> set[str]:
+    """Return service IDs named directly or through one uniquely owned matching alias."""
+    draft_text = "\n".join(_draft_text_values(draft))
+    canonical_owners: dict[str, set[str]] = {}
+    alias_owners: dict[str, set[str]] = {}
+    for entry in catalog:
+        canonical_owners.setdefault(entry.service_id.casefold(), set()).add(entry.service_id)
+        for alias in entry.aliases:
+            alias_owners.setdefault(alias.casefold(), set()).add(entry.service_id)
+
+    supported: set[str] = set()
+    for canonical_id, owners in canonical_owners.items():
+        if len(owners) == 1 and _contains_catalog_term(draft_text, canonical_id):
+            supported.update(owners)
+    for alias, owners in alias_owners.items():
+        if len(owners) == 1 and _contains_catalog_term(draft_text, alias):
+            supported.update(owners)
+    return supported
+
+
+def _draft_text_values(draft: KnowledgeScopeSuggestionDraft) -> tuple[str, ...]:
+    """Return every admitted semantic draft value without adding any other input."""
+    values = [draft.name, draft.objective]
+    if draft.description is not None:
+        values.append(draft.description)
+    for lens in draft.lenses:
+        values.append(lens.name)
+        if lens.description is not None:
+            values.append(lens.description)
+    return tuple(values)
+
+
+def _contains_catalog_term(text: str, term: str) -> bool:
+    """Match an ID or alias as a complete case-insensitive catalog term."""
+    return bool(re.search(rf"(?<!\w){re.escape(term)}(?!\w)", text, flags=re.IGNORECASE))
 
 
 def _require_non_whitespace(value: str, field_name: str) -> None:

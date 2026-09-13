@@ -59,6 +59,18 @@ def _catalog() -> tuple[ApprovedServiceCatalogEntry, ...]:
     )
 
 
+def _collision_catalog() -> tuple[ApprovedServiceCatalogEntry, ...]:
+    """Build a catalog whose shared alias must remain unresolved."""
+    return (
+        ApprovedServiceCatalogEntry(
+            service_id="cooling-primary", aliases=("cooling", "primary-chiller")
+        ),
+        ApprovedServiceCatalogEntry(
+            service_id="cooling-backup", aliases=("cooling", "backup-chiller")
+        ),
+    )
+
+
 class StubCatalog:
     """Record catalog reads without persistence mutation."""
 
@@ -134,6 +146,50 @@ def test_service_skips_model_composition_when_the_approved_catalog_is_empty() ->
 
     assert response == KnowledgeScopeSuggestionResponse()
     assert factory_calls == 0
+
+
+def test_service_rejects_a_service_selected_only_from_a_shared_alias() -> None:
+    """A shared catalog alias cannot silently resolve to either owning service."""
+    draft = KnowledgeScopeSuggestionDraft(
+        name="Cooling health",
+        description=None,
+        objective="Observe cooling behavior.",
+        lenses=[],
+    )
+    service = KnowledgeScopeSuggestionService(
+        StubCatalog(_collision_catalog()),
+        lambda: StubAgent(KnowledgeScopeSuggestionResponse(service_ids=("cooling-primary",))),
+    )
+
+    assert _run(service.suggest(None, draft)) == KnowledgeScopeSuggestionResponse()
+
+
+@pytest.mark.parametrize(
+    ("draft_name", "expected_service_id"),
+    [
+        ("Cooling-primary health", "cooling-primary"),
+        ("Primary-chiller health", "cooling-primary"),
+    ],
+)
+def test_service_preserves_explicit_canonical_and_unique_alias_suggestions(
+    draft_name: str,
+    expected_service_id: str,
+) -> None:
+    """Canonical service IDs and aliases with one owner remain valid suggestion evidence."""
+    draft = KnowledgeScopeSuggestionDraft(
+        name=draft_name,
+        description=None,
+        objective="Observe component behavior.",
+        lenses=[],
+    )
+    service = KnowledgeScopeSuggestionService(
+        StubCatalog(_collision_catalog()),
+        lambda: StubAgent(KnowledgeScopeSuggestionResponse(service_ids=(expected_service_id,))),
+    )
+
+    assert _run(service.suggest(None, draft)) == KnowledgeScopeSuggestionResponse(
+        service_ids=(expected_service_id,)
+    )
 
 
 def test_pydantic_adapter_exposes_only_draft_and_catalog_to_one_no_tool_request() -> None:
