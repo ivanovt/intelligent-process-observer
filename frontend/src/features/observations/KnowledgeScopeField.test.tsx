@@ -34,6 +34,20 @@ describe('KnowledgeScopeField', () => {
     expect(screen.queryByLabelText('Selected knowledge services')).toBeNull()
   })
 
+  it('does not carry a shared version to a new scope after the last service is removed', async () => {
+    const user = userEvent.setup()
+    render(<Field />)
+    await user.type(screen.getByLabelText('Service ID'), 'first-service')
+    await user.click(screen.getByRole('button', { name: 'Add service' }))
+    const version = screen.getByLabelText('Shared service version (optional)') as HTMLInputElement
+    await user.type(version, '1.0')
+    await user.click(screen.getByRole('button', { name: 'Remove first-service' }))
+    expect(version.value).toBe('')
+    await user.type(screen.getByLabelText('Service ID'), 'second-service')
+    await user.click(screen.getByRole('button', { name: 'Add service' }))
+    expect(version.value).toBe('')
+  })
+
   it('keeps empty and failed suggestions advisory and non-blocking', async () => {
     const user = userEvent.setup()
     vi.stubGlobal('fetch', vi.fn().mockResolvedValueOnce(new Response(JSON.stringify({ service_ids: [] }))).mockResolvedValueOnce(new Response('{}', { status: 503 })))
