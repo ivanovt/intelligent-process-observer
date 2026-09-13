@@ -10,6 +10,7 @@ import httpx
 from app.core.settings import Settings
 
 _EMBEDDINGS_URL = "https://openrouter.ai/api/v1/embeddings"
+_TIMEOUT_STATUS_CODES = frozenset((httpx.codes.REQUEST_TIMEOUT, 524))
 _ClientFactory = Callable[[], httpx.AsyncClient]
 
 
@@ -96,6 +97,8 @@ class OpenRouterEmbeddingAdapter:
                         "input_type": input_type,
                     },
                 )
+                if response.status_code in _TIMEOUT_STATUS_CODES:
+                    raise TimeoutError("embedding_request_timed_out")
                 response.raise_for_status()
         except httpx.TimeoutException as error:
             raise TimeoutError("embedding_request_timed_out") from error

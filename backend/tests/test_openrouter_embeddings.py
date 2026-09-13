@@ -134,6 +134,20 @@ def test_provider_failure_is_redacted() -> None:
     assert source_text not in rendered
 
 
+@pytest.mark.parametrize("status_code", (408, 524))
+def test_document_embedding_timeout_status_is_mapped_to_timeout(
+    status_code: int,
+) -> None:
+    adapter = _adapter(
+        httpx.MockTransport(lambda _: httpx.Response(status_code, text="provider timeout"))
+    )
+
+    with pytest.raises(TimeoutError) as error:
+        asyncio.run(adapter.embed_documents(("approved extracted text",)))
+
+    assert str(error.value) == "embedding_request_timed_out"
+
+
 def test_missing_credential_does_not_prevent_startup_and_fails_safely_on_use() -> None:
     adapter = OpenRouterEmbeddingAdapter(Settings(openrouter_api_key=None))
 
