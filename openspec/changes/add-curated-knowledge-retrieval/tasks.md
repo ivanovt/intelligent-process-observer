@@ -22,11 +22,11 @@
 
 - [ ] 4.1 Extend Observation Definition create/replacement/read persistence and a separate run-frozen retriever-only scope carrier with optional knowledge scope, without altering Lens/Relationship semantics or existing `ObservationSemanticContext`; verify API and execution snapshot compatibility tests for scoped and legacy unscoped definitions.
 - [x] 4.2 Implement the explicit server-side typed LLM scope-suggestion operation using only draft semantic text and the approved service catalog; verify tests reject invented IDs, return safe empty/unavailable outcomes, expose no corpus/provider diagnostics, and perform no persistence.
-- [ ] 4.3 Add the optional Knowledge scope draft/review UI and its labelled explicit Lucide `Sparkles` suggestion action; verify frontend tests cover acceptance, rejection, empty/failure, abort/stale-response handling, and no automatic request during editing.
+- [x] 4.3 Add the optional Knowledge scope draft/review UI and its labelled explicit Lucide `Sparkles` suggestion action; verify frontend tests cover acceptance, rejection, empty/failure, abort/stale-response handling, and no automatic request during editing.
 
 ## 5. Knowledge Administration UI and documentation
 
-- [ ] 5.1 Add a Knowledge Administration route, navigation item, upload/metadata form, document list/detail/version lifecycle controls, and accessible confirmation/empty/error states; make recognized run Analysis knowledge references navigate to the exact historical version/chunk while unknown references remain inert, and verify frontend tests cover PDF/Markdown-only input, imported versus approved visibility, citation navigation after newer approval, and no external-sync/editor/role controls.
+- [x] 5.1 Add a Knowledge Administration route, navigation item, upload/metadata form, document list/detail/version lifecycle controls, and accessible confirmation/empty/error states; make recognized run Analysis knowledge references navigate to the exact historical version/chunk while unknown references remain inert, and verify frontend tests cover PDF/Markdown-only input, imported versus approved visibility, citation navigation after newer approval, and no external-sync/editor/role controls.
 - [x] 5.2 Record ADR-173 and synchronize architecture/UI direction/backlog documents with the approved pgvector, manual corpus, knowledge-scope, and bounded knowledge-only boundaries; verify documentation references are internally consistent.
 
 ## 6. Integrated verification
