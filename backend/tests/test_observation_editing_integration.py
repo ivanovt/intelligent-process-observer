@@ -150,6 +150,14 @@ def test_replace_persists_or_clears_optional_knowledge_scope(
     async def scenario() -> None:
         repository = ObservationRepository()
         observation_id = await _create_definition(session_factory, repository)
+        async with session_factory() as session:
+            sql_null_id = await session.scalar(
+                select(ObservationModel.id).where(
+                    ObservationModel.id == observation_id,
+                    ObservationModel.knowledge_scope.is_(None),
+                )
+            )
+            assert sql_null_id == observation_id
         scoped = _replacement_definition().model_copy(
             update={
                 "knowledge_scope": KnowledgeScope(
@@ -174,6 +182,13 @@ def test_replace_persists_or_clears_optional_knowledge_scope(
             restored = await repository.get(session, observation_id)
             assert restored is not None
             assert restored.knowledge_scope is None
+            sql_null_id = await session.scalar(
+                select(ObservationModel.id).where(
+                    ObservationModel.id == observation_id,
+                    ObservationModel.knowledge_scope.is_(None),
+                )
+            )
+            assert sql_null_id == observation_id
 
     asyncio.run(scenario())
 

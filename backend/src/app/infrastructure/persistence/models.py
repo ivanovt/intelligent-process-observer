@@ -29,6 +29,9 @@ from sqlalchemy.types import JSON
 from app.infrastructure.persistence.database import Base
 
 JSONType = JSON().with_variant(JSONB, "postgresql")
+KnowledgeScopeJSONType = JSON(none_as_null=True).with_variant(
+    JSONB(none_as_null=True), "postgresql"
+)
 
 
 class ObservationModel(Base):
@@ -38,7 +41,9 @@ class ObservationModel(Base):
     name: Mapped[str] = mapped_column(String(255))
     description: Mapped[str | None] = mapped_column(Text, nullable=True)
     objective: Mapped[str] = mapped_column(Text)
-    knowledge_scope: Mapped[dict[str, object] | None] = mapped_column(JSONType, nullable=True)
+    knowledge_scope: Mapped[dict[str, object] | None] = mapped_column(
+        KnowledgeScopeJSONType, nullable=True
+    )
     schema_version: Mapped[int] = mapped_column(Integer, default=1)
     creation_order: Mapped[int] = mapped_column(Identity(), unique=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())

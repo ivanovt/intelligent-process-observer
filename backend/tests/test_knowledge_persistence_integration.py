@@ -645,6 +645,24 @@ def test_knowledge_migration_downgrades_only_when_corpus_and_scope_are_empty(
             await session.commit()
             return scoped_observation.id
 
+    async def create_unscoped_observation() -> object:
+        async with session_factory() as session:
+            unscoped_observation = ObservationModel(
+                name="Migration-compatible unscoped observation",
+                description=None,
+                objective="Verify absent scope stays SQL NULL.",
+            )
+            session.add(unscoped_observation)
+            await session.commit()
+            sql_null = await session.scalar(
+                select(ObservationModel.id).where(
+                    ObservationModel.id == unscoped_observation.id,
+                    ObservationModel.knowledge_scope.is_(None),
+                )
+            )
+            assert sql_null == unscoped_observation.id
+            return unscoped_observation.id
+
     async def delete_observation(observation_id: object) -> None:
         async with session_factory() as session:
             await session.execute(
@@ -665,6 +683,13 @@ def test_knowledge_migration_downgrades_only_when_corpus_and_scope_are_empty(
         command.downgrade(config, _PRE_KNOWLEDGE_REVISION)
     assert asyncio.run(alembic_revision(session_factory)) == _MIGRATION_REVISION
     asyncio.run(delete_document(document_id))
+
+    unscoped_observation_id = asyncio.run(create_unscoped_observation())
+    command.downgrade(config, _PRE_KNOWLEDGE_REVISION)
+    assert asyncio.run(alembic_revision(session_factory)) == _PRE_KNOWLEDGE_REVISION
+    command.upgrade(config, "head")
+    assert asyncio.run(alembic_revision(session_factory)) == _MIGRATION_REVISION
+    asyncio.run(delete_observation(unscoped_observation_id))
 
     observation_id = asyncio.run(create_scoped_observation())
     with pytest.raises(RuntimeError, match="knowledge scopes"):
