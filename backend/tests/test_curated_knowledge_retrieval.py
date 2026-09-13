@@ -6,8 +6,10 @@ import asyncio
 from types import SimpleNamespace
 from uuid import UUID
 
+import pytest
 from sqlalchemy.dialects import postgresql
 
+import app.infrastructure.knowledge.retrieval as retrieval_module
 from app.infrastructure.knowledge.retrieval import (
     _MAX_SERIALIZED_BYTES,
     CuratedKnowledgeReferenceResolver,
@@ -18,7 +20,13 @@ from app.infrastructure.knowledge.retrieval import (
     build_curated_knowledge_reference,
     parse_curated_knowledge_reference,
 )
-from app.knowledge.contracts import RetrievalSuccess, RetrievedKnowledgeItem
+from app.knowledge.contracts import (
+    KnowledgeRetrievalRequest,
+    RetrievalSuccess,
+    RetrievalTimeout,
+    RetrievedKnowledgeItem,
+)
+from app.knowledge.executor import BoundedRetrievalExecutor
 from app.knowledge.management_contracts import KnowledgeScope
 
 _DOCUMENT_ID = UUID("12345678-1234-5678-1234-567812345678")
@@ -232,3 +240,31 @@ def test_serialized_batch_accepts_exact_boundary_and_omits_next_whole_passage() 
         == _MAX_SERIALIZED_BYTES
     )
     assert oversized.text not in [item.statement for item in items]
+
+
+def test_whole_retrieval_deadline_maps_to_existing_typed_timeout(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The fixed deadline includes query embedding before any database work can begin."""
+
+    class SlowEmbedder:
+        async def embed_query(self, _text: str) -> tuple[float, ...]:
+            await asyncio.sleep(0.05)
+            return ()
+
+    monkeypatch.setattr(retrieval_module, "_RETRIEVAL_DEADLINE_SECONDS", 0.01)
+    retriever = retrieval_module.CuratedKnowledgeRetriever(
+        session_factory=None,  # type: ignore[arg-type]
+        embedder=SlowEmbedder(),
+        scope=None,
+    )
+    executor = BoundedRetrievalExecutor(frozenset(("finding-1",)), retriever)
+
+    outcome = asyncio.run(
+        executor.execute(
+            KnowledgeRetrievalRequest(query="grounded query", finding_ids=("finding-1",))
+        )
+    )
+
+    assert isinstance(outcome, RetrievalTimeout)
+    assert executor.ledger[0].outcome == "timed_out"

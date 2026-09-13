@@ -22,6 +22,7 @@ from app.infrastructure.agents.unavailable import (
     UnavailableReportGenerationAgent,
 )
 from app.infrastructure.execution.composition import build_production_execution_composition
+from app.infrastructure.knowledge.retrieval import CuratedKnowledgeRetriever
 from app.infrastructure.openrouter.composition import (
     build_alert_agent,
     build_alert_model,
@@ -30,6 +31,7 @@ from app.infrastructure.openrouter.composition import (
 )
 from app.knowledge.contracts import KnowledgeRetrievalRequest
 from app.knowledge.empty import EmptyKnowledgeRetriever
+from app.knowledge.management_contracts import KnowledgeScope
 from app.metrics.contracts import MetricAgentOperationalFailure
 
 
@@ -165,6 +167,37 @@ def test_empty_knowledge_retriever_returns_a_valid_empty_tuple_without_calls() -
     request = KnowledgeRetrievalRequest(query="meaning", finding_ids=("finding-1",))
 
     assert asyncio.run(EmptyKnowledgeRetriever().retrieve(request)) == ()
+
+
+def test_composition_creates_an_isolated_curated_retriever_for_each_run_scope() -> None:
+    """A scope chooses retrieval candidates per run without mutating the shared executor."""
+    composition = build_production_execution_composition(
+        settings=Settings(openrouter_api_key="composition-test-secret", agent_trace_enabled=False),
+        session_factory=async_sessionmaker(),
+    )
+    scope = KnowledgeScope(service_ids=("mprm-server",), service_version="2.x")
+
+    first = composition.knowledge_retriever_factory(scope)
+    second = composition.knowledge_retriever_factory(None)
+
+    assert isinstance(first, CuratedKnowledgeRetriever)
+    assert isinstance(second, CuratedKnowledgeRetriever)
+    assert first is not second
+    assert first._scope == scope
+    assert second._scope is None
+
+
+def test_missing_embedding_configuration_uses_empty_retriever_factory() -> None:
+    """Unavailable knowledge composition is an empty fallback before any run begins."""
+    composition = build_production_execution_composition(
+        settings=Settings(openrouter_api_key=None, agent_trace_enabled=False),
+        session_factory=async_sessionmaker(),
+    )
+
+    assert isinstance(
+        composition.knowledge_retriever_factory(KnowledgeScope(service_ids=("mprm-server",))),
+        EmptyKnowledgeRetriever,
+    )
 
 
 def test_configured_composition_uses_real_metric_and_alert_adapters() -> None:

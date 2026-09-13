@@ -68,7 +68,9 @@ class ObservationReasoningExecutor:
         self._trace_recorder = trace_recorder
         self._emitter = emitter or OperationalEventEmitter()
 
-    async def execute(self, value) -> ReasoningOutcome:
+    async def execute(
+        self, value, *, retriever: KnowledgeRetriever | None = None
+    ) -> ReasoningOutcome:
         """Execute one side-effect-free reasoning run and fail closed safely."""
         try:
             value = validate_input(value)
@@ -128,7 +130,7 @@ class ObservationReasoningExecutor:
             retrieval = _ReasoningRetrievalSession(
                 BoundedRetrievalExecutor(
                     frozenset(item.id for item in findings),
-                    self._retriever,
+                    retriever or self._retriever,
                     observation_run_id=value.context.identity.observation_run_id,
                     emitter=self._emitter,
                 )

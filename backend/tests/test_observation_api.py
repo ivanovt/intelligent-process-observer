@@ -177,6 +177,10 @@ def test_create_and_follow_lens_link() -> None:
             }
         ],
         "relationships": [],
+        "knowledge_scope": {
+            "service_ids": ["cooling-loop"],
+            "service_version": "2.x",
+        },
     }
     try:
         created = request("POST", "/api/v1/observations", json=payload)
@@ -187,6 +191,11 @@ def test_create_and_follow_lens_link() -> None:
 
     assert created.status_code == 201
     assert service.created_definition is not None
+    assert service.created_definition.knowledge_scope is not None
+    assert service.created_definition.knowledge_scope.model_dump() == {
+        "service_ids": ("cooling-loop",),
+        "service_version": "2.x",
+    }
     assert detail.status_code == 200
     assert lens.status_code == 200
     assert lens.json()["observation_href"] == created.json()["href"]
@@ -216,6 +225,7 @@ def test_replace_preserves_identity_and_rejects_response_only_fields() -> None:
         ],
         "alert_lenses": [],
         "relationships": [],
+        "knowledge_scope": {"service_ids": ["cooling-loop"]},
     }
     try:
         replaced = request("PUT", f"/api/v1/observations/{service.observation_id}", json=payload)
@@ -232,6 +242,8 @@ def test_replace_preserves_identity_and_rejects_response_only_fields() -> None:
     assert replaced.json()["id"] == str(service.observation_id)
     assert replaced.json()["href"] == f"/api/v1/observations/{service.observation_id}"
     assert service.replaced_definition is not None
+    assert service.replaced_definition.knowledge_scope is not None
+    assert service.replaced_definition.knowledge_scope.service_ids == ("cooling-loop",)
     assert rejected.status_code == 422
     assert rejected.json()["code"] == "validation_error"
     assert missing.status_code == 404

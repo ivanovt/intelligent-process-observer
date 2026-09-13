@@ -48,6 +48,7 @@ from app.knowledge.management_contracts import (
     ApprovedServiceCatalogEntry,
     KnowledgeChunkCreate,
     KnowledgeDocumentVersionCreate,
+    KnowledgeScope,
 )
 from app.metrics.contracts import (
     MetricHistoryCandidate,
@@ -97,6 +98,7 @@ class ObservationRepository:
             name=definition.name,
             description=definition.description,
             objective=definition.objective,
+            knowledge_scope=_knowledge_scope_payload(definition.knowledge_scope),
             lenses=[
                 MetricLensModel(
                     lens_id=lens.id,
@@ -208,6 +210,7 @@ class ObservationRepository:
         observation.name = definition.name
         observation.description = definition.description
         observation.objective = definition.objective
+        observation.knowledge_scope = _knowledge_scope_payload(definition.knowledge_scope)
         observation.lenses = self._reconcile_metric_lenses(observation.lenses, definition.lenses)
         observation.alert_lenses = self._reconcile_alert_lenses(
             observation.alert_lenses, definition.alert_lenses
@@ -286,6 +289,16 @@ class ObservationRepository:
             model.position = position
             reconciled.append(model)
         return reconciled
+
+
+def _knowledge_scope_payload(scope: KnowledgeScope | None) -> dict[str, object] | None:
+    """Serialize strict scope values into JSON-compatible definition metadata."""
+    if scope is None:
+        return None
+    return {
+        "service_ids": list(scope.service_ids),
+        "service_version": scope.service_version,
+    }
 
 
 class KnowledgeRepository:

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from dataclasses import dataclass
 
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
@@ -18,18 +19,22 @@ from app.infrastructure.agents.unavailable import (
     UnavailableReportGenerationAgent,
 )
 from app.infrastructure.jira import JiraAlertProviderResolver
+from app.infrastructure.knowledge.retrieval import CuratedKnowledgeRetriever
 from app.infrastructure.openrouter.composition import (
     build_alert_agent,
     build_metric_agent,
     build_reasoning_agent,
     build_report_agent,
 )
+from app.infrastructure.openrouter.embeddings import OpenRouterEmbeddingAdapter
 from app.infrastructure.persistence.repository import (
     ObservationRepository,
     RuntimePersistenceRepository,
 )
 from app.infrastructure.prometheus.composition import PrometheusMetricSeriesProvider
 from app.knowledge.empty import EmptyKnowledgeRetriever
+from app.knowledge.management_contracts import KnowledgeScope
+from app.knowledge.ports import KnowledgeRetriever
 from app.metrics.pipeline import MetricAnalysisPipeline
 from app.reasoning.executor import ObservationReasoningExecutor
 from app.relationships.evaluator import RelationshipEvaluator
@@ -47,7 +52,7 @@ class ProductionExecutionComposition:
     alert_agent: object
     reasoning_executor: ObservationReasoningExecutor
     report_executor: ReportGenerationExecutor
-    knowledge_retriever: EmptyKnowledgeRetriever
+    knowledge_retriever_factory: Callable[[KnowledgeScope | None], KnowledgeRetriever]
     trace_recorder: AgentTraceRecorder
 
 
@@ -92,7 +97,8 @@ def build_production_execution_composition(
         agent=alert_agent,
         emitter=emitter,
     )
-    knowledge_retriever = EmptyKnowledgeRetriever()
+    knowledge_retriever_factory = _knowledge_retriever_factory(settings, session_factory)
+    knowledge_retriever = knowledge_retriever_factory(None)
     reasoning_executor = ObservationReasoningExecutor(
         reasoning_agent,
         knowledge_retriever,
@@ -111,6 +117,7 @@ def build_production_execution_composition(
         relationship_evaluator=RelationshipEvaluator(),
         reasoning_executor=reasoning_executor,
         report_executor=report_executor,
+        knowledge_retriever_factory=knowledge_retriever_factory,
         emitter=emitter,
     )
     return ProductionExecutionComposition(
@@ -121,8 +128,22 @@ def build_production_execution_composition(
         alert_agent=alert_agent,
         reasoning_executor=reasoning_executor,
         report_executor=report_executor,
-        knowledge_retriever=knowledge_retriever,
+        knowledge_retriever_factory=knowledge_retriever_factory,
         trace_recorder=trace_recorder,
+    )
+
+
+def _knowledge_retriever_factory(
+    settings: Settings, session_factory: async_sessionmaker[AsyncSession]
+) -> Callable[[KnowledgeScope | None], KnowledgeRetriever]:
+    """Compose an isolated curated retriever only when embeddings are usable at startup."""
+    embedder = OpenRouterEmbeddingAdapter(settings)
+    if not embedder.is_available:
+        return lambda _scope: EmptyKnowledgeRetriever()
+    return lambda scope: CuratedKnowledgeRetriever(
+        session_factory,
+        embedder,
+        scope=scope,
     )
 
 

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+from collections.abc import Callable
 from contextlib import AbstractAsyncContextManager
 from typing import Protocol
 
@@ -38,6 +39,8 @@ from app.infrastructure.persistence.runtime_contracts import (
     ObservationRunStatus,
     StructuredReason,
 )
+from app.knowledge.management_contracts import KnowledgeScope
+from app.knowledge.ports import KnowledgeRetriever
 from app.reasoning.contracts import ReasoningFailure, ReasoningSuccess
 from app.reporting.contracts import ReportFailure
 
@@ -63,6 +66,8 @@ class ObservationExecutionOrchestrator:
         relationship_evaluator,
         reasoning_executor,
         report_executor,
+        knowledge_retriever_factory: Callable[[KnowledgeScope | None], KnowledgeRetriever]
+        | None = None,
         emitter: OperationalEventEmitter | None = None,
     ) -> None:
         self._session_factory = session_factory
@@ -71,6 +76,7 @@ class ObservationExecutionOrchestrator:
         self._lens_adapter = _TypeRoutedLensAdapter(metric_adapter, alert_adapter)
         self._relationship_evaluator = relationship_evaluator
         self._reasoning_executor = reasoning_executor
+        self._knowledge_retriever_factory = knowledge_retriever_factory
         self._report_executor = report_executor
         self._emitter = emitter or OperationalEventEmitter()
         self._persistence_aware_factory = _PersistenceAwareSessionFactory(session_factory)
@@ -147,6 +153,11 @@ class ObservationExecutionOrchestrator:
                 return relationships
 
             stage = "observation_reasoning"
+            retriever = (
+                self._knowledge_retriever_factory(initialized.snapshot.knowledge_scope)
+                if self._knowledge_retriever_factory is not None
+                else None
+            )
             reasoning = await invoke_and_persist_reasoning(
                 session_factory=self._persistence_aware_factory,
                 runtime_repository=self._runtime_repository,
@@ -155,6 +166,7 @@ class ObservationExecutionOrchestrator:
                 partition=partition,
                 evaluations=relationships,
                 observation_run_id=initialized.observation_run_id,
+                retriever=retriever,
             )
             if isinstance(reasoning, ReasoningFailure):
                 return FailedObservationExecutionOutcome(

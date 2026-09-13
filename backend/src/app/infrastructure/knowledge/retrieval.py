@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import re
 from collections.abc import Sequence
 from dataclasses import dataclass, replace
@@ -41,6 +42,7 @@ _CANDIDATE_LIMIT = 32
 _RECIPROCAL_RANK_K = 60
 _MAX_PASSAGES = 4
 _MAX_SERIALIZED_BYTES = 8_192
+_RETRIEVAL_DEADLINE_SECONDS = 30
 
 
 class QueryEmbedder(Protocol):
@@ -211,10 +213,11 @@ class CuratedKnowledgeRetriever:
         self, request: KnowledgeRetrievalRequest
     ) -> tuple[RetrievedKnowledgeItem, ...]:
         """Return only admitted whole source passages within fixed model-visible bounds."""
-        embedding = await self._embedder.embed_query(request.query)
-        async with self._session_factory() as session:
-            candidates = await self._search_candidates(session, request.query, embedding)
-        return _serialize_admitted_candidates(candidates)
+        async with asyncio.timeout(_RETRIEVAL_DEADLINE_SECONDS):
+            embedding = await self._embedder.embed_query(request.query)
+            async with self._session_factory() as session:
+                candidates = await self._search_candidates(session, request.query, embedding)
+            return _serialize_admitted_candidates(candidates)
 
     async def _search_candidates(
         self,

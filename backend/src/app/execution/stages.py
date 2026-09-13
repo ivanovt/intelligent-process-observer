@@ -40,6 +40,7 @@ from app.infrastructure.persistence.runtime_contracts import (
     RelationshipEvaluationInput,
     StructuredReason,
 )
+from app.knowledge.ports import KnowledgeRetriever
 from app.reasoning.contracts import ObservationAnalysisResult, ReasoningFailure, ReasoningSuccess
 from app.reporting.contracts import ObservationReport, ReportFailure, ReportSuccess
 
@@ -224,6 +225,7 @@ async def invoke_and_persist_reasoning(
     partition: LensOutcomePartition,
     evaluations: tuple[object, ...],
     observation_run_id,
+    retriever: KnowledgeRetriever | None = None,
 ) -> ReasoningSuccess | ReasoningFailure:
     """Invoke reasoning once outside a transaction and atomically persist valid success."""
     run_id = observation_run_id
@@ -248,7 +250,11 @@ async def invoke_and_persist_reasoning(
             reason=ExecutionReason(failure.code, failure.component),
         )
         return failure
-    outcome = await executor.execute(value)
+    outcome = (
+        await executor.execute(value)
+        if retriever is None
+        else await executor.execute(value, retriever=retriever)
+    )
     if isinstance(outcome, ReasoningFailure):
         await fail_observation_execution(
             session_factory=session_factory,
