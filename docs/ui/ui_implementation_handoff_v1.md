@@ -1,14 +1,14 @@
-# UI Implementation Handoff — v1.8
+# UI Implementation Handoff — v1.9
 
 **Project:** ObserveAI / Master Thesis
-**Status:** Accepted living major-v1 implementation handoff for MVP UI Direction v1.8
-**Date:** 2026-09-12
+**Status:** Accepted living major-v1 implementation handoff for MVP UI Direction v1.9
+**Date:** 2026-09-13
 
 ## 1. Purpose
 
 This document translates the accepted current UI direction into implementation-oriented rules for the MVP frontend.
 
-UI Direction v1.8 includes the original monitoring/investigation experience, global run management, Observation Management configuration UX, and read-only Data Sources visibility. It retains UI-generated Observation-child identity as typed, compact metadata beside Name, the on-demand secret-safe Prometheus configuration disclosure for each configured source, the global Runs history/launch screen and advisory Metric query preflight, and refines the existing Run Detail presentation. The frontend must preserve the architecture's semantic boundaries and must not invent new product-level classifications, lifecycle semantics, or administrative capabilities that are not supported by accepted backend contracts.
+UI Direction v1.9 includes the original monitoring/investigation experience, global run management, Observation Management configuration UX, read-only Data Sources visibility, and manual Knowledge Administration. It retains UI-generated Observation-child identity as typed, compact metadata beside Name, the on-demand secret-safe Prometheus configuration disclosure for each configured source, the global Runs history/launch screen and advisory Metric query preflight, and the existing Run Detail presentation. The frontend must preserve the architecture's semantic boundaries and must not invent new product-level classifications, lifecycle semantics, or administrative capabilities that are not supported by accepted backend contracts.
 
 ## 2. Accepted frontend visual stack
 
@@ -74,6 +74,7 @@ MagicPath can inform look and feel but does not require 1:1 parity or canvas syn
 13 Alert Lens Configuration
 14 Data Sources
 15 Runs History and Launch
+16 Knowledge Administration
 ```
 
 `00 Design System` is documentation/reference, not an application route.
@@ -512,6 +513,36 @@ credentials belong only in local/deployment environment configuration. The UI mu
 write `.env`, collect credentials in a browser form, put them in `VITE_*`, or imply they
 may be committed.
 
+### Knowledge Administration
+
+Purpose: manage the trusted-MVP curated knowledge corpus through explicit operator actions.
+It is part of the existing application shell, not a distinct Admin application or permission
+model. The route lists document identity, type, authority, service applicability, active
+version, and lifecycle state. Detail shows immutable version history, source metadata, and
+extraction/index status.
+
+The initial upload action accepts only PDF and Markdown. The form captures required metadata
+and service IDs/aliases. Upload retains the original before extraction. Detail distinguishes
+pending, ready, and failed extraction; an operator may explicitly retry failed extraction on
+the retained version. Approval is available only after ready extraction. Imported content is not
+searchable until the operator explicitly approves its version; approval/deprecation are distinct lifecycle actions with clear
+confirmation. Approval confirmation states that extracted approved document text and later bounded
+finding-grounded retrieval queries are sent to OpenRouter for embedding; original file bytes, raw
+telemetry, and provider payloads are not. Detail can open
+the exact retained original version behind a source reference and must not silently substitute a
+later approved version. Source downloads use attachment disposition and inert content handling;
+uploaded content is not rendered inline on the application origin. The UI does not present raw
+uploaded content as executable HTML, document editing,
+URL/Confluence registration, background sync, automatic approval, source credentials, user/role
+configuration, or person-level action attribution.
+
+Knowledge is not Observation evidence. Document references remain knowledge-only material and
+must never be rendered as confirmed causes, recommendations, or analytical-state evidence. A
+recognized curated knowledge reference in a persisted run Analysis view links to the exact
+historical version and chunk. Detail shows retained passage text and PDF page/chunk or Markdown
+heading/chunk location, with the original source available as an attachment. Unknown references
+remain visible as inert text rather than linking to a guessed source.
+
 ### Create Observation
 
 Build one Observation Definition as a single validated aggregate.
@@ -520,6 +551,7 @@ Sections:
 
 ```text
 General
+Knowledge scope
 Metric lenses
 Alert lenses
 Relationships
@@ -527,6 +559,13 @@ Review
 ```
 
 Maintain a local/client-side Observation draft until final `Create Observation` submission. Nested Lens/Relationship editors modify the draft only.
+
+Knowledge scope is optional aggregate metadata for curated-knowledge retrieval. It contains one
+or more explicit service IDs and an optional version; it is not a Lens, data-source selector,
+execution setting, relationship participant, or finding. A labelled Lucide `Sparkles` control
+may explicitly request an advisory scope suggestion. It never calls a model while fields are
+edited. Its returned catalog-backed IDs remain a pending local suggestion until the operator
+accepts them; an unavailable, empty, or stale response changes nothing and never blocks Create.
 
 At least one Lens must be configured overall.
 
@@ -795,7 +834,7 @@ If `add-observation-management-ui` is the first frontend OpenSpec change, it may
 
 ## 15. Versioning and change-control rule
 
-**UI Direction v1.8 is the accepted current direction.**
+**UI Direction v1.9 is the accepted current direction.**
 
 Implementation may make minor technical adjustments for responsive fit, accessibility, browser behavior, real data length and actual API constraints, but must not silently change:
 

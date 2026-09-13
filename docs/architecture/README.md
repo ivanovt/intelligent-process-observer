@@ -2,8 +2,8 @@
 
 **Проект:** „Интелигентна мулти-агентна система за откриване на аномалии и супервизия на технологични процеси“  
 **Статус:** Работна нормативна референция за MVP  
-**Версия на пакета:** 6.9
-**Актуализирано:** 2026-09-12
+**Версия на пакета:** 7.0
+**Актуализирано:** 2026-09-13
 
 ## 1. Предназначение
 
@@ -86,7 +86,7 @@
 
 ## 5. Архитектурна посока в едно изречение
 
-> Системата използва **детерминистично оркестриран йерархичен workflow**, в който specialized Lens pipelines произвеждат versioned structured evidence, deterministic components поемат проверимите операции, bounded agents добавят локално или system-level reasoning в ясно ограничени boundaries, а отделен Report Agent преобразува structured Observation result в Markdown отчет.
+> Системата използва **детерминистично оркестриран йерархичен workflow**, в който specialized Lens pipelines произвеждат versioned structured evidence, deterministic components поемат проверимите операции, bounded agents добавят локално или system-level reasoning в ясно ограничени boundaries, approved curated knowledge може bounded да ground-не hypotheses без да променя findings, а отделен Report Agent преобразува structured Observation result в Markdown отчет.
 
 ## 6. Metric reference-period архитектурна посока
 

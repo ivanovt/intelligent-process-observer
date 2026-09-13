@@ -1,5 +1,34 @@
 # Changelog
 
+## 7.0 — 2026-09-13
+
+- добавен ADR-173: manual curated knowledge corpus пази immutable PDF/Markdown source
+  versions и extracted text в PostgreSQL, а pgvector е derived vector index без отделен
+  service;
+- approved service metadata derive-ва MVP service catalog; optional explicit Observation
+  knowledge scope filter-ва retrieval, без да променя evidence/finding semantics;
+- OpenRouter `openai/text-embedding-3-small` (1536 dimensions) е server-only embedding
+  default; approval explicit предупреждава за external processing на extracted approved text и
+  bounded finding-grounded retrieval queries, а explicit LLM scope suggestion връща само
+  catalog-backed IDs или empty;
+- local Compose/CI използват pinned PostgreSQL 18 pgvector image; production изисква
+  еквивалентна pgvector capability;
+- retrieval остава bounded, provenance-grounded и knowledge-only; manual upload/review
+  lifecycle е trusted-MVP only, без auth, external connectors или automatic sync;
+- scope е retriever-only frozen metadata; per-document lifecycle serialization,
+  relevance admission и attachment-only source download затварят review findings;
+- upload persist-ва original source преди extraction; extraction failure може да се
+  retry-не explicit без re-upload и не прави версията searchable;
+- curated source citation използва immutable version/chunk locator с PDF page-local
+  fallback; no-match, timeout и failure retrieval outcomes остават distinct;
+- unversioned Observation service scope допуска всички matching versioned source tags,
+  а extraction retry използва attempt fencing срещу late stale completion;
+- Observation-level retrieval има max 4 whole passages, max 8 KiB serialized model-visible
+  batch и 30s full-call deadline; exact numeric RAG budget вече не е Open за този MVP;
+- затворени са конкретният Observation retrieval backend, vector/hybrid strategy,
+  provenance and scope backlog items; query rewriting и exact context/budget tuning
+  остават Open.
+
 ## 6.9 — 2026-09-12
 
 - добавен ADR-172: MVP browser presentation на persisted `ObservationReport` Markdown

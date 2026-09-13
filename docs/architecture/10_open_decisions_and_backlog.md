@@ -108,14 +108,18 @@
 
 Следните **behavioral** решения са фиксирани за Observation Reasoning: on-demand tool use, findings-before-retrieval, fixed max 2 direct calls, second-query refinement, hypotheses require knowledge refs. За Log Agent също са фиксирани findings-before-retrieval, max 2 calls и knowledge-annotation separation. Отворени остават:
 
-- retriever architecture;
-- chunking/index strategy;
-- vector vs hybrid retrieval;
-- source ranking/reranking;
 - exact query-rewriting policy inside retrieval tool;
-- knowledge permissions/scope;
-- citation/provenance identifiers;
-- max retrieved chunks/context-token budget/timeout.
+- Log-specific и future retriever output/context limits и timeout извън фиксирания
+  Observation-level MVP boundary на ADR-173.
+
+ADR-173 фиксира за Observation-level MVP manual PDF/Markdown corpus, retained PostgreSQL
+document versions, pgvector + lexical hybrid retrieval, approved-version lifecycle,
+service-scope filtering и concrete document-version/chunk locator, който resolve-ва към
+page-or-heading provenance, както и max 4 whole passages / 8 KiB serialized batch / 30s full-call
+budget. Shared knowledge-reference syntax за други future retrievers остава
+Open. External source
+connectors/sync, OCR, independent Service Catalog, advanced reranking и authorization
+остават future decisions.
 
 ## 10. Explicitly Deferred beyond MVP
 
