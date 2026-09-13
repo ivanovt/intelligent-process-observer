@@ -12,6 +12,12 @@ An accepted scope suggestion SHALL add only catalog-backed service IDs to the lo
 - **THEN** the review and submitted aggregate show `1.0` only beside `mprm-server` and no version beside `gateway`
 - **AND** no standalone scope resource or Lens configuration is created
 
+#### Scenario: Apply an explicit scope to the Observation draft
+- **GIVEN** an operator enters `mprm-server` with version `2.x` in Knowledge scope
+- **WHEN** the operator proceeds to review and creates the Observation
+- **THEN** the displayed and submitted aggregate includes that service and its own version
+- **AND** no standalone scope resource or Lens configuration is created
+
 #### Scenario: Editing one service does not change another service's version
 - **GIVEN** the draft contains two services with different version choices
 - **WHEN** the operator clears one service's version or removes that service

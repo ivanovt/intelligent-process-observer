@@ -1,6 +1,6 @@
 ## 0. Prerequisite baseline
 
-- [ ] 0.1 Archive/synchronize the completed `add-curated-knowledge-retrieval` predecessor on its feature branch and bring its canonical-spec update into this stacked branch; verify strict validation no longer reports archive-refusal INFO for the two `MODIFIED` requirement headers.
+- [x] 0.1 Archive/synchronize the completed `add-curated-knowledge-retrieval` predecessor on its feature branch and bring its canonical-spec update into this stacked branch; verify strict validation no longer reports archive-refusal INFO for the two `MODIFIED` requirement headers.
 
 ## 1. Architecture and Observation contract
 

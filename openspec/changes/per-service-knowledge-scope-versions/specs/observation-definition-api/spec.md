@@ -14,6 +14,12 @@ Already-persisted scopes in the preceding shared-version format SHALL remain rea
 - **THEN** the canonical response preserves both entries and their order, with `1.0` only on `mprm-server` and no version on `gateway`
 - **AND** its Lens and Relationship representations remain unchanged
 
+#### Scenario: Persist explicit knowledge scope
+- **GIVEN** a valid Observation create request includes a service entry for `mprm-server` with version `2.x`
+- **WHEN** the definition is created and later read
+- **THEN** the canonical definition retains that exact service entry and version
+- **AND** its Lens and Relationship representations remain unchanged
+
 #### Scenario: Preserve an unscoped definition
 - **GIVEN** a valid Observation request omits `knowledge_scope`
 - **WHEN** it is created or replaced
