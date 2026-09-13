@@ -22,4 +22,4 @@
 ## 4. Integrated verification
 
 - [x] 4.1 Exercise existing legacy and new heterogeneous scopes through API persistence, frozen run retrieval, and exact approved-document eligibility; verify no document-version, citation, lifecycle, evidence, or retrieval-budget regression in focused PostgreSQL tests.
-- [ ] 4.2 Run `make check` and `openspec validate per-service-knowledge-scope-versions --strict`; resolve failures and obtain independent implementation review before archive or pull-request preparation.
+- [x] 4.2 Run `make check` and `openspec validate per-service-knowledge-scope-versions --strict`; resolve failures and obtain independent implementation review before archive or pull-request preparation.
