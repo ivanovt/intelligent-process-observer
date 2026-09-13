@@ -261,6 +261,7 @@ def test_curated_knowledge_lifecycle_retrieval_and_historical_provenance(
                     ),
                 )
                 public_projection = str(persisted.payload)
+                assert "knowledge_scope" not in public_projection
                 assert "recommendation" not in public_projection.lower()
                 assert "root cause" not in public_projection.lower()
                 assert embeddings.secret not in public_projection
