@@ -18,7 +18,7 @@ from app.infrastructure.knowledge.retrieval import (
     build_curated_knowledge_reference,
     parse_curated_knowledge_reference,
 )
-from app.knowledge.contracts import RetrievedKnowledgeItem
+from app.knowledge.contracts import RetrievalSuccess, RetrievedKnowledgeItem
 from app.knowledge.management_contracts import KnowledgeScope
 
 _DOCUMENT_ID = UUID("12345678-1234-5678-1234-567812345678")
@@ -192,7 +192,7 @@ def test_rank_fusion_limits_to_four_whole_passages_without_truncation() -> None:
 
 
 def test_serialized_batch_accepts_exact_boundary_and_omits_next_whole_passage() -> None:
-    """The UTF-8 limit measures references and statements and never slices a passage."""
+    """The UTF-8 limit measures the complete model-visible success payload exactly."""
     seed = candidate(1, text="")
     seed_item = RetrievedKnowledgeItem(
         statement="x",
@@ -227,4 +227,8 @@ def test_serialized_batch_accepts_exact_boundary_and_omits_next_whole_passage() 
         ),
     )
     assert _serialized_batch_bytes(items) == _MAX_SERIALIZED_BYTES
+    assert (
+        len(RetrievalSuccess(items=items).model_dump_json().encode("utf-8"))
+        == _MAX_SERIALIZED_BYTES
+    )
     assert oversized.text not in [item.statement for item in items]

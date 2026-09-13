@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import json
 import re
 from collections.abc import Sequence
 from dataclasses import dataclass, replace
@@ -22,6 +21,7 @@ from app.infrastructure.persistence.models import (
 from app.knowledge.contracts import (
     KnowledgeReference,
     KnowledgeRetrievalRequest,
+    RetrievalSuccess,
     RetrievedKnowledgeItem,
 )
 from app.knowledge.management_contracts import KnowledgeScope
@@ -404,6 +404,5 @@ def _fusion_sort_key(candidate: _Candidate) -> tuple[float, str, int, int]:
 
 def _serialized_batch_bytes(items: Sequence[RetrievedKnowledgeItem]) -> int:
     """Measure the complete JSON retrieval batch exactly as model-visible UTF-8 content."""
-    payload = [item.model_dump(mode="json") for item in items]
-    serialized = json.dumps(payload, ensure_ascii=False, separators=(",", ":"), sort_keys=True)
+    serialized = RetrievalSuccess(items=tuple(items)).model_dump_json()
     return len(serialized.encode("utf-8"))
