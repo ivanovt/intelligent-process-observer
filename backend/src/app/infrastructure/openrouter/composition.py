@@ -6,6 +6,9 @@ from __future__ import annotations
 from app.core.diagnostics import OperationalEventEmitter
 from app.core.settings import Settings
 from app.infrastructure.agents.pydantic_ai_alerts import PydanticAIAlertAnalysisAgent
+from app.infrastructure.agents.pydantic_ai_knowledge_scope import (
+    PydanticAIKnowledgeScopeSuggestionAgent,
+)
 from app.infrastructure.agents.pydantic_ai_metrics import PydanticAIMetricsAnalysisAgent
 from app.infrastructure.agents.pydantic_ai_reasoning import PydanticAIObservationReasoningAgent
 from app.infrastructure.agents.pydantic_ai_reporting import PydanticAIReportGenerationAgent
@@ -151,4 +154,37 @@ def build_report_agent(
         model_name=settings.observation_report_model,
         trace_recorder=trace_recorder,
         emitter=emitter,
+    )
+
+
+def build_knowledge_scope_suggestion_model(settings: Settings):
+    """Return the configured OpenRouter model for advisory scope suggestions."""
+    if (
+        settings.openrouter_api_key is None
+        or not settings.openrouter_api_key.get_secret_value().strip()
+    ):
+        raise ValueError("OpenRouter credential is required for scope suggestion model composition")
+    from pydantic_ai.models.openrouter import OpenRouterModel
+    from pydantic_ai.providers.openrouter import OpenRouterProvider
+
+    provider = OpenRouterProvider(api_key=settings.openrouter_api_key.get_secret_value())
+    provider.client.max_retries = 0
+    policy = {"allow_fallbacks": settings.openrouter_allow_fallbacks}
+    if settings.openrouter_provider_order:
+        policy["order"] = settings.openrouter_provider_order
+    return OpenRouterModel(
+        settings.knowledge_scope_suggestion_model,
+        provider=provider,
+        settings={"extra_body": {"provider": policy}},
+    )
+
+
+def build_knowledge_scope_suggestion_agent(
+    settings: Settings,
+) -> PydanticAIKnowledgeScopeSuggestionAgent:
+    """Build the configured production adapter for advisory scope suggestions only."""
+    return PydanticAIKnowledgeScopeSuggestionAgent(
+        build_knowledge_scope_suggestion_model(settings),
+        timeout_seconds=settings.openrouter_request_timeout_seconds,
+        max_output_tokens=settings.observation_reasoning_max_output_tokens,
     )
