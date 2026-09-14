@@ -7,7 +7,7 @@ Provide a bounded, traceable Observation-level reasoning capability that turns v
 
 ### Requirement: Accept one correlated Observation reasoning scope
 
-The system SHALL accept one strict immutable reasoning scope containing the Observation and ObservationRun identity, a compact semantic Observation context, an ordered collection of usable Lens results, an ordered collection of self-contained Relationship evaluations, and an ordered collection of unavailable Lens metadata. For this change, every configured Lens in the semantic context SHALL have type `metric` or `alert`; a context containing a `log` Lens or any other Lens type SHALL be rejected before the exact Lens-scope partition is evaluated. The semantic context SHALL contain only Observation identity, name, optional description, objective, and the identity, type, name, optional description, and ordered analysis objectives of its configured Lenses. It SHALL exclude provider queries, credentials, endpoints, raw telemetry, retry/timeout settings, concurrency settings, persistence settings, and other infrastructure configuration.
+The system SHALL accept one strict immutable reasoning scope containing the Observation and ObservationRun identity, a compact semantic Observation context, an ordered collection of usable Lens results, an ordered collection of self-contained Relationship evaluations, and an ordered collection of unavailable Lens metadata. For this change, every configured Lens in the semantic context SHALL have type `metric` or `alert`; a context containing a `log` Lens or any other Lens type SHALL be rejected before the exact Lens-scope partition is evaluated. The semantic context SHALL contain only Observation identity, name, optional description, objective, optional operator-supplied `operational_context`, and the identity, type, name, optional description, and ordered analysis objectives of its configured Lenses. It SHALL exclude provider queries, credentials, endpoints, raw telemetry, retry/timeout settings, concurrency settings, persistence settings, and other infrastructure configuration.
 
 For this change, a usable Lens result SHALL be exactly a validated `completed + good|degraded` or `partial + good|degraded` MetricAnalysisResult 1.0, or a validated `completed|partial` AlertAnalysisResult 1.0. A `completed + insufficient` Metric result SHALL NOT be usable analytical evidence and SHALL instead be represented as unavailable with reason code `insufficient_data` and no component. Failed Metric results and failed Alert LensRuns SHALL be represented as unavailable metadata rather than empty usable evidence. Log results, Log Lens identities in the semantic context, and Log-local knowledge annotations SHALL remain outside this capability until the deferred Log feature is introduced.
 
@@ -491,3 +491,24 @@ No deterministic count invariant, new state, severity, confidence, probability, 
 - **WHEN** the model cannot make a reliable overall assessment
 - **THEN** it may return `uncertain`
 - **AND** the findings remain unchanged
+
+### Requirement: Use operational context as bounded reasoning guidance
+
+When present, `operational_context` SHALL be supplied as operator-authored semantic data to the finding, hypothesis, and overall-state invocations. It MAY guide relevance and terminology, but SHALL NOT be treated as observed evidence, a knowledge reference, a new retrieval source, or an instruction that changes tools, scope, output schema, evidence-grounding, retrieval budgets, or failure behavior. A claim in the text SHALL NOT by itself create or suppress a finding, hypothesis, limitation, or analytical state; existing evidence and knowledge requirements remain authoritative.
+
+#### Scenario: Focus on an operator-described operating condition
+- **GIVEN** the operator describes a startup condition and the admitted analytical evidence contains relevant timed behavior
+- **WHEN** Observation reasoning forms its result
+- **THEN** it may use the description to focus interpretation of the admitted evidence
+- **AND** every finding and analytical state still follow the existing evidence boundaries
+
+#### Scenario: Reject an unsupported context claim as evidence
+- **GIVEN** the note claims that a spike occurred during startup but the admitted evidence does not establish startup timing
+- **WHEN** findings and hypotheses are formed
+- **THEN** the claim is not presented as observed fact or used to suppress a material evidence-grounded finding
+- **AND** the note supplies neither an evidence catalog reference nor a knowledge reference
+
+#### Scenario: Keep instructions inside the operator note non-authoritative
+- **GIVEN** the note asks the agent to ignore evidence, fetch a new variable, or change its output rules
+- **WHEN** any reasoning invocation executes
+- **THEN** the request does not alter the agent's admitted data, tools, output contract, or policy
