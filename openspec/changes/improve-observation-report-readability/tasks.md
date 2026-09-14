@@ -1,11 +1,11 @@
 ## 1. Architecture boundary
 
-- [ ] 1.1 Confirm the report request and projector design admit only the exact UTC window approved by ADR-175, alongside existing semantic context; verify no full run snapshot, Lens result, or current-definition lookup crosses the Report Agent boundary.
+- [x] 1.1 Confirm the report request and projector design admit only the exact UTC window approved by ADR-175, alongside existing semantic context; verify no full run snapshot, Lens result, or current-definition lookup crosses the Report Agent boundary.
 
 ## 2. Correlated report context
 
-- [ ] 2.1 Extend the strict report request with a reporting-owned exact UTC observed window and validate identity, UTC, and positive duration; verify focused request tests reject missing, non-UTC, reversed, zero-length, and undeclared input.
-- [ ] 2.2 Project the window from the immutable execution snapshot without a current-definition lookup or rounding; verify stage/projector tests preserve exact boundaries and the existing typed failure behavior.
+- [x] 2.1 Extend the strict report request with a reporting-owned exact UTC observed window and validate identity, UTC, and positive duration; verify focused request tests reject missing, non-UTC, reversed, zero-length, and undeclared input.
+- [x] 2.2 Project the window from the immutable execution snapshot without a current-definition lookup or rounding; verify stage/projector tests preserve exact boundaries and the existing typed failure behavior.
 
 ## 3. Source-keyed presentation
 
@@ -22,7 +22,7 @@
 ## 5. End-to-end compatibility
 
 - [ ] 5.1 Verify representative completed reports for populated, empty, uncertain, and mixed-reference analyses through the report stage, including snapshot window correlation and unchanged report persistence/envelope behavior.
-- [ ] 5.2 Verify the existing browser safe-subset view renders the new headings, paragraphs, lists, and inline code safely and Copy Markdown still returns the exact persisted string; add focused frontend compatibility coverage only if the current tests do not cover the changed output.
+- [x] 5.2 Verify the existing browser safe-subset view renders the new headings, paragraphs, lists, and inline code safely and Copy Markdown still returns the exact persisted string; add focused frontend compatibility coverage only if the current tests do not cover the changed output.
 
 ## 6. Final local verification
 
