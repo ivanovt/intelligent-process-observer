@@ -45,6 +45,39 @@ def test_projection_detaches_the_complete_mixed_definition() -> None:
         snapshot.name = "changed"  # type: ignore[misc]
 
 
+def test_projection_accepts_persisted_optional_relationship_nulls_for_long_window() -> None:
+    """A saved valid descriptor remains executable when absent properties are JSON null."""
+    definition = _definition()
+    definition.relationships[0].conditions = {
+        "cpu": {"trend": {"direction": "increasing", "rate": None}, "variability": None},
+    }
+    definition.relationships[0].expected = {
+        "cpu": {"trend": {"direction": "increasing", "rate": None}, "variability": None},
+        "memory": {"trend": None, "variability": {"state": "moderate"}},
+    }
+    now = datetime(2026, 9, 9, 12, tzinfo=UTC)
+    request = ObservationExecutionRequest(
+        observation_id=definition.id,
+        analysis_window=AnalysisWindow(from_=now - timedelta(hours=3), to=now),
+    )
+
+    snapshot = project_observation_execution(request, _policy(), definition)
+
+    assert not isinstance(snapshot, RejectedObservationExecutionOutcome)
+    assert snapshot.relationships[0].conditions[0][1].trend_direction == "increasing"
+    assert snapshot.relationships[0].conditions[0][1].trend_rate is None
+    assert snapshot.analysis_window == request.analysis_window
+
+
+def test_projection_still_rejects_blank_relationship_properties() -> None:
+    definition = _definition()
+    definition.relationships[0].expected["cpu"]["trend"]["rate"] = " "
+
+    outcome = project_observation_execution(_request(definition.id), _policy(), definition)
+
+    _assert_rejected(outcome, "invalid_observation_definition")
+
+
 def test_projection_freezes_json_scope_as_retriever_only_metadata() -> None:
     """A run retains the strict scope visible at launch despite later definition mutation."""
     definition = _definition()

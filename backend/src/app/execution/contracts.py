@@ -683,7 +683,7 @@ def _optional_text(value: object, name: str) -> str | None:
 
 
 def _optional_mapping_text(value: Mapping[object, object] | None, key: str) -> str | None:
-    if value is None or key not in value:
+    if value is None or value.get(key) is None:
         return None
     return _non_empty_value(value[key])
 
