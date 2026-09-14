@@ -112,14 +112,14 @@ def build_report(
             "No knowledge-grounded possible explanation was produced by the supplied "
             "analysis result."
         )
-    for hypothesis in result.hypotheses:
+    for index, hypothesis in enumerate(result.hypotheses, start=1):
         supported_numbers = tuple(
             finding_numbers[finding_id] for finding_id in hypothesis.supported_by
         )
         lines.extend(
             (
                 "",
-                "### Possible explanation",
+                f"### Possible explanation {index}",
                 *_presentation_lines(hypothesis_text[hypothesis.id]),
                 "This is a possible explanation, not a confirmed cause.",
                 "Supported by findings: " + _finding_numbers(supported_numbers),

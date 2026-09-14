@@ -594,6 +594,54 @@ def test_renderer_uses_validated_finding_order_and_groups_exact_repeated_evidenc
     assert "Knowledge source ID: `manual`; reference: `section-7`" in content
 
 
+def test_renderer_numbers_multiple_possible_explanations_for_appendix_mapping() -> None:
+    """Each narrative explanation has the same readable number as its appendix entry."""
+    hypotheses = (
+        Hypothesis(
+            id="first-explanation",
+            statement="First possible explanation.",
+            supported_by=("finding-temperature",),
+            knowledge_refs=(KnowledgeReference(source_id="manual", reference="section-1"),),
+        ),
+        Hypothesis(
+            id="second-explanation",
+            statement="Second possible explanation.",
+            supported_by=("finding-temperature",),
+            knowledge_refs=(KnowledgeReference(source_id="manual", reference="section-2"),),
+        ),
+    )
+    request = _request(hypotheses=hypotheses)
+    draft = _draft(request).model_copy(
+        update={
+            "hypotheses": (
+                HypothesisPresentation(
+                    hypothesis_id="first-explanation", presentation="First explanation prose."
+                ),
+                HypothesisPresentation(
+                    hypothesis_id="second-explanation", presentation="Second explanation prose."
+                ),
+            )
+        }
+    )
+
+    content = build_report(request, draft, NOW).content
+
+    assert content.index("### Possible explanation 1") < content.index(
+        "### Possible explanation 2"
+    )
+    assert content.index("### Possible explanation 1 traceability") < content.index(
+        "### Possible explanation 2 traceability"
+    )
+    assert (
+        "### Possible explanation 1 traceability\n- Source hypothesis ID: `first-explanation`"
+        in content
+    )
+    assert (
+        "### Possible explanation 2 traceability\n- Source hypothesis ID: `second-explanation`"
+        in content
+    )
+
+
 @pytest.mark.parametrize(
     "presentation",
     [
@@ -631,7 +679,7 @@ def test_renderer_escapes_active_dynamic_markdown_syntax_without_blanket_punctua
         "## Findings",
         "### 1. Temperature increase observed",
         "## Possible Explanations",
-        "### Possible explanation",
+        "### Possible explanation 1",
         "## Analysis Limitations",
         "### Limitation 1",
         "## Technical Appendix",
