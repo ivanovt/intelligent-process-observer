@@ -1131,6 +1131,21 @@ def test_report_projector_preserves_exact_frozen_observed_window() -> None:
     assert type(request.analysis_window).__module__ == "app.reporting.contracts"
 
 
+def test_report_projector_rejects_analysis_from_a_different_observation() -> None:
+    """Report context cannot combine one snapshot with another Observation's analysis."""
+    snapshot = _stage_snapshot(include_alert=False)
+    result = ObservationAnalysisResult(
+        identity=ObservationIdentity(observation_id=uuid4(), observation_run_id=uuid4()),
+        overall_state="no_significant_findings",
+        findings=(),
+        hypotheses=(),
+        limitations=(),
+    )
+
+    with pytest.raises(ValueError, match="observation identity does not match snapshot"):
+        report_generation_request(snapshot, result)
+
+
 @pytest.mark.parametrize(
     ("overall_state", "findings", "limitations"),
     [

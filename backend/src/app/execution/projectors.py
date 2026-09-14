@@ -169,6 +169,8 @@ def report_generation_request(
     result: ObservationAnalysisResult,
 ) -> ReportGenerationRequest:
     """Project the frozen semantic context and exact observed window for reporting."""
+    if snapshot.observation_id != result.identity.observation_id:
+        raise ValueError("Report analysis result observation identity does not match snapshot")
     return ReportGenerationRequest(
         context=ReportSemanticContext(
             identity=result.identity,
