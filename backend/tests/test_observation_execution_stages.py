@@ -33,6 +33,7 @@ from app.execution.contracts import (
 from app.execution.projectors import (
     build_observation_reasoning_input,
     relationship_definitions,
+    report_generation_request,
     validate_relationship_batch,
 )
 from app.execution.stages import (
@@ -1086,10 +1087,37 @@ def test_report_stage_isolates_minimal_request_and_persists_report_then_completi
     )
     assert result.observation_run_id == run_id and tx.committed
     assert captured[0].context.identity == identity
+    assert captured[0].analysis_window.from_ == snapshot.analysis_window.from_
+    assert captured[0].analysis_window.to == snapshot.analysis_window.to
     assert "query" not in str(captured[0].model_dump()) and "source_id" not in str(
         captured[0].model_dump()
     )
     assert [call[0] for call in repo.calls] == ["report", "advance"]
+
+
+def test_report_projector_preserves_exact_frozen_observed_window() -> None:
+    """Report context copies the snapshot window without execution-contract leakage."""
+    snapshot = _stage_snapshot(include_alert=False)
+    precise_window = AnalysisWindow(
+        from_=datetime(2026, 1, 1, 0, 0, 0, 123456, tzinfo=UTC),
+        to=datetime(2026, 1, 1, 0, 0, 1, 654321, tzinfo=UTC),
+    )
+    snapshot = replace(snapshot, analysis_window=precise_window)
+    result = ObservationAnalysisResult(
+        identity=ObservationIdentity(
+            observation_id=snapshot.observation_id, observation_run_id=uuid4()
+        ),
+        overall_state="no_significant_findings",
+        findings=(),
+        hypotheses=(),
+        limitations=(),
+    )
+
+    request = report_generation_request(snapshot, result)
+
+    assert request.analysis_window.from_ == precise_window.from_
+    assert request.analysis_window.to == precise_window.to
+    assert type(request.analysis_window).__module__ == "app.reporting.contracts"
 
 
 def test_report_stage_uses_committed_analysis_instead_of_caller_analysis() -> None:

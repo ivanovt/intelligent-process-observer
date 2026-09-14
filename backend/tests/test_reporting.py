@@ -26,6 +26,7 @@ from app.reporting.contracts import (
     HypothesisPresentation,
     LimitationPresentation,
     ObservationReport,
+    ReportAnalysisWindow,
     ReportGenerationRequest,
     ReportPresentationDraft,
     ReportSemanticContext,
@@ -101,6 +102,12 @@ def _request(
             analytical_objective="Explain available evidence.",
         ),
         analysis_result=result,
+        analysis_window=ReportAnalysisWindow(
+            **{
+                "from": datetime(2026, 9, 7, 10, 0, tzinfo=UTC),
+                "to": datetime(2026, 9, 7, 12, 0, tzinfo=UTC),
+            }
+        ),
     )
 
 
@@ -162,10 +169,59 @@ def test_request_validation_requires_exact_correlated_minimal_input() -> None:
     )
     with pytest.raises(ValueError, match="identity"):
         validate_request(
-            ReportGenerationRequest(context=other, analysis_result=request.analysis_result)
+            ReportGenerationRequest(
+                context=other,
+                analysis_result=request.analysis_result,
+                analysis_window=request.analysis_window,
+            )
         )
     with pytest.raises(ValueError, match="ReportGenerationRequest"):
         validate_request(object())  # type: ignore[arg-type]
+
+
+@pytest.mark.parametrize(
+    "window",
+    [
+        {"to": NOW},
+        {
+            "from": datetime(2026, 9, 7, 10, 0),
+            "to": datetime(2026, 9, 7, 12, 0, tzinfo=UTC),
+        },
+        {
+            "from": datetime(2026, 9, 7, 10, 0, tzinfo=UTC),
+            "to": datetime(2026, 9, 7, 12, 0, tzinfo=timezone(timedelta(hours=1))),
+        },
+        {
+            "from": datetime(2026, 9, 7, 12, 0, tzinfo=UTC),
+            "to": datetime(2026, 9, 7, 10, 0, tzinfo=UTC),
+        },
+        {
+            "from": datetime(2026, 9, 7, 12, 0, tzinfo=UTC),
+            "to": datetime(2026, 9, 7, 12, 0, tzinfo=UTC),
+        },
+    ],
+)
+def test_report_request_rejects_missing_or_invalid_observed_windows(window: dict) -> None:
+    """The reporting boundary admits only a complete, positive exact UTC window."""
+    request = _request()
+    with pytest.raises(ValidationError):
+        ReportGenerationRequest(
+            context=request.context,
+            analysis_result=request.analysis_result,
+            analysis_window=window,  # type: ignore[arg-type]
+        )
+
+
+def test_report_request_rejects_undeclared_input() -> None:
+    """Raw evidence and other undeclared values cannot cross the report boundary."""
+    request = _request()
+    with pytest.raises(ValidationError, match="telemetry"):
+        ReportGenerationRequest(
+            context=request.context,
+            analysis_result=request.analysis_result,
+            analysis_window=request.analysis_window,
+            telemetry="forbidden",
+        )  # type: ignore[call-arg]
 
 
 @pytest.mark.parametrize(
