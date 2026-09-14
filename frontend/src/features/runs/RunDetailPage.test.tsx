@@ -3,7 +3,7 @@ import userEvent from '@testing-library/user-event'
 import { MemoryRouter, Route, Routes } from 'react-router-dom'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { RunDetailPage } from './RunDetailPage'
-import type { AlertRunResult, ObservationRunDetail, UsableMetricRunResult } from './types'
+import type { AlertRunResult, MetricRunResult, ObservationRunDetail, UsableMetricRunResult } from './types'
 
 const metricResult: UsableMetricRunResult = { schema_version: '1.0', lens_type: 'metric', identity: { observation_id: 'observation', observation_run_id: 'run', lens_id: 'metric-1', lens_run_id: 'lens-metric', metric_ref: 'cooling_temperature', unit: '°C' }, status: { state: 'completed' }, analysis_window: { from: '2026-09-09T09:00:00Z', to: '2026-09-09T10:00:00Z' }, data_quality: 'good', current_state: { trend: { direction: 'increasing', rate: 'moderate' }, variability: { state: 'low' }, spike: null, oscillation: null, stuck_signal: null }, reference_periods: null, history: null, evidence: { current: { mean: 4, std: 1, min: 2, max: 6, slope: 0.3, spike: null, oscillation: null, stuck_signal: null }, reference_periods: null, history: null } }
 const alertResult: AlertRunResult = { schema_version: '1.0', lens_type: 'alert', identity: { observation_id: 'observation', observation_run_id: 'run', lens_id: 'alert-1', lens_run_id: 'lens-alert' }, status: 'completed', analysis_window: { from: '2026-09-09T09:00:00Z', to: '2026-09-09T10:00:00Z' }, alerts: [{ id: 'alert', title: 'CPU alert', description: 'Needs review', started_at: '2026-09-09T09:10:00Z', ended_at: null, duration_seconds: 60, status: { normalized: 'active', source: 'OPEN' }, provider_importance: { type: 'priority', value: 'P1' }, occurrence_count: 1, source_ref: 'OPS-1' }], alert_activity: { record_count: 1, occurrence_count: 1 }, status_distribution: { active: 1, resolved: 0, unknown: 0 }, duration_statistics: { min_seconds: 60, max_seconds: 60, average_seconds: 60 }, provider_importance_distribution: { type: 'priority', values: { P1: 1 } }, comparisons: [], findings: [{ id: 'alert-finding', statement: 'Repeated CPU alert', evidence_refs: ['alert'] }], overall_importance: 'high' }
@@ -65,6 +65,83 @@ describe('RunDetailPage', () => {
     await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(2))
     expect(screen.getByRole('tab', { name: 'Analysis' }).getAttribute('aria-selected')).toBe('true')
     expect(screen.getByText('Possible explanation')).toBeTruthy()
+  })
+
+  it('lists mixed Metric outcomes in response order, switches by LensRun ID, dismisses detail, and opens Observation analysis', async () => {
+    const current = detail()
+    const partial: UsableMetricRunResult = { ...metricResult, identity: { ...metricResult.identity, lens_id: 'metric-partial', lens_run_id: 'lens-partial', metric_ref: 'partial_temperature' }, status: { state: 'partial' }, reason: { code: 'reference_unavailable', component: 'reference_periods' } }
+    const insufficient: MetricRunResult = { schema_version: '1.0', lens_type: 'metric', identity: { ...metricResult.identity, lens_id: 'metric-insufficient', lens_run_id: 'lens-insufficient', metric_ref: 'insufficient_pressure' }, status: { state: 'completed' }, data_quality: 'insufficient', analysis_window: metricResult.analysis_window }
+    const failed: MetricRunResult = { schema_version: '1.0', lens_type: 'metric', identity: { ...metricResult.identity, lens_id: 'metric-failed', lens_run_id: 'lens-failed', metric_ref: 'failed_flow' }, status: { state: 'failed', error: { code: 'current_metric_acquisition_failed', message: 'Current metric data acquisition failed.' } }, analysis_window: metricResult.analysis_window }
+    renderDetail({ ...current, lens_runs: [
+      { ...current.lens_runs[0], id: 'lens-partial', lens_id: 'metric-partial', status: 'partial', reason: partial.reason!, result: partial },
+      { ...current.lens_runs[0], id: 'lens-insufficient', lens_id: 'metric-insufficient', status: 'completed', reason: null, result: insufficient },
+      { ...current.lens_runs[0], id: 'lens-failed', lens_id: 'metric-failed', status: 'failed', reason: { code: 'current_metric_acquisition_failed', component: 'metric_acquisition' }, result: failed },
+      { ...current.lens_runs[0], id: 'lens-running', lens_id: 'metric-running', status: 'running', reason: null, result: null },
+      current.lens_runs[1],
+    ] })
+    await screen.findByText('Run summary')
+    await userEvent.click(screen.getByRole('tab', { name: 'Metrics' }))
+    expect(screen.getByText('4 Metric Lenses')).toBeTruthy()
+    expect(screen.getByLabelText('Metric Lens detail: lens-partial')).toBeTruthy()
+    expect(screen.getAllByText('partial_temperature')).toHaveLength(2)
+    expect(screen.getByText('insufficient_pressure')).toBeTruthy()
+    expect(screen.getByText('failed_flow')).toBeTruthy()
+    expect(screen.getByText('metric-running')).toBeTruthy()
+    expect(screen.getByText(/Data quality: insufficient/)).toBeTruthy()
+    expect(screen.getByText(/Current metric data acquisition failed/)).toBeTruthy()
+    expect(screen.getByText(/current_metric_acquisition_failed/)).toBeTruthy()
+    expect(screen.getByText(/still progressing; no result artifact/)).toBeTruthy()
+    expect(screen.queryByText('Trend: increasing · moderate', { selector: 'p' })).toBeTruthy()
+    await userEvent.click(screen.getByRole('button', { name: /failed_flow/ }))
+    expect(screen.getByLabelText('Metric Lens detail: lens-failed')).toBeTruthy()
+    expect(screen.queryByText('Current numerical evidence')).toBeNull()
+    await userEvent.click(screen.getByRole('button', { name: 'Dismiss Metric Lens detail' }))
+    expect(screen.queryByLabelText(/Metric Lens detail:/)).toBeNull()
+    await userEvent.click(screen.getByRole('button', { name: /partial_temperature/ }))
+    await userEvent.click(screen.getByRole('button', { name: 'View Observation analysis' }))
+    expect(screen.getByRole('tab', { name: 'Analysis' }).getAttribute('aria-selected')).toBe('true')
+    expect(screen.getByText('Possible explanation')).toBeTruthy()
+  })
+
+  it('preserves a selected Metric LensRun through refresh, falls back when it disappears, and retains stale data after a failed refresh', async () => {
+    const current = detail()
+    const second = { ...current.lens_runs[0], id: 'lens-second', lens_id: 'metric-second', result: { ...metricResult, identity: { ...metricResult.identity, lens_id: 'metric-second', lens_run_id: 'lens-second', metric_ref: 'return_temperature' } } }
+    const firstSnapshot = { ...current, lens_runs: [current.lens_runs[0], second, current.lens_runs[1]] }
+    const secondSnapshot = { ...firstSnapshot, lens_runs: [{ ...firstSnapshot.lens_runs[0], result: { ...metricResult, evidence: { ...metricResult.evidence, current: { ...metricResult.evidence.current, mean: 5 } } } }, second, current.lens_runs[1]] }
+    const fallbackSnapshot = { ...current, lens_runs: [current.lens_runs[0], current.lens_runs[1]] }
+    const fetchMock = vi.fn().mockResolvedValueOnce(response(firstSnapshot)).mockResolvedValueOnce(response(secondSnapshot)).mockResolvedValueOnce(response(fallbackSnapshot)).mockRejectedValueOnce(new Error('offline'))
+    vi.stubGlobal('fetch', fetchMock)
+    render(<MemoryRouter initialEntries={['/runs/run']}><Routes><Route path="/runs/:observationRunId" element={<RunDetailPage />} /></Routes></MemoryRouter>)
+    await screen.findByText('Run summary')
+    await userEvent.click(screen.getByRole('tab', { name: 'Metrics' }))
+    await userEvent.click(screen.getByRole('button', { name: /return_temperature/ }))
+    expect(screen.getByLabelText('Metric Lens detail: lens-second')).toBeTruthy()
+    await userEvent.click(screen.getByRole('button', { name: 'Refresh' }))
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(2))
+    expect(screen.getByLabelText('Metric Lens detail: lens-second')).toBeTruthy()
+    await userEvent.click(screen.getByRole('button', { name: 'Refresh' }))
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(3))
+    expect(screen.getByLabelText('Metric Lens detail: lens-metric')).toBeTruthy()
+    const lastUpdated = screen.getByText(/^Last updated /).textContent
+    await userEvent.click(screen.getByRole('button', { name: 'Refresh' }))
+    await waitFor(() => expect(screen.getByText(/Showing the last successful run detail/)).toBeTruthy())
+    expect(screen.getByLabelText('Metric Lens detail: lens-metric')).toBeTruthy()
+    expect(screen.getByText(/^Last updated /).textContent).toBe(lastUpdated)
+  })
+
+  it.each([
+    ['running', 'Execution is still progressing; this artifact has not been produced yet.'],
+    ['failed', 'Execution failed before this artifact was produced.'],
+    ['cancelled', 'Execution was cancelled before this artifact was produced.'],
+    ['completed', 'This run legitimately produced an empty collection for this section.'],
+  ] as const)('keeps the %s empty Metric collection lifecycle meaning and refresh time', async (status, message) => {
+    const current = detail()
+    renderDetail({ ...current, summary: { ...current.summary, status }, lens_runs: current.lens_runs.filter((lens) => lens.lens_type !== 'metric') })
+    await screen.findByText('Run summary')
+    await userEvent.click(screen.getByRole('tab', { name: 'Metrics' }))
+    expect(screen.getByText('0 Metric Lenses')).toBeTruthy()
+    expect(screen.getByText(message)).toBeTruthy()
+    expect(screen.getByText(/^Last updated /)).toBeTruthy()
   })
 
   it('renders type-specific Metric and Alert evidence without provider query/configuration', async () => {

@@ -1,8 +1,9 @@
-import type { MetricCurrentEvidence, MetricReferenceComparison, MetricReferenceEvidence, UsableMetricRunResult } from './types'
+import type { MetricCurrentEvidence, MetricReferenceComparison, MetricReferenceEvidence, StructuredReason, UsableMetricRunResult } from './types'
 import { formatMetricNumber } from './metricFormatting'
 
 /** Presents the frozen semantic sections of one usable Metric result. */
-export function MetricResultPresentation({ result }: { result: UsableMetricRunResult }) {
+export function MetricResultPresentation({ result, reason }: { result: UsableMetricRunResult; reason?: StructuredReason | null }) {
+  const limitation = reason ?? result.reason ?? null
   return <div className="mt-5 space-y-5">
     <div><p className="text-sm font-semibold">Metric: {result.identity.metric_ref} <span className="font-normal text-[var(--color-text-secondary)]">({result.identity.unit})</span></p><p className="mt-1 break-all font-mono text-xs text-[var(--color-text-secondary)]">Lens ID: {result.identity.lens_id}</p></div>
     <div className="flex flex-wrap gap-2" aria-label="Metric semantic state">
@@ -13,8 +14,8 @@ export function MetricResultPresentation({ result }: { result: UsableMetricRunRe
     <section aria-labelledby="metric-current-numerical-evidence"><h4 id="metric-current-numerical-evidence" className="text-sm font-semibold">Current numerical evidence</h4><MetricValues evidence={result.evidence.current} /></section>
     <section aria-labelledby="metric-current-semantic-state"><h4 id="metric-current-semantic-state" className="text-sm font-semibold">Current semantic state</h4><dl className="mt-2 grid grid-cols-1 gap-3 text-sm sm:grid-cols-3"><Value label="Trend direction" value={result.current_state.trend.direction} /><Value label="Trend rate" value={result.current_state.trend.rate} /><Value label="Variability" value={result.current_state.variability.state} /></dl></section>
     <OptionalAnalyses result={result} />
-    <ReferencePeriods currentMean={result.evidence.current.mean} comparisons={result.reference_periods} evidence={result.evidence.reference_periods} />
-    <HistorySummary history={result.history} evidence={result.evidence.history} />
+    <ReferencePeriods currentMean={result.evidence.current.mean} comparisons={result.reference_periods} evidence={result.evidence.reference_periods} reason={limitation} />
+    <HistorySummary history={result.history} evidence={result.evidence.history} reason={limitation} />
   </div>
 }
 
@@ -32,8 +33,8 @@ function OptionalAnalyses({ result }: { result: UsableMetricRunResult }) {
 }
 
 function OptionalAnalysisCard({ label, state, evidence }: { label: string; state: UsableMetricRunResult['current_state']['spike']; evidence: unknown }) {
-  if (state === null || evidence === null) return <article className="rounded-lg border border-[var(--color-border)] p-3 text-sm"><h5 className="font-medium">{label}</h5><p className="mt-1 text-[var(--color-text-secondary)]">Unavailable in this result.</p></article>
-  return <article className="rounded-lg border border-[var(--color-border)] p-3 text-sm"><h5 className="font-medium">{label}</h5><p className="mt-1">State: <span className="font-medium">{state.state}</span></p><OptionalEvidence evidence={evidence} /></article>
+  if (state === null) return <article className="rounded-lg border border-[var(--color-border)] p-3 text-sm"><h5 className="font-medium">{label}</h5><p className="mt-1 text-[var(--color-text-secondary)]">Unavailable in this result.</p></article>
+  return <article className="rounded-lg border border-[var(--color-border)] p-3 text-sm"><h5 className="font-medium">{label}</h5><p className="mt-1">State: <span className="font-medium">{state.state}</span></p>{evidence === null ? <p className="mt-1 text-xs text-[var(--color-text-secondary)]">Supporting evidence was not returned.</p> : <OptionalEvidence evidence={evidence} />}</article>
 }
 
 function OptionalEvidence({ evidence }: { evidence: unknown }) {
@@ -44,15 +45,22 @@ function OptionalEvidence({ evidence }: { evidence: unknown }) {
   return null
 }
 
-function ReferencePeriods({ comparisons, currentMean, evidence }: { comparisons: readonly MetricReferenceComparison[] | null; currentMean: number; evidence: readonly MetricReferenceEvidence[] | null }) {
-  if (comparisons === null || evidence === null) return <section aria-labelledby="metric-reference-periods"><h4 id="metric-reference-periods" className="text-sm font-semibold">Reference-period comparison</h4><p className="mt-2 text-sm text-[var(--color-text-secondary)]">Unavailable in this result.</p></section>
-  return <section aria-labelledby="metric-reference-periods"><h4 id="metric-reference-periods" className="text-sm font-semibold">Reference-period comparison</h4><ul className="mt-2 grid gap-3 lg:grid-cols-2">{evidence.map((item) => { const comparison = comparisons.find((candidate) => candidate.offset === item.offset); return <li key={item.offset} className="rounded-lg border border-[var(--color-border)] p-3 text-sm"><h5 className="font-medium">Reference period: {item.offset}</h5><dl className="mt-2 grid grid-cols-2 gap-2"><Value label="Current mean" value={formatMetricNumber(currentMean)} /><Value label="Reference mean" value={formatMetricNumber(item.mean)} /><Value label="Symmetric relative change" value={formatMetricNumber(item.relative_level_change)} /><Value label="Reference slope" value={formatMetricNumber(item.slope)} /></dl>{comparison ? <p className="mt-3 text-xs text-[var(--color-text-secondary)]">Level: {comparison.level.relation}; trend: {comparison.trend.direction} / {comparison.trend.rate}; variability: {comparison.variability.state}.</p> : <p className="mt-3 text-xs text-[var(--color-text-secondary)]">Reference semantic comparison unavailable in this result.</p>}</li> })}</ul></section>
+function ReferencePeriods({ comparisons, currentMean, evidence, reason }: { comparisons: readonly MetricReferenceComparison[] | null; currentMean: number; evidence: readonly MetricReferenceEvidence[] | null; reason: StructuredReason | null }) {
+  if (comparisons === null || evidence === null) return <section aria-labelledby="metric-reference-periods"><h4 id="metric-reference-periods" className="text-sm font-semibold">Reference-period comparison</h4><UnavailablePerspective perspective="Reference-period comparison" reason={reason} /></section>
+  const returned = evidence.flatMap((item) => {
+    const comparison = comparisons.find((candidate) => candidate.offset === item.offset)
+    return comparison ? [{ item, comparison }] : []
+  })
+  if (returned.length === 0) return <section aria-labelledby="metric-reference-periods"><h4 id="metric-reference-periods" className="text-sm font-semibold">Reference-period comparison</h4><UnavailablePerspective perspective="Reference-period comparison" reason={reason} /></section>
+  return <section aria-labelledby="metric-reference-periods"><h4 id="metric-reference-periods" className="text-sm font-semibold">Reference-period comparison</h4><ul className="mt-2 grid gap-3 lg:grid-cols-2">{returned.map(({ item, comparison }) => <li key={item.offset} className="rounded-lg border border-[var(--color-border)] p-3 text-sm"><h5 className="font-medium">Reference period: {item.offset}</h5><p className="mt-1 text-xs text-[var(--color-text-secondary)]">Window: {comparison.analysis_window.from} to {comparison.analysis_window.to}</p><dl className="mt-2 grid grid-cols-2 gap-2"><Value label="Current mean" value={formatMetricNumber(currentMean)} /><Value label="Reference mean" value={formatMetricNumber(item.mean)} /><Value label="Reference standard deviation" value={formatMetricNumber(item.std)} /><Value label="Reference minimum" value={formatMetricNumber(item.min)} /><Value label="Reference maximum" value={formatMetricNumber(item.max)} /><Value label="Reference slope" value={formatMetricNumber(item.slope)} /><Value label="Symmetric relative change" value={formatMetricNumber(item.relative_level_change)} /><Value label="Level relation" value={comparison.level.relation} /><Value label="Trend direction relation" value={comparison.trend.direction_relation} /><Value label="Trend rate relation" value={comparison.trend.rate_relation} /><Value label="Variability relation" value={comparison.variability.relation} /></dl><p className="mt-3 text-xs text-[var(--color-text-secondary)]">Reference trend: {comparison.trend.direction} / {comparison.trend.rate}; reference variability: {comparison.variability.state}.</p></li>)}</ul></section>
 }
 
-function HistorySummary({ history, evidence }: { history: UsableMetricRunResult['history']; evidence: UsableMetricRunResult['evidence']['history'] }) {
-  if (history === null || evidence === null) return <section aria-labelledby="metric-history"><h4 id="metric-history" className="text-sm font-semibold">Persisted History</h4><p className="mt-2 text-sm text-[var(--color-text-secondary)]">Unavailable in this result.</p></section>
-  return <section aria-labelledby="metric-history"><h4 id="metric-history" className="text-sm font-semibold">Persisted History</h4><dl className="mt-2 grid grid-cols-2 gap-3 text-sm sm:grid-cols-4"><Value label="Direction" value={history.direction} /><Value label="Pattern" value={history.pattern} /><Value label="Referenced runs" value={String(history.run_ids.length)} /><Value label="Direction changes" value={String(evidence.direction_changes)} /></dl></section>
+function HistorySummary({ history, evidence, reason }: { history: UsableMetricRunResult['history']; evidence: UsableMetricRunResult['evidence']['history']; reason: StructuredReason | null }) {
+  if (history === null || evidence === null) return <section aria-labelledby="metric-history"><h4 id="metric-history" className="text-sm font-semibold">Persisted History</h4><UnavailablePerspective perspective="Persisted History" reason={reason} /></section>
+  return <section aria-labelledby="metric-history"><h4 id="metric-history" className="text-sm font-semibold">Persisted History</h4><dl className="mt-2 grid grid-cols-2 gap-3 text-sm sm:grid-cols-4"><Value label="Direction" value={history.direction} /><Value label="Pattern" value={history.pattern} /><Value label="Referenced runs" value={String(history.run_ids.length)} /><Value label="Direction changes" value={String(evidence.direction_changes)} /><Value label="Classifiable transitions" value={String(evidence.classifiable_transitions)} /><Value label="Unknown transitions" value={String(evidence.unknown_transitions)} /></dl></section>
 }
+
+function UnavailablePerspective({ perspective, reason }: { perspective: 'Reference-period comparison' | 'Persisted History'; reason: StructuredReason | null }) { const limitationApplies = reason !== null && (perspective === 'Reference-period comparison' ? reason.code.includes('reference') : reason.code.includes('history')); return <p className="mt-2 text-sm text-[var(--color-text-secondary)]">{limitationApplies ? `${perspective} is limited: ${reason.code}.` : 'Unavailable in this result.'}</p> }
 
 function Value({ label, value }: { label: string; value: string }) { return <div><dt className="text-xs font-medium uppercase tracking-wide text-[var(--color-text-secondary)]">{label}</dt><dd className="mt-1 break-words text-[var(--color-text-primary)]">{value}</dd></div> }
 function OptionalValue({ label, value }: { label: string; value: string }) { return <div className="flex justify-between gap-3"><dt>{label}</dt><dd className="font-mono text-[var(--color-text-primary)]">{value}</dd></div> }
