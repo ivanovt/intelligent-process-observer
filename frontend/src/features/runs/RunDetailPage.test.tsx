@@ -115,7 +115,9 @@ describe('RunDetailPage', () => {
     expect(screen.getByText('Lens execution failed')).toBeTruthy()
     expect(screen.getByText('no_usable_metric_data')).toBeTruthy()
     expect(screen.getByText('metrics_pipeline')).toBeTruthy()
-    expect(screen.getByText('This Lens finished before a result artifact was produced.')).toBeTruthy()
+    expect(screen.getByRole('alert').textContent).toContain('Lens execution failed')
+    const unavailable = screen.getByText('This Lens finished before a result artifact was produced.').closest('[role="status"]')
+    expect(unavailable?.className).toContain('color-surface-muted')
   })
 
   it('keeps relationship applicability separate from state and traceability types distinct', async () => {
@@ -157,7 +159,21 @@ describe('RunDetailPage', () => {
   ])('explains %s missing report state exactly', async (_name, state, expected) => {
     const current = detail(); renderDetail({ ...current, summary: { ...current.summary, status: state.status }, analysis: state.analysis, report: state.report })
     await screen.findByText('Run summary'); await userEvent.click(screen.getByRole('tab', { name: 'Report' }))
-    expect(screen.getByText(expected)).toBeTruthy()
+    const unavailable = screen.getByText(expected).closest('[role="status"]')
+    expect(unavailable?.className).toContain(state.status === 'running' ? 'color-info' : 'color-surface-muted')
+  })
+
+  it('keeps a failed run alert distinct from neutral missing sections', async () => {
+    const current = detail()
+    renderDetail({ ...current, summary: { ...current.summary, status: 'failed', reason: { code: 'no_usable_lens_results', component: 'usable_results_gate' } }, relationship_evaluations: [], report: null })
+    await screen.findByText('Run summary')
+    expect(screen.getByRole('alert').textContent).toContain('Execution failed')
+    await userEvent.click(screen.getByRole('tab', { name: 'Relationships' }))
+    const relationships = screen.getByText('Execution failed before this artifact was produced.').closest('[role="status"]')
+    expect(relationships?.className).toContain('color-surface-muted')
+    await userEvent.click(screen.getByRole('tab', { name: 'Report' }))
+    const report = screen.getByText('Execution failed before the report was produced.').closest('[role="status"]')
+    expect(report?.className).toContain('color-surface-muted')
   })
 
   it('distinguishes post-analysis report absence, genuinely empty report, and empty sections', async () => {
