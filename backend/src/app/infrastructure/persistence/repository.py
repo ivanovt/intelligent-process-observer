@@ -98,6 +98,7 @@ class ObservationRepository:
             name=definition.name,
             description=definition.description,
             objective=definition.objective,
+            operational_context=definition.operational_context,
             knowledge_scope=_knowledge_scope_payload(definition.knowledge_scope),
             lenses=[
                 MetricLensModel(
@@ -210,6 +211,7 @@ class ObservationRepository:
         observation.name = definition.name
         observation.description = definition.description
         observation.objective = definition.objective
+        observation.operational_context = definition.operational_context
         observation.knowledge_scope = _knowledge_scope_payload(definition.knowledge_scope)
         observation.lenses = self._reconcile_metric_lenses(observation.lenses, definition.lenses)
         observation.alert_lenses = self._reconcile_alert_lenses(

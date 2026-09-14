@@ -165,6 +165,7 @@ class ObservationExecutionSnapshot:
     alert_lenses: tuple[AlertLensSnapshot, ...]
     relationships: tuple[RelationshipSnapshot, ...]
     knowledge_scope: KnowledgeScope | None = None
+    operational_context: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -513,6 +514,7 @@ def _project_definition(
         name=_non_empty(definition, "name"),
         description=_optional_text(definition, "description"),
         objective=_non_empty(definition, "objective"),
+        operational_context=_optional_value_text(getattr(definition, "operational_context", None)),
         metric_lenses=metrics,
         alert_lenses=alerts,
         relationships=relationships,
@@ -680,6 +682,11 @@ def _optional_text(value: object, name: str) -> str | None:
     if candidate is None:
         return None
     return _non_empty_value(candidate)
+
+
+def _optional_value_text(value: object) -> str | None:
+    """Validate an optional persisted text value without requiring an attribute."""
+    return None if value is None else _non_empty_value(value)
 
 
 def _optional_mapping_text(value: Mapping[object, object] | None, key: str) -> str | None:

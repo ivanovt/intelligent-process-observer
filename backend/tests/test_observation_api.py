@@ -73,7 +73,10 @@ class StubObservationService:
     async def create(self, _session, definition):
         self.created_definition = definition
         self.definition = self.definition.model_copy(
-            update={"knowledge_scope": definition.knowledge_scope}
+            update={
+                "knowledge_scope": definition.knowledge_scope,
+                "operational_context": definition.operational_context,
+            }
         )
         return self.definition
 
@@ -82,7 +85,10 @@ class StubObservationService:
             raise ApiError(404, "observation_not_found", "Observation definition was not found")
         self.replaced_definition = definition
         self.definition = self.definition.model_copy(
-            update={"knowledge_scope": definition.knowledge_scope}
+            update={
+                "knowledge_scope": definition.knowledge_scope,
+                "operational_context": definition.operational_context,
+            }
         )
         return self.definition
 
@@ -140,6 +146,7 @@ def test_list_is_compact_and_unknown_resource_uses_machine_error_envelope() -> N
 
     assert listed.status_code == 200
     assert listed.json()[0]["href"] == f"/api/v1/observations/{service.observation_id}"
+    assert "operational_context" not in listed.json()[0]
     assert missing.status_code == 404
     assert missing.json() == {
         "code": "observation_not_found",
@@ -215,6 +222,71 @@ def test_create_and_follow_lens_link() -> None:
     assert detail.status_code == 200
     assert lens.status_code == 200
     assert lens.json()["observation_href"] == created.json()["href"]
+
+
+def test_create_and_replace_round_trip_exact_operational_context() -> None:
+    service = StubObservationService()
+    app.dependency_overrides[get_service] = service_override(service)
+    app.dependency_overrides[get_session] = no_database_session
+    context = "  Startup mode\n\nTerminology: primary loop  "
+    payload = {
+        "name": "Cooling health",
+        "objective": "Detect instability.",
+        "operational_context": context,
+        "lenses": [
+            {
+                "id": "coolant-temperature",
+                "name": "Coolant temperature",
+                "type": "metric",
+                "metric_id": "coolant_temperature",
+                "adapter_type": "prometheus",
+                "source_id": "production-prometheus",
+                "query": "avg(coolant_temperature_celsius)",
+                "unit": "celsius",
+                "analysis_objectives": [],
+                "reference_periods": [],
+            }
+        ],
+        "relationships": [],
+    }
+    try:
+        created = request("POST", "/api/v1/observations", json=payload)
+        replaced = request(
+            "PUT",
+            f"/api/v1/observations/{service.observation_id}",
+            json={**payload, "operational_context": None},
+        )
+    finally:
+        app.dependency_overrides.clear()
+
+    assert created.status_code == 201
+    assert created.json()["operational_context"] == context
+    assert service.created_definition.operational_context == context
+    assert replaced.status_code == 200
+    assert replaced.json()["operational_context"] is None
+    assert service.replaced_definition.operational_context is None
+
+
+@pytest.mark.parametrize("context", [" \n\t ", "𐐷" * 4001])
+def test_invalid_operational_context_is_rejected_at_its_field(context: str) -> None:
+    service = StubObservationService()
+    app.dependency_overrides[get_service] = service_override(service)
+    app.dependency_overrides[get_session] = no_database_session
+    try:
+        response = request(
+            "POST",
+            "/api/v1/observations",
+            json={
+                "name": "Cooling health",
+                "objective": "Detect instability.",
+                "operational_context": context,
+            },
+        )
+    finally:
+        app.dependency_overrides.clear()
+
+    assert response.status_code == 422
+    assert response.json()["field"] == "operational_context"
 
 
 def test_replace_preserves_identity_and_rejects_response_only_fields() -> None:

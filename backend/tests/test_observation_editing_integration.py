@@ -215,6 +215,39 @@ def test_replace_persists_or_clears_optional_knowledge_scope(
     asyncio.run(scenario())
 
 
+def test_replace_persists_or_clears_operational_context_atomically(
+    session_factory: async_sessionmaker[AsyncSession],
+) -> None:
+    """Replacement stores or clears the definition-owned context in the same transaction."""
+
+    async def scenario() -> None:
+        repository = ObservationRepository()
+        observation_id = await _create_definition(session_factory, repository)
+        context = "  Startup mode\n\nTerminology: primary loop  "
+        with_context = _replacement_definition().model_copy(update={"operational_context": context})
+        async with session_factory.begin() as session:
+            replaced = await repository.replace(session, observation_id, with_context)
+            assert replaced is not None
+            assert replaced.operational_context == context
+
+        async with session_factory.begin() as session:
+            restored = await repository.get(session, observation_id)
+            assert restored is not None
+            assert restored.operational_context == context
+
+        async with session_factory.begin() as session:
+            cleared = await repository.replace(session, observation_id, _replacement_definition())
+            assert cleared is not None
+            assert cleared.operational_context is None
+
+        async with session_factory.begin() as session:
+            restored = await repository.get(session, observation_id)
+            assert restored is not None
+            assert restored.operational_context is None
+
+    asyncio.run(scenario())
+
+
 def test_replace_rollback_preserves_complete_definition_after_flush_failure(
     session_factory: async_sessionmaker[AsyncSession],
 ) -> None:

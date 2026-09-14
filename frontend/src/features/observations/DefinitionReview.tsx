@@ -3,7 +3,7 @@ import type { DraftErrors, ObservationDraft } from './draft'
 import type { ReactNode } from 'react'
 import { Activity, BellRing, CheckCircle2, CircleAlert, GitFork, Hash, Target, TriangleAlert, type LucideIcon } from 'lucide-react'
 
-type ReviewDefinition=Pick<ObservationDraft,'name'|'description'|'objective'|'lenses'|'alert_lenses'|'relationships'|'knowledge_scope'>
+type ReviewDefinition=Pick<ObservationDraft,'name'|'description'|'objective'|'operational_context'|'lenses'|'alert_lenses'|'relationships'|'knowledge_scope'>
 const formatScopeService=(service:KnowledgeServiceScope)=>`${service.service_id} · ${service.service_version??'all versions'}`
 
 /** Renders a read-only, ordered configuration review without changing the draft. */
@@ -30,6 +30,7 @@ export function DefinitionInspection({definition}:{definition:ObservationRespons
       <div className="p-6 sm:p-7">
         <div className="flex items-center gap-2 text-[var(--color-primary)]"><Target size={18} aria-hidden="true"/><h2 id="definition-overview-heading" className="text-sm font-semibold uppercase tracking-wide">Observation objective</h2></div>
         <p className="mt-3 max-w-3xl text-lg font-medium leading-7">{definition.objective}</p>
+        <div className="mt-5 border-t border-[var(--color-border)] pt-5"><h3 className="text-sm font-semibold">Operational context</h3><p className="mt-2 whitespace-pre-wrap text-sm leading-6 text-[var(--color-text-secondary)]">{definition.operational_context??'No operational context is set.'}</p></div>
         <dl className="mt-6 grid gap-4 border-t border-[var(--color-border)] pt-5 sm:grid-cols-[minmax(0,1fr)_9rem]">
           <OverviewValue icon={Hash} label="Definition ID" value={definition.id}/>
           <OverviewValue label="Schema version" value={String(definition.schema_version)}/>
@@ -86,7 +87,7 @@ function CompactValue({label,value}:{label:string;value:string}) { return <dl cl
 function CodeValue({label,value}:{label:string;value:string}) { return <dl className="min-w-0 sm:col-span-2"><dt className="text-xs font-medium uppercase tracking-wide text-[var(--color-text-secondary)]">{label}</dt><dd className="mt-1 overflow-x-auto whitespace-pre-wrap break-words rounded-lg border border-[var(--color-border)] bg-[var(--color-surface-muted)] px-3 py-2 font-mono text-sm">{value}</dd></dl> }
 function ChipList({label,values}:{label:string;values:string[]}) { return <dl className="min-w-0"><dt className="text-xs font-medium uppercase tracking-wide text-[var(--color-text-secondary)]">{label}</dt><dd className="mt-2 flex flex-wrap gap-1.5">{label==='Reference periods'&&values.length?<span className="sr-only">References: {values.join(', ')}</span>:null}{values.length?values.map((value,index)=><span key={`${value}-${index}`} className="max-w-full break-words rounded-md border border-[var(--color-border)] bg-[var(--color-surface-muted)] px-2 py-1 text-xs">{value}</span>):<span className="text-sm text-[var(--color-text-secondary)]">None</span>}</dd></dl> }
 
-function ReviewGeneral({definition}:{definition:ReviewDefinition}) { return <section className="mt-5 border-t border-[var(--color-border)] pt-4"><h3 className="font-semibold">General</h3><DefinitionValue label="Name" value={definition.name||'Not set'}/><DefinitionValue label="Description" value={definition.description||'None'}/><DefinitionValue label="Objective" value={definition.objective||'Not set'}/></section> }
+function ReviewGeneral({definition}:{definition:ReviewDefinition}) { return <section className="mt-5 border-t border-[var(--color-border)] pt-4"><h3 className="font-semibold">General</h3><DefinitionValue label="Name" value={definition.name||'Not set'}/><DefinitionValue label="Description" value={definition.description||'None'}/><DefinitionValue label="Objective" value={definition.objective||'Not set'}/><DefinitionValue label="Operational context" value={definition.operational_context||'None'} preserveWhitespace/></section> }
 function ReviewGroup({title,empty,children}:{title:string;empty:string;children:ReactNode[]}) { return <section className="mt-5 border-t border-[var(--color-border)] pt-4"><p className="font-semibold">{title}</p>{children.length?<div className="mt-3 space-y-3">{children}</div>:<p className="mt-2 text-sm text-[var(--color-text-secondary)]">{empty}</p>}</section> }
 function DefinitionValue({label,value,preserveWhitespace=false}:{label:string;value:string;preserveWhitespace?:boolean}) { return <p className="mt-2 text-sm"><span className="font-medium">{label}:</span> <span className={preserveWhitespace?'whitespace-pre-wrap':''}>{value}</span></p> }
 function DefinitionList({label,values}:{label:string;values:string[]}) { return <div className="mt-2 text-sm"><span className="font-medium">{label}:</span>{values.length?<><span className="sr-only"> {values.join(', ')}</span>{label==='Reference periods'?<p>References: {values.join(', ')}</p>:null}<ol className="ml-5 list-decimal">{values.map((value,index)=><li key={`${value}-${index}`} className="whitespace-pre-wrap">{value}</li>)}</ol></>:<span> None</span>}</div> }

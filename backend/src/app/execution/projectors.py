@@ -123,6 +123,7 @@ def build_observation_reasoning_input(
         name=snapshot.name,
         description=snapshot.description,
         analytical_objective=snapshot.objective,
+        operational_context=snapshot.operational_context,
         lenses=tuple(_reasoning_lens(item) for item in _canonical_lenses(snapshot)),
     )
     order = {
@@ -177,6 +178,7 @@ def report_generation_request(
             name=snapshot.name,
             description=snapshot.description,
             analytical_objective=snapshot.objective,
+            operational_context=snapshot.operational_context,
         ),
         analysis_result=result,
         analysis_window=ReportAnalysisWindow(

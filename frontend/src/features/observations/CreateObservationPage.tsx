@@ -14,7 +14,7 @@ type NormalizedIssue = ValidationIssue & { path: string; section: ConfigurationS
 const sectionActivationOffset = 160
 
 function sectionForPath(path: string): ConfigurationSectionId {
-  if (['name', 'description', 'objective'].includes(path)) return 'general'
+  if (['name', 'description', 'objective', 'operational_context'].includes(path)) return 'general'
   if (path.startsWith('knowledge_scope')) return 'knowledge-scope'
   if (path.startsWith('lenses.')) return 'metric-lenses'
   if (path.startsWith('alert_lenses.')) return 'alert-lenses'
@@ -25,7 +25,7 @@ function sectionForPath(path: string): ConfigurationSectionId {
 function normalizeIssues(errors: DraftErrors, draft: ObservationDraft): NormalizedIssue[] {
   return Object.entries(errors).map(([path, message]) => {
     const section = sectionForPath(path)
-    if (['name', 'description', 'objective'].includes(path)) return { path, message, section, to: `#general-${path}`, linkLabel: `Correct ${path}` }
+    if (['name', 'description', 'objective', 'operational_context'].includes(path)) return { path, message, section, to: `#general-${path}`, linkLabel: `Correct ${path.replace('_', ' ')}` }
     const match = /^(lenses|alert_lenses|relationships)\.(\d+)(?:\.|$)/.exec(path)
     if (!match) return { path, message, section, to: `#${section}`, linkLabel: `Go to ${section === 'review' ? 'Review' : section}` }
     const index = Number(match[2])
@@ -44,6 +44,7 @@ export function CreateObservationPage() {
   const [failure, setFailure] = useState('')
   const [pending, setPending] = useState(false)
   const [activeSection, setActiveSection] = useState<ConfigurationSectionId>('general')
+  const [operationalContextOpen, setOperationalContextOpen] = useState(() => Boolean(draft?.operational_context))
   const animationFrame = useRef<number | null>(null)
   const summaryRef = useRef<HTMLDivElement>(null)
 
@@ -72,6 +73,7 @@ export function CreateObservationPage() {
   const submit = async () => {
     if (pending) return
     const next = validateDraft(draft)
+    if (next.operational_context) setOperationalContextOpen(true)
     setExplicitErrors(next)
     setFailure('')
     if (Object.keys(next).length) return
@@ -82,7 +84,7 @@ export function CreateObservationPage() {
       navigate(`/observations/${created.id}`, { replace: true, state: { [mode === 'edit' ? 'updated' : 'created']: true } })
     } catch (error) {
       const api = error instanceof ApiError ? error : null
-      if (api?.field) setExplicitErrors({ [api.field]: api.message })
+      if (api?.field) { if (api.field==='operational_context') setOperationalContextOpen(true); setExplicitErrors({ [api.field]: api.message }) }
       else setFailure(api?.status === 404 && mode === 'edit' ? 'This Observation definition is no longer available. Your draft is retained.' : api?.message ?? `Unable to ${mode === 'edit' ? 'update' : 'create'} the Observation definition.`)
     } finally { setPending(false) }
   }
@@ -105,6 +107,7 @@ export function CreateObservationPage() {
           <Field label="Name" description="Human-readable name for this Observation Definition." error={errors.name}><Input id="general-name" placeholder="Cooling system health" value={draft.name} onChange={(event) => updateGeneral({ ...draft, name: event.target.value })} /></Field>
           <Field label="Description (optional)" description="Optional context that explains this Observation." error={errors.description}><Textarea id="general-description" placeholder="Monitors cooling-system operating conditions." value={draft.description} onChange={(event) => updateGeneral({ ...draft, description: event.target.value })} /></Field>
           <Field label="Objective" description="Outcome this Observation should evaluate." error={errors.objective}><Textarea id="general-objective" placeholder="Detect unexpected cooling pressure changes." value={draft.objective} onChange={(event) => updateGeneral({ ...draft, objective: event.target.value })} /></Field>
+          <details open={operationalContextOpen} onToggle={(event) => setOperationalContextOpen(event.currentTarget.open)} className="rounded-lg border border-[var(--color-border)] bg-[var(--color-surface-muted)] px-4 py-3"><summary className="cursor-pointer font-medium">Add operational context (optional)</summary>{!operationalContextOpen&&draft.operational_context?<p className="mt-2 text-sm text-[var(--color-text-secondary)]">{previewOperationalContext(draft.operational_context)}</p>:null}<div className="mt-4"><Field label="Operational context (optional)" description="Describe operating conditions, expected behavior, or terminology. This is sent to the Reasoning and Report agents during a run." error={errors.operational_context}><Textarea id="general-operational_context" value={draft.operational_context??''} onChange={(event) => updateGeneral({ ...draft, operational_context: event.target.value })} /></Field><p className="mt-2 text-xs text-[var(--color-text-secondary)]">{Array.from(draft.operational_context??'').length}/4,000 Unicode code points</p></div></details>
         </div></section>
         <KnowledgeScopeField draft={draft} onChange={updateKnowledgeScope} errors={errors} />
         <ConfigurationSection id="metric-lenses" icon={<Activity size={18} aria-hidden="true" />} title="Metric lenses" description="Configure the individual metrics this Observation evaluates." addTo="metric-lenses/new" addLabel="Add Metric Lens">{draft.lenses.map((metric, index) => <DraftRow key={metric.clientKey} name={metric.name || 'Unnamed Metric Lens'} to={`metric-lenses/${metric.clientKey}`} errors={childErrors(errors, 'lenses', index)} onRemove={() => removeChild('metric', metric.clientKey)} onMove={(direction) => moveChild('metric', metric.clientKey, direction)} canMoveUp={index > 0} canMoveDown={index < draft.lenses.length - 1} />)}</ConfigurationSection>
@@ -115,6 +118,8 @@ export function CreateObservationPage() {
     </div>
   </div></section>
 }
+
+function previewOperationalContext(value:string) { const compact=value.replace(/\s+/g,' ').trim(); return compact.length>120?`${compact.slice(0,120)}…`:compact }
 
 function ConfigurationNav({ activeSection, onActivate, issueCounts }: { activeSection: ConfigurationSectionId; onActivate: (section: ConfigurationSectionId) => void; issueCounts: Partial<Record<ConfigurationSectionId, number>> }) { return <nav aria-label="Configuration sections" className="hidden h-fit self-start rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] p-3 lg:sticky lg:top-6 lg:block"><p className="px-3 pb-2 text-sm font-semibold">Configuration</p><div className="grid gap-1">{configurationSections.map(([target, label]) => { const isActive = activeSection === target; const count = issueCounts[target]; return <a key={target} href={`#${target}`} aria-current={isActive ? 'location' : undefined} onClick={() => onActivate(target)} className={`flex items-center justify-between gap-2 rounded-lg px-3 py-2 text-sm transition-colors focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--color-focus)] ${isActive ? 'bg-[color-mix(in_srgb,var(--color-primary)_12%,transparent)] font-semibold text-[var(--color-primary)]' : 'text-[var(--color-text-secondary)] hover:bg-[var(--color-surface-muted)] hover:text-[var(--color-text-primary)]'}`}><span>{label}</span>{count ? <span aria-label={`${count} issue${count === 1 ? '' : 's'}`} className="rounded-full bg-[var(--color-error-surface)] px-1.5 py-0.5 text-xs font-semibold text-[var(--color-error)]">{count}</span> : null}</a> })}</div></nav> }
 function childErrors(errors: DraftErrors, collection: 'lenses' | 'alert_lenses' | 'relationships', index: number) { const root=`${collection}.${index}`; return Object.entries(errors).filter(([path]) => path === root || path.startsWith(`${root}.`)).map(([, message]) => message) }

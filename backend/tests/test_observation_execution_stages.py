@@ -1028,6 +1028,48 @@ def test_reasoning_projector_excludes_retriever_scope_from_model_input() -> None
     assert "knowledge_scope" not in value.model_dump()
 
 
+def test_context_projection_is_frozen_and_limited_to_reasoning_and_reporting() -> None:
+    """An operator note reaches only the two compact downstream semantic contexts."""
+    base = _stage_snapshot(include_alert=False)
+    snapshot = replace(
+        base, metric_lenses=(base.metric_lenses[0],), operational_context="Startup\nmode"
+    )
+    run_id = uuid4()
+    assignment = replace(
+        _assignment(snapshot, snapshot.metric_lenses[0]), observation_run_id=run_id
+    )
+    reasoning = build_observation_reasoning_input(
+        snapshot,
+        LensOutcomePartition(
+            usable=(
+                CollectedLensOutcome(
+                    assignment=assignment,
+                    status="completed",
+                    artifact=_metric_artifact(snapshot, assignment),
+                ),
+            ),
+            unavailable=(),
+        ),
+        (),
+        observation_run_id=run_id,
+    )
+    result = ObservationAnalysisResult(
+        identity=ObservationIdentity(
+            observation_id=snapshot.observation_id, observation_run_id=run_id
+        ),
+        overall_state="no_significant_findings",
+        findings=(),
+        hypotheses=(),
+        limitations=(),
+    )
+
+    report = report_generation_request(snapshot, result)
+
+    assert reasoning.context.operational_context == "Startup\nmode"
+    assert report.context.operational_context == "Startup\nmode"
+    assert not hasattr(snapshot.metric_lenses[0], "operational_context")
+
+
 def test_reasoning_projector_rejects_malformed_json_payload() -> None:
     """JSON fallback must not turn malformed persisted evidence into a usable result."""
     base = _stage_snapshot(include_alert=False)

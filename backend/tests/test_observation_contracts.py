@@ -101,6 +101,27 @@ def test_definition_contract_accepts_metric_topology() -> None:
     assert definition.relationships[0].conditions == {}
 
 
+@pytest.mark.parametrize(
+    "value", [None, "  Startup mode\n\nTerminology: primary loop  ", "𐐷" * 4000]
+)
+def test_definition_contract_accepts_absent_or_bounded_operational_context(
+    value: str | None,
+) -> None:
+    definition = ObservationCreate.model_validate(
+        {**valid_definition(), "operational_context": value}
+    )
+
+    assert definition.operational_context == value
+
+
+@pytest.mark.parametrize("value", [" \n\t ", "x" * 4001])
+def test_definition_contract_rejects_blank_or_oversized_operational_context(value: str) -> None:
+    with pytest.raises(ValidationError) as raised:
+        ObservationCreate.model_validate({**valid_definition(), "operational_context": value})
+
+    assert raised.value.errors()[0]["loc"] == ("operational_context",)
+
+
 class RecordingSession:
     def __init__(self) -> None:
         self.added: object | None = None
@@ -127,6 +148,18 @@ def test_repository_builds_one_owned_aggregate() -> None:
         "coolant-pressure",
     ]
     assert aggregate.relationships[0].participants == ["coolant-temperature", "coolant-pressure"]
+
+
+def test_repository_preserves_exact_operational_context() -> None:
+    session = RecordingSession()
+    context = "  Startup mode\n\nTerminology: primary loop  "
+    definition = ObservationCreate.model_validate(
+        {**valid_definition(), "operational_context": context}
+    )
+
+    aggregate = asyncio.run(ObservationRepository().create(session, definition))
+
+    assert aggregate.operational_context == context
 
 
 def test_repository_serializes_optional_knowledge_scope_as_json_lists() -> None:
@@ -210,6 +243,7 @@ def test_capabilities_and_relative_hrefs_expose_only_safe_configuration(monkeypa
         alert_lenses=[],
         relationships=[],
         knowledge_scope={"service_ids": ["cooling-loop"], "service_version": "2.x"},
+        operational_context="Exact context",
     )
     summary = service.observation_summary(observation)
     assert summary.href == f"/api/v1/observations/{observation.id}"
@@ -217,6 +251,8 @@ def test_capabilities_and_relative_hrefs_expose_only_safe_configuration(monkeypa
     assert tuple(service.service_id for service in summary.knowledge_scope.services) == (
         "cooling-loop",
     )
+    assert "operational_context" not in summary.model_dump()
+    assert service.observation_response(observation).operational_context == "Exact context"
 
 
 @pytest.mark.parametrize(

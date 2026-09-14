@@ -5,7 +5,7 @@ export interface ObservationSummary { id:string; name:string; description:string
 export interface MetricLens extends LensReference { description:string|null; metric_id:string; adapter_type:'prometheus'; source_id:string; query:string; unit:string; analysis_objectives:string[]; reference_periods:string[]; observation_href:string }
 export interface AlertLens extends AlertLensReference { description:string|null; source:'jira_track_and_release'; selector:{query:string}; analysis_objectives:string[]; reference_periods:string[]; observation_href:string }
 export interface Relationship extends RelationshipReference { description:string|null; participants:string[]; conditions:Record<string,SemanticDescriptor>; expected:Record<string,SemanticDescriptor>; observation_href:string }
-export interface ObservationResponse extends Omit<ObservationSummary,'lenses'|'alert_lenses'|'relationships'> { lenses:MetricLens[]; alert_lenses:AlertLens[]; relationships:Relationship[]; knowledge_scope?:KnowledgeScope|null }
+export interface ObservationResponse extends Omit<ObservationSummary,'lenses'|'alert_lenses'|'relationships'> { lenses:MetricLens[]; alert_lenses:AlertLens[]; relationships:Relationship[]; knowledge_scope?:KnowledgeScope|null; operational_context:string|null }
 /** One service's independently optional knowledge-applicability version. */
 export interface KnowledgeServiceScope { service_id:string; service_version:string|null }
 /** Optional retrieval-only service scope attached to an Observation aggregate. */
@@ -32,7 +32,7 @@ export interface PrometheusMetricCapability { adapter_type:'prometheus'; sources
 /** Available acquisition sources supplied by the definition API. */
 export interface DefinitionCapabilities { metric:PrometheusMetricCapability[] }
 /** Public Observation creation request. */
-export interface ObservationCreate { name:string; description:string|null; objective:string; lenses:MetricLensCreate[]; alert_lenses:AlertLensCreate[]; relationships:RelationshipCreate[]; knowledge_scope?:KnowledgeScope|null }
+export interface ObservationCreate { name:string; description:string|null; objective:string; lenses:MetricLensCreate[]; alert_lenses:AlertLensCreate[]; relationships:RelationshipCreate[]; knowledge_scope?:KnowledgeScope|null; operational_context?:string|null }
 /** Transient text projection permitted for an explicit scope suggestion. */
 export interface KnowledgeScopeSuggestionRequest { name:string; description:string|null; objective:string; lenses:{name:string;description:string|null}[] }
 /** Catalog-backed advisory scope returned without persistence. */

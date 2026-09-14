@@ -1,8 +1,8 @@
-# UI Implementation Handoff — v1.10
+# UI Implementation Handoff — v1.11
 
 **Project:** IPO (Intelligent Process Observer) / Master Thesis
-**Status:** Accepted living major-v1 implementation handoff for MVP UI Direction v1.10
-**Date:** 2026-09-13
+**Status:** Accepted living major-v1 implementation handoff for MVP UI Direction v1.11
+**Date:** 2026-09-14
 
 ## 1. Purpose
 
@@ -741,6 +741,10 @@ Conditions determine applicability; expectations are evaluated only when applica
 
 ## 10. Form interaction rules
 
+### Operational context
+
+Immediately after Objective, General offers an accessible `Add operational context (optional)` disclosure. It starts collapsed for an empty new draft and open for a populated edit draft. When collapsed with text, show a short preview while retaining the complete exact draft value. The multiline field explains that it describes operating conditions, expected behavior, or terminology and is sent to Reasoning and Report agents during a run. Empty input serializes as `null`; non-empty input remains exact, rejects blank-only text and values over 4,000 Unicode code points, and opens the disclosure to show an associated error. Review and read-only definition inspection show the full text with line breaks preserved, or an explicit absent state. This remains one aggregate field: no navigation item, nested editor, editing-time model call, or separate save action is introduced.
+
 ### Analysis objectives
 
 Use a shared inline pattern:
@@ -838,7 +842,7 @@ If `add-observation-management-ui` is the first frontend OpenSpec change, it may
 
 ## 15. Versioning and change-control rule
 
-**UI Direction v1.10 is the accepted current direction.**
+**UI Direction v1.11 is the accepted current direction.**
 
 Implementation may make minor technical adjustments for responsive fit, accessibility, browser behavior, real data length and actual API constraints, but must not silently change:
 

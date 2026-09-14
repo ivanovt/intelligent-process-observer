@@ -159,6 +159,7 @@ class ObservationCreate(ApiModel):
     name: str = Field(min_length=1)
     description: str | None = None
     objective: str = Field(min_length=1)
+    operational_context: str | None = Field(default=None, max_length=4000)
     lenses: list[MetricLensCreate] = Field(default_factory=list)
     alert_lenses: list[AlertLensCreate] = Field(default_factory=list)
     relationships: list[RelationshipCreate] = Field(default_factory=list)
@@ -169,6 +170,14 @@ class ObservationCreate(ApiModel):
     def normalize_knowledge_scope(cls, value: object) -> object:
         """Normalize canonical or legacy JSON before strict scope validation."""
         return None if value is None else parse_knowledge_scope(value)
+
+    @field_validator("operational_context")
+    @classmethod
+    def validate_operational_context(cls, value: str | None) -> str | None:
+        """Reject a supplied context that has no non-whitespace content."""
+        if value is not None and not value.strip():
+            raise ValueError("operational_context must contain non-whitespace content")
+        return value
 
     @model_validator(mode="after")
     def validate_topology(self) -> ObservationCreate:
@@ -242,6 +251,7 @@ class RelationshipResponse(RelationshipCreate):
 
 
 class ObservationResponse(ObservationSummary):
+    operational_context: str | None = None
     lenses: list[MetricLensResponse]
     alert_lenses: list[AlertLensResponse] = Field(default_factory=list)
     relationships: list[RelationshipResponse]
