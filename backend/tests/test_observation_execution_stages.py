@@ -59,13 +59,24 @@ from app.metrics.contracts import (
 )
 from app.metrics.result_builder import MetricResultBuilder
 from app.reasoning.contracts import (
+    EvidenceReference,
+    Finding,
+    MissingLensEvidence,
     ObservationAnalysisResult,
     ObservationIdentity,
     ReasoningFailure,
     ReasoningSuccess,
 )
 from app.relationships.contracts import UnknownRelationshipEvaluation
-from app.reporting.contracts import ObservationReport, ReportFailure, ReportSuccess
+from app.reporting.contracts import (
+    FindingPresentation,
+    LimitationPresentation,
+    ObservationReport,
+    ReportFailure,
+    ReportPresentationDraft,
+    ReportSuccess,
+)
+from app.reporting.executor import ReportGenerationExecutor
 
 
 def _stage_snapshot(*, relationships=(), include_alert=True) -> ObservationExecutionSnapshot:
@@ -1118,6 +1129,136 @@ def test_report_projector_preserves_exact_frozen_observed_window() -> None:
     assert request.analysis_window.from_ == precise_window.from_
     assert request.analysis_window.to == precise_window.to
     assert type(request.analysis_window).__module__ == "app.reporting.contracts"
+
+
+@pytest.mark.parametrize(
+    ("overall_state", "findings", "limitations"),
+    [
+        (
+            "significant_findings_present",
+            (
+                Finding(
+                    id="populated-finding",
+                    statement="A populated result.",
+                    evidence_refs=(
+                        EvidenceReference(
+                            source_type="metric_result",
+                            source_id="metric-run",
+                            locator=("evidence", "mean"),
+                        ),
+                    ),
+                ),
+            ),
+            (),
+        ),
+        ("no_significant_findings", (), ()),
+        (
+            "uncertain",
+            (),
+            (MissingLensEvidence(lens_id="pressure", lens_type="metric"),),
+        ),
+        (
+            "significant_findings_present",
+            (
+                Finding(
+                    id="mixed-reference-finding",
+                    statement="Current and reference perspectives differ.",
+                    evidence_refs=(
+                        EvidenceReference(
+                            source_type="metric_result",
+                            source_id="metric-run",
+                            locator=("current",),
+                        ),
+                        EvidenceReference(
+                            source_type="metric_result",
+                            source_id="metric-run",
+                            locator=("reference_periods", 0),
+                        ),
+                        EvidenceReference(
+                            source_type="metric_result",
+                            source_id="metric-run",
+                            locator=("reference_periods", 1),
+                        ),
+                    ),
+                ),
+            ),
+            (),
+        ),
+    ],
+    ids=("populated", "empty", "uncertain", "mixed-reference"),
+)
+def test_report_stage_preserves_window_and_existing_persistence_envelope_across_analyses(
+    overall_state, findings, limitations
+) -> None:
+    """Completed report variants retain exact run context and the unchanged report envelope."""
+    snapshot = _stage_snapshot(include_alert=False)
+    precise_window = AnalysisWindow(
+        from_=datetime(2026, 1, 1, 0, 0, 0, 123456, tzinfo=UTC),
+        to=datetime(2026, 1, 1, 0, 0, 1, 654321, tzinfo=UTC),
+    )
+    snapshot = replace(snapshot, analysis_window=precise_window)
+    run_id = uuid4()
+    analysis = ObservationAnalysisResult(
+        identity=ObservationIdentity(
+            observation_id=snapshot.observation_id, observation_run_id=run_id
+        ),
+        overall_state=overall_state,
+        findings=findings,
+        hypotheses=(),
+        limitations=limitations,
+    )
+    captured = []
+
+    class Agent:
+        async def complete_presentation(self, request):
+            captured.append(request)
+            return ReportPresentationDraft(
+                overall_state=request.analysis_result.overall_state,
+                overall_assessment="The supplied analysis is presented without new claims.",
+                objective_summary="Assess the available process evidence.",
+                findings=tuple(
+                    FindingPresentation(
+                        finding_id=item.id,
+                        heading="Observed evidence",
+                        presentation="The supplied evidence is retained.",
+                    )
+                    for item in request.analysis_result.findings
+                ),
+                limitations=tuple(
+                    LimitationPresentation(
+                        limitation_index=index,
+                        presentation="The supplied evidence was unavailable.",
+                    )
+                    for index, _item in enumerate(request.analysis_result.limitations)
+                ),
+            )
+
+    tx = _StageTransaction(
+        ObservationRunModel(id=run_id, observation_id=snapshot.observation_id, status="running"),
+        analysis=_stored_analysis(analysis),
+    )
+    repo = _StageRepository()
+    result = asyncio.run(
+        generate_and_persist_report(
+            session_factory=_StageFactory(tx),
+            runtime_repository=repo,
+            executor=ReportGenerationExecutor(
+                Agent(), clock=lambda: datetime(2026, 1, 2, tzinfo=UTC)
+            ),
+            snapshot=snapshot,
+            analysis_result=analysis,
+            observation_run_id=run_id,
+        )
+    )
+
+    assert result.observation_run_id == run_id and tx.committed
+    assert captured[0].analysis_window.from_ == precise_window.from_
+    assert captured[0].analysis_window.to == precise_window.to
+    report_input = next(call[1] for call in repo.calls if call[0] == "report")
+    assert report_input.format == "markdown"
+    assert report_input.content.startswith("# Observation Report")
+    assert report_input.generated_at == datetime(2026, 1, 2, tzinfo=UTC)
+    assert [call[0] for call in repo.calls] == ["report", "advance"]
 
 
 def test_report_stage_uses_committed_analysis_instead_of_caller_analysis() -> None:
