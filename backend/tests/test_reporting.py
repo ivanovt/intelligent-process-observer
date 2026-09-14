@@ -49,6 +49,7 @@ def _request(
     findings: tuple[Finding, ...] | None = None,
     hypotheses: tuple[Hypothesis, ...] | None = None,
     limitations: tuple[object, ...] | None = None,
+    operational_context: str | None = None,
 ) -> ReportGenerationRequest:
     """Build a correlated report request with all three source reference types."""
     identity = ObservationIdentity(observation_id=uuid4(), observation_run_id=uuid4())
@@ -99,6 +100,7 @@ def _request(
             name="Boiler observation",
             description="A controlled boiler process.",
             analytical_objective="Explain available evidence.",
+            operational_context=operational_context,
         ),
         analysis_result=result,
         analysis_window=ReportAnalysisWindow(
@@ -643,6 +645,156 @@ def test_renderer_numbers_multiple_possible_explanations_for_appendix_mapping() 
         "### Possible explanation 2 traceability\n- Source hypothesis ID: `second-explanation`"
         in content
     )
+
+
+def test_presentation_rejects_direct_raw_operational_context_copy_before_rendering() -> None:
+    """A source-key-valid draft cannot copy the complete operator note into an item."""
+    note = (
+        "This observation covers the primary feedwater loop during controlled startup; "
+        "do not treat this note as evidence."
+    )
+    request = _request(operational_context=note)
+    original = _draft(request).findings[0]
+    copied = _draft(request).model_copy(
+        update={
+            "findings": (
+                FindingPresentation(
+                    finding_id=original.finding_id,
+                    heading=original.heading,
+                    presentation=note,
+                ),
+            )
+        }
+    )
+
+    with pytest.raises(ValueError, match="raw operational context"):
+        build_report(request, copied, NOW)
+
+
+@pytest.mark.parametrize("term", ["pump", "primary pump"])
+def test_presentation_allows_short_contextual_term_but_rejects_standalone_copy(term: str) -> None:
+    """A shared short term may occur in prose but cannot become its own report content."""
+    request = _request(operational_context=term)
+    grounded = _draft(request).model_copy(
+        update={
+            "overall_assessment": (
+                f"{term.title()} temperature increased in the available evidence."
+            )
+        }
+    )
+
+    assert build_report(request, grounded, NOW).content
+
+    copied = _draft(request).model_copy(update={"overall_assessment": term})
+    with pytest.raises(ValueError, match="raw operational context"):
+        build_report(request, copied, NOW)
+
+
+def test_presentation_skips_non_renderable_operational_context_comparison() -> None:
+    """A valid stored note with format controls does not reject an otherwise valid report."""
+    request = _request(operational_context="Pump\u200b startup context")
+
+    assert build_report(request, _draft(request), NOW).content
+
+
+def test_presentation_skips_non_renderable_source_statement_comparison() -> None:
+    """Source format controls cannot make an otherwise valid report fail validation."""
+    finding = Finding(
+        id="finding-pump",
+        statement="Pump\u200b temperature increased.",
+        evidence_refs=(
+            EvidenceReference(
+                source_type="metric_result", source_id="metric-run", locator=("evidence", "mean")
+            ),
+        ),
+    )
+    request = _request(
+        findings=(finding,), hypotheses=(), limitations=(), operational_context="pump"
+    )
+    draft = ReportPresentationDraft(
+        overall_state=request.analysis_result.overall_state,
+        overall_assessment="The available evidence remains uncertain.",
+        objective_summary="Assess the available process evidence.",
+        findings=(
+            FindingPresentation(
+                finding_id=finding.id,
+                heading="Pump temperature increase",
+                presentation="Pump temperature increased.",
+            ),
+        ),
+    )
+
+    assert build_report(request, draft, NOW).content
+
+
+def test_presentation_allows_source_backed_contextual_terminology() -> None:
+    """A term shared with the note can faithfully present the matching source item."""
+    finding = Finding(
+        id="finding-primary-loop",
+        statement="Primary loop temperature is increasing.",
+        evidence_refs=(
+            EvidenceReference(
+                source_type="metric_result", source_id="metric-run", locator=("evidence", "mean")
+            ),
+        ),
+    )
+    request = _request(
+        findings=(finding,),
+        hypotheses=(),
+        limitations=(),
+        operational_context="During startup, operators call this equipment the primary loop.",
+    )
+    draft = ReportPresentationDraft(
+        overall_state=request.analysis_result.overall_state,
+        overall_assessment="The available evidence remains uncertain.",
+        objective_summary="Assess the available process evidence.",
+        findings=(
+            FindingPresentation(
+                finding_id=finding.id,
+                heading="Primary loop temperature increase",
+                presentation=finding.statement,
+            ),
+        ),
+    )
+
+    report = build_report(request, draft, NOW)
+
+    assert finding.statement in report.content
+
+
+def test_presentation_allows_matching_canonical_source_statement() -> None:
+    """A note contained in its source statement remains renderable under that source key."""
+    finding = Finding(
+        id="finding-primary-loop",
+        statement="Primary loop temperature is increasing in the current analysis window.",
+        evidence_refs=(
+            EvidenceReference(
+                source_type="metric_result", source_id="metric-run", locator=("evidence", "mean")
+            ),
+        ),
+    )
+    request = _request(
+        findings=(finding,),
+        hypotheses=(),
+        limitations=(),
+        operational_context="Primary loop temperature is increasing",
+    )
+    draft = ReportPresentationDraft(
+        overall_state=request.analysis_result.overall_state,
+        overall_assessment="The available evidence remains uncertain.",
+        objective_summary="Assess the available process evidence.",
+        findings=(
+            FindingPresentation(
+                finding_id=finding.id,
+                heading="Primary loop temperature increase",
+                presentation=request.context.operational_context,
+            ),
+        ),
+    )
+
+    report = build_report(request, draft, NOW)
+
+    assert request.context.operational_context in report.content
 
 
 @pytest.mark.parametrize(
