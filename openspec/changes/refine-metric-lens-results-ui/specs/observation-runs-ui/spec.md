@@ -2,20 +2,26 @@
 
 ### Requirement: Browse Metric Lens outcomes within one run
 
-The Run Detail `Metrics` section SHALL show one selectable item for every Metric LensRun in the loaded durable run-detail response, including pending, running, completed, partial, failed, cancelled, and completed-insufficient outcomes. It SHALL show the total Metric LensRun count without describing every outcome as analyzed. On first load with at least one Metric LensRun, it SHALL select the first item in response order and show exactly one item's detail at a time. The selected item SHALL be visibly and programmatically identified; users SHALL be able to dismiss its detail and select another item. At narrow widths, the same list and detail SHALL remain usable in sequence without horizontal clipping or loss of information. An empty Metric collection SHALL retain the run-detail empty-state meaning.
+The Run Detail `Metrics` section SHALL show one selectable card for every Metric LensRun in the loaded durable run-detail response, including pending, running, completed, partial, failed, cancelled, and completed-insufficient outcomes. It SHALL show the total Metric LensRun count and whether zero or one card is selected without describing every outcome as analyzed. No card SHALL be selected and no detail pane SHALL be rendered when the section first opens, even when results are present. Selecting a card SHALL identify it visibly and programmatically and open only that card's detail. Dismissing the pane SHALL clear selection and restore the card list to the available content width. With a pane open at desktop width, the card area SHALL remain wider than the pane, as in the supplied mock; at narrow widths, cards and selected detail SHALL remain usable in sequence without horizontal clipping or lost information. An empty Metric collection SHALL retain the run-detail empty-state meaning.
 
 #### Scenario: Compare mixed outcomes
 
 - **GIVEN** a run detail contains completed, partial, and failed Metric LensRuns
 - **WHEN** the Metrics section opens
-- **THEN** all three appear in response order, the first is selected, and the count is three Metric Lenses
+- **THEN** all three appear in response order, none is selected, no detail pane appears, and the header shows three Metric Lenses and zero selected
 - **AND** the failed Lens remains selectable without being described as successfully analyzed
 
 #### Scenario: Select and dismiss detail
 
-- **WHEN** the user selects another Metric LensRun and then dismisses the detail
-- **THEN** only the selected Lens's detail is shown before dismissal, and no detail is shown afterward
+- **WHEN** the user selects a Metric LensRun and then dismisses the detail
+- **THEN** only the selected Lens's detail is shown before dismissal, and no detail pane is rendered afterward
 - **AND** the list remains available for a new selection
+
+#### Scenario: Keep a closed pane closed during refresh
+
+- **GIVEN** the Metrics section is open with no card selected
+- **WHEN** automatic or manual refresh succeeds
+- **THEN** refreshed cards remain visible without opening a detail pane or selecting a card
 
 #### Scenario: Use the Metrics section at a narrow width
 
@@ -25,7 +31,7 @@ The Run Detail `Metrics` section SHALL show one selectable item for every Metric
 
 ### Requirement: Summarize each Metric Lens without overstating its evidence
 
-Each Metric list item SHALL display its Lens execution status and available start time and duration as separate operational information. When a Metric result supplies frozen `metric_ref` and unit, those SHALL be the primary measurement identity and the exact Lens ID SHALL remain accessible as secondary traceability. If no result is available, the Lens ID SHALL identify the item without fetching a mutable Observation Definition or inventing a Lens name. A usable good/degraded result SHALL show data quality, mandatory current trend direction/rate and variability, and a compact numerical summary from its accepted current evidence. Completed-insufficient, failed, cancelled, pending, and running outcomes SHALL explain why current semantic or numerical evidence is unavailable instead of rendering a fabricated state or zero. Partial results SHALL show their usable current evidence alongside the supported limitation/reason. Status, quality, and semantic cues SHALL use text as well as color.
+Each Metric card SHALL present information in this scanning order: frozen measurement identity, data quality when available, and Lens execution status; available start time and duration; a visually distinct semantic-state area; then a compact evidence summary. When a Metric result supplies frozen `metric_ref` and unit, those SHALL be the primary measurement identity and the exact Lens ID SHALL remain accessible as secondary traceability. If no result is available, the Lens ID SHALL identify the card without fetching a mutable Observation Definition or inventing a Lens name. A usable good/degraded result SHALL show mandatory current trend direction, trend rate, and variability as three labelled items in the semantic-state area. Its evidence summary SHALL present mean, range (minimum–maximum), slope, returned reference-period availability, and persisted-History direction/pattern in that order. It SHALL retain bounded number formatting and SHALL show only returned reference offsets; absence SHALL NOT be attributed to a guessed configured offset. Completed-insufficient, failed, cancelled, pending, and running outcomes SHALL display an explicit unavailable semantic state and explain why current numerical evidence is unavailable instead of rendering a fabricated descriptor or zero. Partial results SHALL show usable current evidence alongside the supported limitation/reason. Cards SHALL use a leading meaning-aligned trend or failure icon and smaller trend/availability cues within the semantic/evidence groups; icons SHALL be decorative and never replace text. Status, quality, and semantic cues SHALL use text as well as color.
 
 #### Scenario: Scan a usable partial result
 
@@ -34,12 +40,20 @@ Each Metric list item SHALL display its Lens execution status and available star
 - **THEN** Partial, data quality good, current trend and variability, and available numerical evidence remain distinct
 - **AND** the reference limitation is visible without recasting the Lens as failed or the current evidence as unavailable
 
+#### Scenario: Scan the card in the mock's evidence order
+
+- **GIVEN** a usable Metric result contains current evidence, a returned `1d` reference comparison, and persisted History
+- **WHEN** its card renders
+- **THEN** the labelled semantic-state band shows trend direction, trend rate, and variability before the evidence summary
+- **AND** the evidence summary shows mean, minimum–maximum range, slope, `1d` reference availability, and History direction/pattern in that order
+- **AND** the trend and availability icons reinforce their adjacent text without adding analytical meaning
+
 #### Scenario: Scan a failed Metric result
 
 - **GIVEN** a failed Metric LensRun has a failed Metric artifact with frozen identity and a safe failure reason
 - **WHEN** its item renders
 - **THEN** it shows Failed, the available frozen identity, and the safe reason
-- **AND** it shows no data-quality success badge, current-state descriptor, or numerical value
+- **AND** the semantic-state area explicitly says unavailable, with no data-quality success badge, current-state descriptor, or numerical value
 
 #### Scenario: Inspect a Lens before its artifact exists
 
@@ -93,7 +107,7 @@ The selected detail SHALL render each returned reference-period comparison with 
 
 ### Requirement: Keep Metric selection and context coherent during refresh and navigation
 
-The Metrics section SHALL use the existing run-detail refresh and active-run polling behavior. On each successful response, it SHALL present that response's coherent durable snapshot and preserve the selected Lens by stable LensRun ID while that ID remains present; if the selected ID is absent, it SHALL fall back to the first returned Metric LensRun or no selection. It SHALL display a last-updated label for the latest successful client refresh rather than the Metric result generation time. A failed refresh with previously loaded data SHALL keep that data and selected Lens visible with explicit stale-data feedback. A selected-Lens action to the existing run-level Analysis section SHALL be labelled `View Observation analysis` and SHALL NOT imply a separate Lens-only analysis. The Metrics detail SHALL NOT show Time series, Logs, or JSON tabs, nor expose provider queries, raw samples, operational logs, or internal diagnostics.
+The Metrics section SHALL use the existing run-detail refresh and active-run polling behavior. On each successful response, it SHALL present that response's coherent durable snapshot and preserve an explicitly selected Lens by stable LensRun ID while that ID remains present; if the selected ID is absent, it SHALL clear selection and close the pane rather than select another card. If no card is selected, refresh SHALL leave the pane closed. It SHALL display a last-updated label for the latest successful client refresh rather than the Metric result generation time. A failed refresh with previously loaded data SHALL keep that data and the current selection or closed state visible with explicit stale-data feedback. A selected-Lens action to the existing run-level Analysis section SHALL be labelled `View Observation analysis` and SHALL NOT imply a separate Lens-only analysis. The Metrics detail SHALL NOT show Time series, Logs, or JSON tabs, nor expose provider queries, raw samples, operational logs, or internal diagnostics.
 
 #### Scenario: Refresh while a Lens is selected
 
@@ -108,6 +122,13 @@ The Metrics section SHALL use the existing run-detail refresh and active-run pol
 - **WHEN** a later refresh fails
 - **THEN** the last successful result and selection remain visible with stale-data feedback
 - **AND** the last-updated label does not advance
+
+#### Scenario: Selected Lens disappears from refreshed results
+
+- **GIVEN** a Metric Lens is selected and its LensRun ID is absent from a newer durable response
+- **WHEN** that response renders
+- **THEN** the former selection is cleared and the detail pane closes
+- **AND** no other card is automatically selected
 
 #### Scenario: Open the run-level analysis
 

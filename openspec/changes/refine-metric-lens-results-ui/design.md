@@ -1,6 +1,6 @@
 ## Context
 
-See [proposal.md](proposal.md) for the problem and [the delta spec](specs/observation-runs-ui/spec.md) for acceptance behavior. The existing `/runs/{observationRunId}` page loads one strict durable `ObservationRunDetail`, keeps the six top-level sections, and renders every Metric LensRun as a stacked card. `metricPresentation.tsx` already formats the accepted schema-1.0 evidence. The run-detail response does not contain a Lens display name, raw current samples, raw historical sequences, or operational logs; it does contain the frozen Metric reference and unit on a produced Metric artifact.
+See [proposal.md](proposal.md) for the problem and [the delta spec](specs/observation-runs-ui/spec.md) for acceptance behavior. The `/runs/{observationRunId}` page loads one strict durable `ObservationRunDetail` and keeps six top-level sections. The first implementation of this change introduced a Metric list/detail view, but initializes selection to the first Lens, gives the detail more width than the cards, and renders card semantics as compact text. `metricPresentation.tsx` already formats the accepted schema-1.0 evidence. The run-detail response does not contain a Lens display name, raw current samples, raw historical sequences, or operational logs; it does contain the frozen Metric reference and unit on a produced Metric artifact.
 
 ## Goals / Non-Goals
 
@@ -18,19 +18,19 @@ See [proposal.md](proposal.md) for the problem and [the delta spec](specs/observ
 
 ### Keep the list and detail inside the existing Metrics section
 
-Replace only the Metrics section's stacked-card composition. Keep the existing run header and top-level Summary/Metrics/Alerts/Relationships/Analysis/Report navigation. Use a two-column list/detail layout where space permits and a stacked layout at narrow widths. The selected detail is an in-page region, not a modal or new route, so the user retains run context. A separate Metric route would add URL and data-loading behavior without an approved contract need.
+Replace only the Metrics section's stacked-card composition. Keep the existing run header and top-level Summary/Metrics/Alerts/Relationships/Analysis/Report navigation. Before selection, the card list uses the available section width and the detail pane is absent. After explicit card selection, use a two-column list/detail layout where space permits, giving the card column approximately three-fifths to two-thirds of the width and the pane the remainder, with a stacked layout at narrow widths. The pane's own numerical and optional-analysis grids must remain readable at its narrower column width rather than relying only on viewport breakpoints. The selected detail is an in-page region, not a modal or new route, so the user retains run context. A separate Metric route would add URL and data-loading behavior without an approved contract need.
 
 ### Identify Lens items from immutable run data
 
 Filter `lens_runs` by `lens_type=metric` in response order. Use the stable LensRun UUID for selection and keys. A produced Metric artifact supplies `identity.metric_ref`, `unit`, and `lens_id`; when there is no artifact, show the wrapper `lens_id`. Do not load the current Observation Definition to retrieve `name`: it can differ from the frozen run. Long provider references need wrapping or truncation with full text accessible. The list count describes Metric Lenses rather than asserting that all were analyzed.
 
-### Distinguish initial selection from deliberate dismissal
+### Open detail only by explicit card selection
 
-Store the selected LensRun ID locally to the run-detail page, with separate initial and dismissed states. Initial entry selects the first Metric LensRun. A list button selects one item; a close button dismisses the detail without removing the item. Successful polling or manual refresh derives the displayed selection against the new response by ID; a missing selected ID falls back to the first returned Metric LensRun. A deliberately dismissed detail stays dismissed until the user selects an item or the run identity changes. This avoids index-based selection drifting to a different Lens after refresh.
+Store the selected LensRun ID locally to the Metrics section and initialize it to no selection. A card button sets one ID and opens the pane; a close button clears it. Refresh keeps a selected ID only while it appears in the newest response, and clears it if absent. With no selection, refresh never opens the pane. This avoids index-based selection drift and meets the mock's closed-by-default interaction without an empty placeholder occupying the pane's width. The run identity still resets local selection.
 
 ### Build summaries by result variant, not visual color
 
-The wrapper status is the execution-status source. A usable good/degraded result can supply quality, current trend/variability, and numerical evidence. A completed-insufficient result supplies quality but no mandatory current evidence. A failed result supplies frozen identity and safe error; a null result supplies only wrapper identity/status/reason. Partial status retains usable evidence and its structured limitation. Use the existing semantic design tokens and textual badges; do not derive Observation analytical state from a Lens outcome. A generic placeholder card that renders missing fields as zero or `unknown` was rejected because it would invent analysis.
+The wrapper status is the execution-status source. A usable good/degraded result can supply quality, current trend/variability, and numerical evidence. A completed-insufficient result supplies quality but no mandatory current evidence. A failed result supplies frozen identity and safe error; a null result supplies only wrapper identity/status/reason. Partial status retains usable evidence and its structured limitation. Compose each wide card in the mock's order: identity/quality/status row, start/duration, semantic-state band with separately labelled direction/rate/variability, then a compact evidence strip ordered mean, min–max range, slope, returned reference availability, and persisted-History direction/pattern. The header reports zero/one selected without calling every Lens analyzed. For non-usable variants, the semantic band explicitly says unavailable and the card presents the supported reason instead of fabricated evidence. Use existing semantic tokens, textual badges, and a small consistent set of Lucide icons for a leading trend/failure cue plus inline trend/availability cues, all `aria-hidden` with adjacent text. Do not derive Observation analytical state from a Lens outcome. A generic placeholder card that renders missing fields as zero or `unknown` was rejected because it would invent analysis.
 
 ### Recompose existing Metric evidence without new interpretations
 
@@ -43,6 +43,7 @@ The existing sequential polling hook remains the only run-detail loader. The Met
 ## Risks / Trade-offs
 
 - [A dense list can become hard to scan with long metric references] → Give the frozen reference a bounded visual treatment and accessible full text; keep Lens ID visible for traceability.
+- [More detail in wider cards could still crowd the selected split view] → Keep the card column wider than the pane and let semantic/evidence rows wrap at narrow widths without changing their reading order.
 - [A partial result can be mistaken for failed acquisition] → Place execution status, data quality, current evidence, and the structured limitation in distinct, text-labelled positions.
 - [Missing reference offsets cannot be named] → Show only returned comparisons and a general supported limitation, never a guessed offset or value.
 - [Selection can drift during polling] → Track the LensRun UUID and derive the selected item from each coherent response.

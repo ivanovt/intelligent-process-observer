@@ -1,11 +1,11 @@
 ## Why
 
-The Run Detail Metrics section currently stacks complete Metric results in long cards. Comparing several Lens outcomes and finding the evidence for one selected Lens requires too much scanning, especially when some results are partial or failed. The supplied mock proposes a compact list with a focused detail pane; this change defines that UX against the existing public result contract.
+The baseline Run Detail Metrics section stacks complete Metric results in long cards, making several Lens outcomes hard to compare. The first implementation of this change added selection, but its narrow text-only cards and automatically open detail pane still miss the supplied mock's scanning hierarchy. This revision makes the intended layout and interaction explicit against the existing public result contract.
 
 ## What Changes
 
-- Replace the Metrics section's stacked cards with a responsive, single-selection Metric Lens list and an in-section detail pane.
-- Make each list item scannable through frozen Metric identity, Lens execution status, data quality when available, current semantic state and numerical evidence when usable, and explicit limitations when evidence is unavailable.
+- Replace the Metrics section's stacked cards with a responsive Metric Lens card list. The detail pane starts closed, opens only after explicit card selection, and closes when dismissed.
+- Make the cards substantially wider and scannable in the supplied mock's order: identity and execution status; start/duration; a distinct semantic-state band; then numerical and reference/History summary fields. Add meaning-aligned icons while keeping text as the source of meaning.
 - Present the selected result's current state and numerical evidence, optional analyses, reference-period comparisons, and persisted History as distinct groups. Preserve the meanings and availability boundaries of the existing schema-1.0 result.
 - Preserve the current run-detail refresh lifecycle and selected Lens across successful updates. Provide a clearly named link from the selected Lens to the existing Observation-level Analysis section.
 - Exclude the mock's Time series and JSON tabs. Omit the Logs tab because operational logs have no approved browser-facing source and remain backend-only.
