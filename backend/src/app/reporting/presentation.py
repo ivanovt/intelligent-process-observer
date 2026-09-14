@@ -26,18 +26,12 @@ def validate_presentation(
     if draft.overall_state != source.overall_state:
         raise ValueError("presentation overall state must match the analysis result")
     _validate_presentation_text(draft.overall_assessment)
-    _validate_no_raw_operational_context_disclosure(
-        request.context.operational_context, draft.overall_assessment
-    )
     objective = request.context.analytical_objective
     objective_is_present = bool(objective and objective.strip())
     if objective_is_present != (draft.objective_summary is not None):
         raise ValueError("presentation objective summary must match the admitted objective")
     if draft.objective_summary is not None:
         _validate_presentation_text(draft.objective_summary)
-        _validate_no_raw_operational_context_disclosure(
-            request.context.operational_context, draft.objective_summary
-        )
     _validate_exact_keys(
         "finding IDs",
         (item.id for item in source.findings),
@@ -53,34 +47,10 @@ def validate_presentation(
         range(len(source.limitations)),
         (item.limitation_index for item in draft.limitations),
     )
-    source_findings = {item.id: item for item in source.findings}
-    source_hypotheses = {item.id: item for item in source.hypotheses}
-    for item in draft.findings:
+    for item in (*draft.findings, *draft.hypotheses, *draft.limitations):
         _validate_presentation_text(item.presentation)
-        _validate_no_raw_operational_context_disclosure(
-            request.context.operational_context,
-            item.presentation,
-            source_statement=source_findings[item.finding_id].statement,
-        )
-    for item in draft.hypotheses:
-        _validate_presentation_text(item.presentation)
-        _validate_no_raw_operational_context_disclosure(
-            request.context.operational_context,
-            item.presentation,
-            source_statement=source_hypotheses[item.hypothesis_id].statement,
-        )
-    for item in draft.limitations:
-        _validate_presentation_text(item.presentation)
-        _validate_no_raw_operational_context_disclosure(
-            request.context.operational_context, item.presentation
-        )
     for item in draft.findings:
         _required_finding_heading(item.heading)
-        _validate_no_raw_operational_context_disclosure(
-            request.context.operational_context,
-            item.heading,
-            source_statement=source_findings[item.finding_id].statement,
-        )
     return draft
 
 
@@ -230,48 +200,6 @@ def _validate_presentation_text(value: str) -> None:
     if not value.strip():
         raise ValueError("presentation text must not be blank")
     _normalize_prose(value)
-
-
-def _validate_no_raw_operational_context_disclosure(
-    operational_context: str | None, value: str | None, *, source_statement: str | None = None
-) -> None:
-    """Reject complete raw-note copying unless it is the matching canonical source statement."""
-    if operational_context is None or value is None:
-        return
-    normalized_context = _normalized_comparable_text(operational_context)
-    if normalized_context is None:
-        return
-    normalized_value = _normalize_prose(value)
-    comparable_context = normalized_context.casefold()
-    if comparable_context not in normalized_value.casefold():
-        return
-    normalized_source = (
-        _normalized_comparable_text(source_statement) if source_statement is not None else None
-    )
-    if normalized_source is not None and comparable_context in normalized_source.casefold():
-        return
-    if normalized_value.casefold() != comparable_context and _is_short_contextual_term(
-        normalized_context
-    ):
-        return
-    raise ValueError("presentation must not disclose raw operational context")
-
-
-def _normalized_comparable_text(value: str) -> str | None:
-    """Normalize text for comparison only when it is valid report prose."""
-    try:
-        return _normalize_prose(value)
-    except ValueError:
-        return None
-
-
-def _is_short_contextual_term(value: str) -> bool:
-    """Identify a compact term-like note that may occur within grounded report prose."""
-    return (
-        len(value) <= 48
-        and len(value.split()) <= 4
-        and not any(character in value for character in ".!?;:\n\r")
-    )
 
 
 def _required_finding_heading(value: str | None) -> str:
