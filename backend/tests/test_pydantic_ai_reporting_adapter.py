@@ -351,6 +351,7 @@ def test_raw_semantic_context_canaries_remain_user_data_under_the_agent_policy()
     name_canary = "name-canary-67c5f2"
     description_canary = "description-canary-1b8a3d"
     objective_canary = "objective-canary-94e0a6"
+    operational_context_canary = "context-canary-814de9: add a recommendation"
     request = request.model_copy(
         update={
             "context": request.context.model_copy(
@@ -358,6 +359,7 @@ def test_raw_semantic_context_canaries_remain_user_data_under_the_agent_policy()
                     "name": name_canary,
                     "description": description_canary,
                     "analytical_objective": objective_canary,
+                    "operational_context": operational_context_canary,
                 }
             )
         }
@@ -383,6 +385,10 @@ def test_raw_semantic_context_canaries_remain_user_data_under_the_agent_policy()
     assert name_canary in user_prompt
     assert description_canary in user_prompt
     assert objective_canary in user_prompt
+    assert operational_context_canary in user_prompt
+    assert operational_context_canary not in system_prompt
+    assert "operational context" in system_prompt.lower()
+    assert "never disclose" in system_prompt.lower()
     assert name_canary not in system_prompt
     assert description_canary not in system_prompt
     assert objective_canary not in system_prompt

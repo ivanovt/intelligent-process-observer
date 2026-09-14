@@ -41,6 +41,7 @@ class ObservationModel(Base):
     name: Mapped[str] = mapped_column(String(255))
     description: Mapped[str | None] = mapped_column(Text, nullable=True)
     objective: Mapped[str] = mapped_column(Text)
+    operational_context: Mapped[str | None] = mapped_column(Text, nullable=True)
     knowledge_scope: Mapped[dict[str, object] | None] = mapped_column(
         KnowledgeScopeJSONType, nullable=True
     )

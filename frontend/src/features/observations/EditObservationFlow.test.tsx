@@ -8,7 +8,7 @@ import type { ObservationResponse } from './types'
 const response=(body:unknown,status=200)=>new Response(JSON.stringify(body),{status})
 const alert=(id:string,name:string)=>({id,name,type:'alert' as const,href:`/alerts/${id}`,description:null,source:'jira_track_and_release' as const,selector:{query:`project=${id}`},analysis_objectives:['Assess recurrence'],reference_periods:[],observation_href:'/observations/observation-1'})
 const metric=(id:string,name:string)=>({id,name,type:'metric' as const,href:`/metrics/${id}`,description:null,metric_id:id,adapter_type:'prometheus' as const,source_id:'primary',query:id,unit:'%',analysis_objectives:['spike'],reference_periods:[],observation_href:'/observations/observation-1'})
-const definition=(overrides:Partial<ObservationResponse>={}):ObservationResponse=>({id:'observation-1',name:'Cooling health',description:null,objective:'Observe cooling',schema_version:1,lenses:[],alert_lenses:[alert('a1','First alert'),alert('a2','Second alert')],relationships:[],href:'/observations/observation-1',...overrides})
+const definition=(overrides:Partial<ObservationResponse>={}):ObservationResponse=>({id:'observation-1',name:'Cooling health',description:null,objective:'Observe cooling',schema_version:1,lenses:[],alert_lenses:[alert('a1','First alert'),alert('a2','Second alert')],relationships:[],href:'/observations/observation-1',...overrides,operational_context:overrides.operational_context??null})
 const renderAt=(path:string)=>render(<MemoryRouter initialEntries={[path]}><App/></MemoryRouter>)
 const renderBrowserAt=(path:string)=>{window.history.pushState({},'',path);return render(<BrowserRouter><App/></BrowserRouter>)}
 
@@ -23,7 +23,7 @@ describe('Observation aggregate editing',()=>{
     expect((name as HTMLInputElement).value).toBe('Cooling health')
     await user.clear(name);await user.type(name,'Updated cooling health');await user.click(screen.getByRole('button',{name:'Save changes'}))
     expect(fetchMock.mock.calls.filter(([,init])=>(init as RequestInit|undefined)?.method==='PUT')).toHaveLength(1)
-    expect(fetchMock.mock.calls[1]).toEqual(['/api/v1/observations/observation-1',{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify({name:'Updated cooling health',description:null,objective:'Observe cooling',lenses:[],alert_lenses:[{id:'a1',name:'First alert',description:null,type:'alert',source:'jira_track_and_release',selector:{query:'project=a1'},analysis_objectives:['Assess recurrence'],reference_periods:[]},{id:'a2',name:'Second alert',description:null,type:'alert',source:'jira_track_and_release',selector:{query:'project=a2'},analysis_objectives:['Assess recurrence'],reference_periods:[]}],relationships:[]})}])
+    expect(fetchMock.mock.calls[1]).toEqual(['/api/v1/observations/observation-1',{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify({name:'Updated cooling health',description:null,objective:'Observe cooling',operational_context:null,lenses:[],alert_lenses:[{id:'a1',name:'First alert',description:null,type:'alert',source:'jira_track_and_release',selector:{query:'project=a1'},analysis_objectives:['Assess recurrence'],reference_periods:[]},{id:'a2',name:'Second alert',description:null,type:'alert',source:'jira_track_and_release',selector:{query:'project=a2'},analysis_objectives:['Assess recurrence'],reference_periods:[]}],relationships:[]})}])
     expect(await screen.findByText(/updated successfully/i)).toBeTruthy()
     expect(screen.queryByText(/Ready to create/i)).toBeNull()
   })

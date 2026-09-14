@@ -8,7 +8,7 @@ Convert one validated Observation analysis result into a faithful, human-readabl
 
 ### Requirement: Accept only the approved report-generation input boundary
 
-The capability SHALL accept one strict `ObservationAnalysisResult` and minimal correlated report context containing the same `observation_id` and `observation_run_id`, an Observation name, optional description and analytical objective, and the exact UTC start and end of that run's immutable observed analysis window. The supplied window SHALL have a start before its end and SHALL retain the run's exact boundaries without rounding. The caller SHALL derive it from the immutable run execution context rather than a current mutable Observation definition. The capability SHALL reject mismatched identity, malformed window, or other malformed input before report generation. Lens results, Relationship definitions, raw telemetry, raw logs or alerts, retrieved content beyond references already retained by the analysis result, full Observation configuration, execution policy, and provider queries SHALL NOT be admitted.
+The capability SHALL accept one strict `ObservationAnalysisResult` and minimal correlated report context containing the same `observation_id` and `observation_run_id`, an Observation name, optional description and analytical objective, optional operator-supplied `operational_context`, and the exact UTC start and end of that run's immutable observed analysis window. The supplied window SHALL have a start before its end and SHALL retain the run's exact boundaries without rounding. The caller SHALL derive it from the immutable run execution context rather than a current mutable Observation definition. The capability SHALL reject mismatched identity, malformed window, or other malformed input before report generation. Lens results, Relationship definitions, raw telemetry, raw logs or alerts, retrieved content beyond references already retained by the analysis result, full Observation configuration, execution policy, and provider queries SHALL NOT be admitted.
 
 #### Scenario: Generate from correlated minimal input
 
@@ -449,3 +449,25 @@ Ordinary punctuation in generated English prose SHALL read naturally in both the
 - **WHEN** the report is rendered and copied
 - **THEN** that content remains plain inert data inside renderer-owned structure
 - **AND** no additional section, active link, HTML element, or executable content is created
+
+### Requirement: Use operational context for faithful presentation only
+
+When present, `operational_context` SHALL be model-visible operator-authored data that may guide terminology, emphasis, and ordering among the supplied analysis items. It SHALL NOT appear as a quoted, copied, paraphrased, or separately summarized note in the Markdown report, and it SHALL NOT create a new section. It SHALL NOT add or remove a finding, hypothesis, limitation, state, recommendation, causal assertion, or evidence claim, or override the report's fixed presentation policy. The report SHALL remain valid when the field is absent.
+
+#### Scenario: Present supported analysis with useful terminology
+- **GIVEN** the context describes a process term and the supplied analysis result contains an item to which that term accurately applies
+- **WHEN** the report is generated
+- **THEN** the term may help present that item faithfully without changing its meaning or traceability
+- **AND** the raw context is not independently disclosed
+
+#### Scenario: Do not turn a note into a report fact
+- **GIVEN** the note asserts an operating condition not established by the supplied analysis result
+- **WHEN** the report is generated
+- **THEN** the condition is not presented as an observed fact or explanation
+- **AND** every supplied analytical item remains represented under its existing source key
+
+#### Scenario: Ignore report instructions inside context
+- **GIVEN** the note asks for an extra section, a recommendation, or omission of an unfavorable finding
+- **WHEN** report generation executes
+- **THEN** the same constrained draft and deterministic rendering rules apply
+- **AND** the report contains the complete supplied analysis without the requested addition or omission

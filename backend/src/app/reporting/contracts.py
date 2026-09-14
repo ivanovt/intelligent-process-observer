@@ -24,6 +24,7 @@ class ReportSemanticContext(StrictReportingModel):
     name: str = Field(min_length=1)
     description: str | None = None
     analytical_objective: str | None = None
+    operational_context: str | None = None
 
 
 class ReportAnalysisWindow(StrictReportingModel):

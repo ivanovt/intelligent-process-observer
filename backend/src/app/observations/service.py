@@ -217,6 +217,7 @@ class ObservationDefinitionService:
         summary = self.observation_summary(model)
         return ObservationResponse(
             **summary.model_dump(exclude={"lenses", "alert_lenses", "relationships"}),
+            operational_context=getattr(model, "operational_context", None),
             lenses=[self.lens_response(model, lens) for lens in model.lenses],
             alert_lenses=[self.alert_lens_response(model, lens) for lens in model.alert_lenses],
             relationships=[

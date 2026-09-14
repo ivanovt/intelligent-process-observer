@@ -9,6 +9,7 @@ const response: ObservationResponse = {
   name: 'Cooling health',
   description: null,
   objective: 'Observe cooling',
+  operational_context: null,
   schema_version: 1,
   lenses: [],
   alert_lenses: [{
