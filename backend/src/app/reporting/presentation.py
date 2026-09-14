@@ -2,10 +2,9 @@
 
 from __future__ import annotations
 
-import string
 import unicodedata
 from collections.abc import Hashable, Iterable
-from datetime import datetime, timedelta
+from datetime import UTC, datetime, timedelta
 from re import findall, fullmatch
 from uuid import UUID
 
@@ -14,10 +13,6 @@ from app.reporting.contracts import (
     ObservationReport,
     ReportGenerationRequest,
     ReportPresentationDraft,
-)
-
-_MARKDOWN_ESCAPE_TABLE = str.maketrans(
-    {character: f"\\{character}" for character in string.punctuation}
 )
 
 
@@ -31,6 +26,12 @@ def validate_presentation(
     if draft.overall_state != source.overall_state:
         raise ValueError("presentation overall state must match the analysis result")
     _validate_presentation_text(draft.overall_assessment)
+    objective = request.context.analytical_objective
+    objective_is_present = bool(objective and objective.strip())
+    if objective_is_present != (draft.objective_summary is not None):
+        raise ValueError("presentation objective summary must match the admitted objective")
+    if draft.objective_summary is not None:
+        _validate_presentation_text(draft.objective_summary)
     _validate_exact_keys(
         "finding IDs",
         (item.id for item in source.findings),
@@ -48,6 +49,9 @@ def validate_presentation(
     )
     for item in (*draft.findings, *draft.hypotheses, *draft.limitations):
         _validate_presentation_text(item.presentation)
+    for item in draft.findings:
+        if item.heading is not None:
+            _validate_presentation_text(item.heading)
     return draft
 
 
@@ -59,37 +63,49 @@ def build_report(
     if generated_at.tzinfo is None or generated_at.utcoffset() != timedelta(0):
         raise ValueError("generated_at must be UTC")
     result = request.analysis_result
-    finding_text = {item.finding_id: item.presentation for item in validated.findings}
+    findings = tuple(validated.findings)
+    finding_text = {item.finding_id: item.presentation for item in findings}
+    finding_heading = {item.finding_id: item.heading for item in findings}
     hypothesis_text = {item.hypothesis_id: item.presentation for item in validated.hypotheses}
     limitation_text = {item.limitation_index: item.presentation for item in validated.limitations}
-    lines = [
-        "# Observation Report",
-        "",
-        f"Observation ID: {_markdown_opaque(result.identity.observation_id)}",
-        f"Observation Run ID: {_markdown_opaque(result.identity.observation_run_id)}",
-    ]
+    finding_numbers = {item.finding_id: index for index, item in enumerate(findings, start=1)}
+    lines = ["# Observation Report", ""]
+    if validated.objective_summary is not None:
+        lines.extend(("## Objective", *_presentation_lines(validated.objective_summary), ""))
+    else:
+        lines.append("No analytical objective was supplied for this Observation.")
+        lines.append("")
+    lines.extend(
+        (
+            f"Observation ID excerpt: {_markdown_opaque(str(result.identity.observation_id)[:8])} "
+            "(orientation only; not a unique identifier).",
+            "Observed window (UTC): "
+            f"{_markdown_opaque(_utc_timestamp(request.analysis_window.from_))} to "
+            f"{_markdown_opaque(_utc_timestamp(request.analysis_window.to))}.",
+        )
+    )
     lines.extend(
         (
             "",
             "## Overall Assessment",
             *_presentation_lines(validated.overall_assessment),
             "",
-            f"Source overall state: `{result.overall_state}`.",
+            f"Analytical state: {_state_label(result.overall_state)}.",
             "",
             "## Findings",
         )
     )
     if not result.findings:
         lines.append(_empty_findings_text(result.overall_state))
-    for finding in result.findings:
+    for index, presented_finding in enumerate(findings, start=1):
+        heading = finding_heading[presented_finding.finding_id] or f"Finding {index}"
         lines.extend(
             (
                 "",
-                f"### Finding ID: {_markdown_opaque(finding.id)}",
-                *_presentation_lines(finding_text[finding.id]),
+                f"### {index}. {_markdown_prose(heading)}",
+                *_presentation_lines(finding_text[presented_finding.finding_id]),
             )
         )
-        lines.extend(_reference_lines("Evidence references", finding.evidence_refs))
     lines.extend(("", "## Possible Explanations"))
     if not result.hypotheses:
         lines.append(
@@ -97,26 +113,65 @@ def build_report(
             "analysis result."
         )
     for hypothesis in result.hypotheses:
+        supported_numbers = tuple(
+            finding_numbers[finding_id] for finding_id in hypothesis.supported_by
+        )
         lines.extend(
             (
                 "",
-                f"### Possible explanation ID: {_markdown_opaque(hypothesis.id)}",
+                "### Possible explanation",
                 *_presentation_lines(hypothesis_text[hypothesis.id]),
                 "This is a possible explanation, not a confirmed cause.",
-                "Supported by findings: " + _inline_values(hypothesis.supported_by),
+                "Supported by findings: " + _finding_numbers(supported_numbers),
             )
         )
-        lines.extend(_knowledge_reference_lines(hypothesis))
     lines.extend(("", "## Analysis Limitations"))
     if not result.limitations:
         lines.append("No analysis limitation was identified in the supplied result.")
-    for index, limitation in enumerate(result.limitations):
+    for index, _limitation in enumerate(result.limitations):
         lines.extend(
             (
                 "",
-                f"### Limitation {index + 1} (code: {_markdown_opaque(limitation.code)})",
+                f"### Limitation {index + 1}",
                 *_presentation_lines(limitation_text[index]),
-                _limitation_details(limitation),
+            )
+        )
+    lines.extend(("", "## Technical Appendix", "", "### Report details"))
+    lines.extend(
+        (
+            f"- Full Observation ID: {_markdown_opaque(result.identity.observation_id)}",
+            f"- Full Observation Run ID: {_markdown_opaque(result.identity.observation_run_id)}",
+            f"- Source overall state: {_markdown_opaque(result.overall_state)}",
+            f"- Generated at (UTC): {_markdown_opaque(_utc_timestamp(generated_at))}",
+        )
+    )
+    source_findings = {item.id: item for item in result.findings}
+    for index, presented_finding in enumerate(findings, start=1):
+        finding = source_findings[presented_finding.finding_id]
+        lines.extend(
+            (
+                "",
+                f"### Finding {index} traceability",
+                f"- Source finding ID: {_markdown_opaque(finding.id)}",
+            )
+        )
+        lines.extend(_grouped_evidence_lines(finding.evidence_refs))
+    for index, hypothesis in enumerate(result.hypotheses, start=1):
+        lines.extend(("", f"### Possible explanation {index} traceability"))
+        lines.extend(
+            (
+                f"- Source hypothesis ID: {_markdown_opaque(hypothesis.id)}",
+                "- Supported source finding IDs: " + _inline_values(hypothesis.supported_by),
+            )
+        )
+        lines.extend(_knowledge_reference_lines(hypothesis))
+    for index, limitation in enumerate(result.limitations, start=1):
+        lines.extend(
+            (
+                "",
+                f"### Limitation {index} traceability",
+                f"- Code: {_markdown_opaque(limitation.code)}",
+                f"- {_limitation_details(limitation)}",
             )
         )
     return ObservationReport(
@@ -160,7 +215,16 @@ def _empty_findings_text(overall_state: str) -> str:
 
 def _markdown_prose(value: str) -> str:
     """Render model prose as normalized escaped Markdown content."""
-    return _normalize_prose(value).translate(_MARKDOWN_ESCAPE_TABLE)
+    normalized = _normalize_prose(value)
+    # The value is always emitted after a renderer-owned prefix.  Escape only syntax
+    # that could create markup, links, HTML, or a block boundary in that context.
+    escaped: list[str] = []
+    for character in normalized:
+        if character in "\\`[]<>*_":
+            escaped.append("\\" + character)
+        else:
+            escaped.append(character)
+    return "".join(escaped)
 
 
 def _normalize_prose(value: str) -> str:
@@ -235,21 +299,27 @@ def _display_text(value: str, *, quote_for_locator: bool = False) -> str:
     return "".join(rendered)
 
 
-def _reference_lines(label: str, references: tuple[EvidenceReference, ...]) -> list[str]:
-    """Format canonical finding evidence references without model-authored content."""
-    return [label + ":"] + [
-        "- "
-        + f"Source type: {_markdown_opaque(reference.source_type)}; "
-        + f"source ID: {_markdown_opaque(reference.source_id)}; "
-        + f"locator: {_locator_text(reference.locator)}"
-        for reference in references
-    ]
+def _grouped_evidence_lines(references: tuple[EvidenceReference, ...]) -> list[str]:
+    """Group exact evidence by source pair while retaining locator multiplicity and order."""
+    groups: dict[tuple[str, UUID | str], list[EvidenceReference]] = {}
+    for reference in references:
+        groups.setdefault((reference.source_type, reference.source_id), []).append(reference)
+    lines: list[str] = []
+    for (source_type, source_id), grouped_references in groups.items():
+        lines.append(
+            f"- Evidence source type: {_markdown_opaque(source_type)}; "
+            f"source ID: {_markdown_opaque(source_id)}"
+        )
+        lines.extend(
+            f"- Locator: {_locator_text(reference.locator)}" for reference in grouped_references
+        )
+    return lines
 
 
 def _knowledge_reference_lines(hypothesis: Hypothesis) -> list[str]:
     """Format canonical hypothesis knowledge references from the source artifact."""
-    return ["Knowledge references:"] + [
-        f"- Source ID: {_markdown_opaque(reference.source_id)}; "
+    return ["- Knowledge references:"] + [
+        f"- Knowledge source ID: {_markdown_opaque(reference.source_id)}; "
         f"reference: {_markdown_opaque(reference.reference)}"
         for reference in hypothesis.knowledge_refs
     ]
@@ -258,6 +328,25 @@ def _knowledge_reference_lines(hypothesis: Hypothesis) -> list[str]:
 def _inline_values(values: tuple[str, ...]) -> str:
     """Render source identifiers as individually inspectable exact code values."""
     return "[" + ", ".join(_markdown_opaque(value) for value in values) + "]"
+
+
+def _finding_numbers(values: tuple[int, ...]) -> str:
+    """Render report-local finding numbers as readable cross-references."""
+    return ", ".join(str(value) for value in values)
+
+
+def _state_label(overall_state: str) -> str:
+    """Return the fixed human label for the source analytical state."""
+    return {
+        "no_significant_findings": "No significant findings identified",
+        "significant_findings_present": "Significant findings present",
+        "uncertain": "Uncertain",
+    }[overall_state]
+
+
+def _utc_timestamp(value: datetime) -> str:
+    """Preserve an exact UTC timestamp in a concise stable display form."""
+    return value.astimezone(UTC).isoformat().replace("+00:00", "Z")
 
 
 def _locator_text(locator: tuple[str | int, ...]) -> str:

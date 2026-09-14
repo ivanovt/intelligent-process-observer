@@ -34,7 +34,6 @@ from app.reporting.contracts import (
 from app.reporting.executor import ReportGenerationExecutor
 from app.reporting.input import validate_request
 from app.reporting.presentation import (
-    _inline_values,
     _locator_text,
     _markdown_opaque,
     build_report,
@@ -116,8 +115,13 @@ def _draft(request: ReportGenerationRequest) -> ReportPresentationDraft:
     return ReportPresentationDraft(
         overall_state=request.analysis_result.overall_state,
         overall_assessment="The available evidence remains uncertain.",
+        objective_summary="Assess the available process evidence.",
         findings=tuple(
-            FindingPresentation(finding_id=item.id, presentation="Temperature is increasing.")
+            FindingPresentation(
+                finding_id=item.id,
+                heading="Temperature increase observed",
+                presentation="Temperature is increasing.",
+            )
             for item in reversed(request.analysis_result.findings)
         ),
         hypotheses=tuple(
@@ -243,8 +247,8 @@ def test_observation_report_requires_an_injected_utc_time(value: datetime) -> No
         )
 
 
-def test_renderer_restores_source_order_and_all_traceability_without_mutation() -> None:
-    """Rendering retains source IDs, evidence, finding, and knowledge references exactly."""
+def test_renderer_uses_draft_order_and_retains_complete_traceability_without_mutation() -> None:
+    """Rendering uses draft order while retaining source IDs, evidence, and knowledge exactly."""
     request = _request()
     before = request.analysis_result.model_dump(mode="json")
     report = build_report(request, _draft(request), NOW)
@@ -252,16 +256,17 @@ def test_renderer_restores_source_order_and_all_traceability_without_mutation() 
     assert report.observation_id == request.analysis_result.identity.observation_id
     assert report.observation_run_id == request.analysis_result.identity.observation_run_id
     assert report.generated_at is NOW
-    assert "## Overall Assessment" in report.content
-    assert f"### Finding ID: {_markdown_opaque('finding-temperature')}" in report.content
-    assert f"Source type: {_markdown_opaque('metric_result')}" in report.content
-    assert "Supported by findings: " + _inline_values(("finding-temperature",)) in report.content
+    assert "## Objective" in report.content and "## Overall Assessment" in report.content
+    assert "### 1. Temperature increase observed" in report.content
+    assert f"- Source finding ID: {_markdown_opaque('finding-temperature')}" in report.content
+    assert f"Evidence source type: {_markdown_opaque('metric_result')}" in report.content
+    assert "Supported by findings: 1" in report.content
     assert (
-        f"Source ID: {_markdown_opaque('manual')}; "
+        f"Knowledge source ID: {_markdown_opaque('manual')}; "
         f"reference: {_markdown_opaque('section-4')}" in report.content
     )
     assert "possible explanation, not a confirmed cause" in report.content
-    assert "code: `missing_lens_evidence`" in report.content
+    assert "- Code: `missing_lens_evidence`" in report.content
 
 
 def test_renderer_uses_injective_delimiter_safe_traceability_encoding() -> None:
@@ -337,8 +342,8 @@ def test_renderer_uses_injective_delimiter_safe_traceability_encoding() -> None:
     assert f"source ID: {_markdown_opaque(string_uuid_source_id)}" in content
     assert f"reference: {_markdown_opaque(actual_control_reference)}" in content
     assert f"reference: {_markdown_opaque(literal_escape_reference)}" in content
-    assert f"locator: {_locator_text(delimiter_bearing_locator)}" in content
-    assert f"locator: {_locator_text(split_locator)}" in content
+    assert f"Locator: {_locator_text(delimiter_bearing_locator)}" in content
+    assert f"Locator: {_locator_text(split_locator)}" in content
     assert "uuid=" not in content and "string=" not in content and "0x" not in content
 
 
@@ -366,10 +371,12 @@ def test_renderer_contains_hostile_identifiers_and_locator_segments_as_inline_co
     assert r"\n[link](https://bad.invalid)" in content
     assert "<script>alert" in content
     assert [line for line in content.splitlines() if line.startswith("## ")] == [
+        "## Objective",
         "## Overall Assessment",
         "## Findings",
         "## Possible Explanations",
         "## Analysis Limitations",
+        "## Technical Appendix",
     ]
     assert not any(line.startswith("- injected list") for line in content.splitlines())
 
@@ -418,9 +425,9 @@ def test_renderer_encoding_distinguishes_astral_and_surrogate_values_without_int
 
     assert f"source ID: {opaque_astral}" in content
     assert f"source ID: {opaque_surrogate}" in content
-    assert f"locator: {astral_locator}" in content
-    assert f"locator: {surrogate_locator}" in content
-    assert f"locator: {unbounded_locator}" in content
+    assert f"Locator: {astral_locator}" in content
+    assert f"Locator: {surrogate_locator}" in content
+    assert f"Locator: {unbounded_locator}" in content
 
 
 def test_renderer_honestly_represents_empty_analysis_collections() -> None:
@@ -440,7 +447,7 @@ def test_empty_findings_do_not_contradict_a_non_empty_source_assessment(state: s
     report = build_report(request, _draft(request), NOW)
     assert "No individual finding entries were supplied" in report.content
     assert "No significant findings were identified" not in report.content
-    assert f"Source overall state: `{state}`." in report.content
+    assert f"- Source overall state: `{state}`" in report.content
 
 
 def test_renderer_excludes_non_english_and_control_bearing_semantic_context() -> None:
@@ -488,6 +495,106 @@ def test_presentation_validator_fails_closed_on_incomplete_or_expanded_membershi
 
 
 @pytest.mark.parametrize(
+    ("context_objective", "objective_summary", "heading"),
+    [
+        ("Assess temperature stability.", None, "Temperature increase"),
+        ("Assess temperature stability.", "   ", "Temperature increase"),
+        (None, "An invented objective.", "Temperature increase"),
+        ("Assess temperature stability.", "Safe summary.", "   "),
+        ("Assess temperature stability.", "Safe summary.", "bad\x00heading"),
+    ],
+)
+def test_presentation_validator_requires_objective_summary_and_safe_optional_heading(
+    context_objective: str | None, objective_summary: str | None, heading: str
+) -> None:
+    """Objective summaries and optional headings are nonblank safe presentation text."""
+    request = _request()
+    request = request.model_copy(
+        update={
+            "context": request.context.model_copy(
+                update={"analytical_objective": context_objective}
+            )
+        }
+    )
+    draft = _draft(request).model_copy(
+        update={
+            "objective_summary": objective_summary,
+            "findings": (
+                FindingPresentation(
+                    finding_id="finding-temperature",
+                    heading=heading,
+                    presentation="Temperature is increasing.",
+                ),
+            ),
+        }
+    )
+    with pytest.raises(ValueError):
+        validate_presentation(request, draft)
+
+
+def test_renderer_uses_validated_finding_order_and_groups_exact_repeated_evidence() -> None:
+    """Readable numbers retain exact source ownership, pair grouping, and locator multiplicity."""
+    source_a = Finding(
+        id="auxiliary",
+        statement="Auxiliary event.",
+        evidence_refs=(
+            EvidenceReference(source_type="metric_result", source_id="metric-a", locator=("one",)),
+        ),
+    )
+    source_b = Finding(
+        id="objective",
+        statement="Objective event.",
+        evidence_refs=(
+            EvidenceReference(source_type="metric_result", source_id="metric-a", locator=("two",)),
+            EvidenceReference(source_type="metric_result", source_id="metric-a", locator=("two",)),
+            EvidenceReference(source_type="alert_result", source_id="alert-b", locator=("three",)),
+        ),
+    )
+    hypothesis = Hypothesis(
+        id="explanation",
+        statement="Possible explanation.",
+        supported_by=("objective", "auxiliary"),
+        knowledge_refs=(KnowledgeReference(source_id="manual", reference="section-7"),),
+    )
+    request = _request(findings=(source_a, source_b), hypotheses=(hypothesis,), limitations=())
+    draft = ReportPresentationDraft(
+        overall_state="uncertain",
+        overall_assessment="The evidence is uncertain.",
+        objective_summary="Assess the supplied evidence.",
+        findings=(
+            FindingPresentation(
+                finding_id="objective",
+                heading="Objective event",
+                presentation="The objective event was observed.",
+            ),
+            FindingPresentation(
+                finding_id="auxiliary",
+                presentation="The auxiliary event was observed.",
+            ),
+        ),
+        hypotheses=(
+            HypothesisPresentation(
+                hypothesis_id="explanation",
+                presentation="The pattern may have an explanation.",
+            ),
+        ),
+    )
+
+    content = build_report(request, draft, NOW).content
+
+    assert content.index("### 1. Objective event") < content.index("### 2. Finding 2")
+    assert "Supported by findings: 1, 2" in content
+    finding_one = content.split("### Finding 1 traceability", 1)[1].split(
+        "### Finding 2 traceability", 1
+    )[0]
+    assert finding_one.count("Evidence source type: `metric_result`; source ID: `metric-a`") == 1
+    assert finding_one.count("Locator: `two`") == 2
+    assert "Evidence source type: `alert_result`; source ID: `alert-b`" in finding_one
+    assert "Source finding ID: `objective`" in finding_one
+    assert "Knowledge source ID: `manual`; reference: `section-7`" in content
+
+
+@pytest.mark.parametrize(
     "presentation",
     [
         "No recommendation is provided and no root cause is claimed.",
@@ -509,23 +616,29 @@ def test_presentation_validation_does_not_classify_semantics_or_markdown_keyword
     assert "\n================\n" not in content
 
 
-def test_renderer_escapes_all_dynamic_markdown_punctuation_and_normalizes_lines() -> None:
-    """Only renderer constants retain Markdown meaning in the final document."""
+def test_renderer_escapes_active_dynamic_markdown_syntax_without_blanket_punctuation() -> None:
+    """Dynamic active syntax is inert while ordinary prose punctuation remains readable."""
     request = _request()
     presentation = "[label](https://example.invalid)\n# heading\n> quote\n~~~"
     draft = _draft(request).model_copy(update={"overall_assessment": presentation})
     report = build_report(request, draft, NOW)
-    assert r"\[label\]\(https\:\/\/example\.invalid\) \# heading \> quote \~\~\~" in report.content
+    assert r"\[label\](https://example.invalid) # heading \> quote ~~~" in report.content
     headings = [line for line in report.content.splitlines() if line.startswith("#")]
     assert headings == [
         "# Observation Report",
+        "## Objective",
         "## Overall Assessment",
         "## Findings",
-        f"### Finding ID: {_markdown_opaque('finding-temperature')}",
+        "### 1. Temperature increase observed",
         "## Possible Explanations",
-        f"### Possible explanation ID: {_markdown_opaque('hypothesis-valve')}",
+        "### Possible explanation",
         "## Analysis Limitations",
-        f"### Limitation 1 (code: {_markdown_opaque('missing_lens_evidence')})",
+        "### Limitation 1",
+        "## Technical Appendix",
+        "### Report details",
+        "### Finding 1 traceability",
+        "### Possible explanation 1 traceability",
+        "### Limitation 1 traceability",
     ]
 
 
