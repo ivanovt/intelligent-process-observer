@@ -2,6 +2,8 @@
 
 Intelligent Process Observer is the implementation workspace for a master-thesis MVP focused on intelligent multi-agent observation, anomaly analysis, and supervision of technological processes.
 
+The application is displayed as **IPO**.
+
 The repository is a monorepo. Architectural decisions are maintained separately from implementation specifications: the architecture package under `docs/architecture/` is the authoritative source for architecture and ADRs, while OpenSpec is used to define concrete behavioral changes before implementation.
 
 ## Development baseline

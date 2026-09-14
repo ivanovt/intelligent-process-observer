@@ -11,7 +11,7 @@ The management capability SHALL NOT expose monitoring/run-analysis screens, Obse
 
 #### Scenario: Enter Observation management
 - **WHEN** a user selects `Observations` in the application navigation
-- **THEN** the Observation definitions list is shown within the shared ObserveAI shell
+- **THEN** the Observation definitions list is shown within the shared IPO shell
 - **AND** no separate Admin navigation area is present
 
 #### Scenario: Keep later UI out of scope
