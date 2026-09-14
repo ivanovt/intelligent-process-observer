@@ -11,6 +11,7 @@ from uuid import uuid4
 import pytest
 from alembic import command
 from alembic.config import Config
+from alembic.script import ScriptDirectory
 from sqlalchemy import delete, func, select, text
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import (
@@ -44,7 +45,6 @@ from app.knowledge.management_contracts import (
 from app.knowledge.publication import KnowledgePublicationService
 
 _BACKEND_ROOT = Path(__file__).resolve().parents[1]
-_MIGRATION_REVISION = "20260913_01"
 _PRE_KNOWLEDGE_REVISION = "20260909_01"
 _EMBEDDING = (0.0,) * KNOWLEDGE_EMBEDDING_DIMENSIONS
 
@@ -618,6 +618,8 @@ def test_knowledge_migration_downgrades_only_when_corpus_and_scope_are_empty(
     config = Config(str(_BACKEND_ROOT / "alembic.ini"))
     config.set_main_option("script_location", str(_BACKEND_ROOT / "migrations"))
     config.set_main_option("sqlalchemy.url", postgres_url)
+    head_revision = ScriptDirectory.from_config(config).get_current_head()
+    assert head_revision is not None
 
     async def create_retained_document() -> object:
         repository = KnowledgeRepository()
@@ -670,29 +672,29 @@ def test_knowledge_migration_downgrades_only_when_corpus_and_scope_are_empty(
             )
             await session.commit()
 
-    assert asyncio.run(alembic_revision(session_factory)) == _MIGRATION_REVISION
+    assert asyncio.run(alembic_revision(session_factory)) == head_revision
     command.downgrade(config, _PRE_KNOWLEDGE_REVISION)
     assert asyncio.run(alembic_revision(session_factory)) == _PRE_KNOWLEDGE_REVISION
     assert not asyncio.run(knowledge_table_exists(session_factory))
     command.upgrade(config, "head")
-    assert asyncio.run(alembic_revision(session_factory)) == _MIGRATION_REVISION
+    assert asyncio.run(alembic_revision(session_factory)) == head_revision
     assert asyncio.run(knowledge_table_exists(session_factory))
 
     document_id = asyncio.run(create_retained_document())
     with pytest.raises(RuntimeError, match="knowledge records"):
         command.downgrade(config, _PRE_KNOWLEDGE_REVISION)
-    assert asyncio.run(alembic_revision(session_factory)) == _MIGRATION_REVISION
+    assert asyncio.run(alembic_revision(session_factory)) == head_revision
     asyncio.run(delete_document(document_id))
 
     unscoped_observation_id = asyncio.run(create_unscoped_observation())
     command.downgrade(config, _PRE_KNOWLEDGE_REVISION)
     assert asyncio.run(alembic_revision(session_factory)) == _PRE_KNOWLEDGE_REVISION
     command.upgrade(config, "head")
-    assert asyncio.run(alembic_revision(session_factory)) == _MIGRATION_REVISION
+    assert asyncio.run(alembic_revision(session_factory)) == head_revision
     asyncio.run(delete_observation(unscoped_observation_id))
 
     observation_id = asyncio.run(create_scoped_observation())
     with pytest.raises(RuntimeError, match="knowledge scopes"):
         command.downgrade(config, _PRE_KNOWLEDGE_REVISION)
-    assert asyncio.run(alembic_revision(session_factory)) == _MIGRATION_REVISION
+    assert asyncio.run(alembic_revision(session_factory)) == head_revision
     asyncio.run(delete_observation(observation_id))
