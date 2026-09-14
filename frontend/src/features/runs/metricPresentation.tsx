@@ -5,7 +5,7 @@ import { formatMetricNumber } from './metricFormatting'
 export function MetricResultPresentation({ result, reason }: { result: UsableMetricRunResult; reason?: StructuredReason | null }) {
   const limitation = reason ?? result.reason ?? null
   return <div className="mt-5 space-y-5">
-    <div><p className="text-sm font-semibold">Metric: {result.identity.metric_ref} <span className="font-normal text-[var(--color-text-secondary)]">({result.identity.unit})</span></p><p className="mt-1 break-all font-mono text-xs text-[var(--color-text-secondary)]">Lens ID: {result.identity.lens_id}</p></div>
+    <div><p className="[overflow-wrap:anywhere] text-sm font-semibold">Metric: {result.identity.metric_ref} <span className="font-normal text-[var(--color-text-secondary)]">({result.identity.unit})</span></p><p className="mt-1 break-all font-mono text-xs text-[var(--color-text-secondary)]">Lens ID: {result.identity.lens_id}</p></div>
     <div className="flex flex-wrap gap-2" aria-label="Metric semantic state">
       <span className={`rounded-full border px-2.5 py-1 text-xs font-semibold ${result.data_quality === 'degraded' ? 'border-[var(--color-warning-border)] bg-[var(--color-warning-surface)] text-[var(--color-warning)]' : 'border-[var(--color-success-border)] bg-[var(--color-success-surface)] text-[var(--color-success)]'}`}>Data quality: {result.data_quality}</span>
       <span className="rounded-full border border-[var(--color-border)] px-2.5 py-1 text-xs">Trend: {result.current_state.trend.direction} · {result.current_state.trend.rate}</span>

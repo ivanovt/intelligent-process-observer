@@ -51,8 +51,8 @@ export function MetricLensResults({ detail, lastSuccessfulAt, onViewAnalysis }: 
 
   return <section>
     <MetricHeader count={lenses.length} selectedCount={selected === null ? 0 : 1} lastSuccessfulAt={lastSuccessfulAt} />
-    <div className={selected === null || !isWideLayout ? 'grid items-start gap-4' : 'grid items-start gap-4 min-[1170px]:grid-cols-[minmax(0,1.8fr)_minmax(17rem,1fr)]'}>
-      <div aria-label="Metric Lens results" className="grid gap-3">{lenses.map((lens) => <div key={lens.id} ref={(element) => { if (element === null) cardContainers.current.delete(lens.id); else cardContainers.current.set(lens.id, element) }}><MetricLensCard lens={lens} selected={selected?.id === lens.id} onSelect={() => setSelectedId(lens.id)} />{!isWideLayout && selected?.id === lens.id ? <MetricDetail lens={selected} detailRef={detailRef} onDismiss={dismissDetail} onViewAnalysis={onViewAnalysis} /> : null}</div>)}</div>
+    <div className={selected === null || !isWideLayout ? 'grid min-w-0 grid-cols-[minmax(0,1fr)] items-start gap-4' : 'grid min-w-0 items-start gap-4 min-[1170px]:grid-cols-[minmax(0,1.8fr)_minmax(17rem,1fr)]'}>
+      <div aria-label="Metric Lens results" className="grid min-w-0 gap-3">{lenses.map((lens) => <div key={lens.id} className="min-w-0" ref={(element) => { if (element === null) cardContainers.current.delete(lens.id); else cardContainers.current.set(lens.id, element) }}><MetricLensCard lens={lens} selected={selected?.id === lens.id} onSelect={() => setSelectedId(lens.id)} />{!isWideLayout && selected?.id === lens.id ? <MetricDetail lens={selected} detailRef={detailRef} onDismiss={dismissDetail} onViewAnalysis={onViewAnalysis} /> : null}</div>)}</div>
       {isWideLayout && selected !== null ? <MetricDetail lens={selected} detailRef={detailRef} onDismiss={dismissDetail} onViewAnalysis={onViewAnalysis} /> : null}
     </div>
   </section>
