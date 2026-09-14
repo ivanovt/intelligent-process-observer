@@ -23,4 +23,17 @@ describe('SafeMarkdownReport', () => {
   it('preserves document order in the safe fallback parser', () => {
     expect(parseSafeMarkdown('first\n\n## second\n\n- third').map((block) => block.kind)).toEqual(['paragraph', 'heading', 'list'])
   })
+
+  it('renders the readable report structure with a flat technical appendix', () => {
+    render(<SafeMarkdownReport content={'# Observation report\n\nObjective summary: Assess cooling stability.\n\nObserved UTC window: 2026-09-09T09:00:00Z to 2026-09-09T10:00:00Z.\n\n## Findings\n\n### 1. Cooling temperature increased\n\nThe current observation increased during the observed window.\n\n## Technical appendix\n\n- Finding 1 source ID: `finding-1`\n- Metric result · `lens-metric` · `evidence.current`'} />)
+
+    expect(screen.getByRole('heading', { name: 'Observation report' })).toBeTruthy()
+    expect(screen.getByText('Objective summary: Assess cooling stability.')).toBeTruthy()
+    expect(screen.getByText('Observed UTC window: 2026-09-09T09:00:00Z to 2026-09-09T10:00:00Z.')).toBeTruthy()
+    expect(screen.getByRole('heading', { name: '1. Cooling temperature increased' })).toBeTruthy()
+    expect(screen.getByRole('heading', { name: 'Technical appendix' })).toBeTruthy()
+    expect(screen.getAllByRole('listitem')).toHaveLength(2)
+    expect(screen.getByText('finding-1').tagName).toBe('CODE')
+    expect(screen.getByText('lens-metric').tagName).toBe('CODE')
+  })
 })

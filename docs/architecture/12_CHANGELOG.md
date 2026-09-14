@@ -1,5 +1,14 @@
 # Changelog
 
+## 7.2 — 2026-09-14
+
+- добавен ADR-175: Report Agent получава точните UTC `from`/`to` граници на
+  `ObservationRun.analysis_window` от frozen execution snapshot като минимален
+  presentation context, отделен от `generated_at` и observational evidence;
+- ADR-085 остава в сила за всички други input ограничения; не се добавят Lens results,
+  raw provider data, full run snapshot, retrieval или нов analysis;
+- `09_report_agent.md` е синхронизиран с тесния run-window input boundary.
+
 ## 7.1 — 2026-09-13
 
 - добавен ADR-174: optional Observation knowledge scope вече пази own optional opaque

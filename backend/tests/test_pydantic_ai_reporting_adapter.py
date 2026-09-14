@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+from datetime import UTC, datetime
 from uuid import uuid4
 
 import httpx
@@ -26,6 +27,7 @@ from app.reporting.contracts import (
     FindingPresentation,
     HypothesisPresentation,
     LimitationPresentation,
+    ReportAnalysisWindow,
     ReportGenerationRequest,
     ReportPolicyViolation,
     ReportPresentationDraft,
@@ -66,6 +68,12 @@ def _request() -> ReportGenerationRequest:
             findings=(),
             hypotheses=(),
             limitations=(),
+        ),
+        analysis_window=ReportAnalysisWindow(
+            **{
+                "from": datetime(2026, 9, 14, 10, 15, 30, 123456, tzinfo=UTC),
+                "to": datetime(2026, 9, 14, 10, 20, 30, 123456, tzinfo=UTC),
+            }
         ),
     )
 
@@ -124,6 +132,12 @@ def _synthesis_request() -> ReportGenerationRequest:
                 ),
             ),
             limitations=(MissingLensEvidence(lens_id="gateway", lens_type="metric"),),
+        ),
+        analysis_window=ReportAnalysisWindow(
+            **{
+                "from": datetime(2026, 9, 14, 10, 15, 30, 123456, tzinfo=UTC),
+                "to": datetime(2026, 9, 14, 10, 20, 30, 123456, tzinfo=UTC),
+            }
         ),
     )
 
@@ -197,7 +211,8 @@ def test_adapter_uses_one_typed_tool_free_request_with_bounded_settings() -> Non
     assert "recommendations" in system and "root causes" in system and "certainty" in system
     assert "possible explanations" in system and "confirmed causes" in system
     assert "do not present, translate, quote, repeat, paraphrase, summarize" in system
-    assert "raw observation name, description, or analytical objective" in system
+    assert "raw observation name or description" in system
+    assert "objective_summary" in system
     assert "not reportable source material" in system
 
 
@@ -239,6 +254,65 @@ def test_adapter_instructions_cover_evidence_derived_report_synthesis() -> None:
         "severity, confidence, probability, ranking, recommendations, root causes, "
         "root-cause claims, certainty" in system
     )
+
+
+def test_adapter_wires_neutral_objective_summary_and_objective_first_headings() -> None:
+    """The single typed request carries exact run context and accepts ordered readable fields."""
+    base_request = _synthesis_request()
+    request = base_request.model_copy(
+        update={
+            "context": base_request.context.model_copy(
+                update={"analytical_objective": "Check device stability and logging spikes."}
+            )
+        }
+    )
+    draft = _synthesis_draft(request).model_copy(
+        update={
+            "objective_summary": "Assess device stability and observed logging activity.",
+            "findings": (
+                FindingPresentation(
+                    finding_id="connected-devices-stable",
+                    heading="Connected devices remained stable",
+                    presentation="Connected Devices remained stable.",
+                ),
+                FindingPresentation(
+                    finding_id="pod-logging-spike",
+                    heading="Pod logging showed a relative change",
+                    presentation=(
+                        "Pod logging showed a symmetric relative change of 0.746 between current "
+                        "mean 2.28 and reference mean 1.04."
+                    ),
+                ),
+            ),
+        }
+    )
+    model, calls = _scripted_model([_output(draft.model_dump(mode="json"))])
+
+    assert _run(PydanticAIReportGenerationAgent(model).complete_presentation(request)) == draft
+    assert len(calls) == 1
+    prompt = next(
+        part.content
+        for message in calls[0][0]
+        for part in message.parts
+        if part.part_kind == "user-prompt"
+    )
+    assert request.model_dump_json() == prompt
+    assert '"from_":"2026-09-14T10:15:30.123456Z"' in prompt
+    assert '"to":"2026-09-14T10:20:30.123456Z"' in prompt
+    system = " ".join(
+        " ".join(
+            part.content
+            for message in calls[0][0]
+            for part in message.parts
+            if part.part_kind == "system-prompt"
+        ).split()
+    ).lower()
+    assert "objective_summary" in system and "never observational evidence" in system
+    assert "source-grounded english subject-and-observed-event heading" in system
+    assert "directly objective-relevant evidence first" in system
+    assert "material auxiliary events" in system
+    assert "presentation order only" in system
+    assert "material conflicting reference perspectives" in system
 
 
 def test_instruction_like_context_remains_user_data_under_the_agent_policy() -> None:

@@ -33,7 +33,11 @@ from app.reasoning.contracts import (
 )
 from app.reasoning.input import insufficient_metric_as_unavailable, validate_input
 from app.relationships.contracts import RelationshipEvaluation
-from app.reporting.contracts import ReportGenerationRequest, ReportSemanticContext
+from app.reporting.contracts import (
+    ReportAnalysisWindow,
+    ReportGenerationRequest,
+    ReportSemanticContext,
+)
 
 
 def relationship_definitions(
@@ -164,7 +168,9 @@ def report_generation_request(
     snapshot: ObservationExecutionSnapshot,
     result: ObservationAnalysisResult,
 ) -> ReportGenerationRequest:
-    """Project only the frozen semantic context admitted to report generation."""
+    """Project the frozen semantic context and exact observed window for reporting."""
+    if snapshot.observation_id != result.identity.observation_id:
+        raise ValueError("Report analysis result observation identity does not match snapshot")
     return ReportGenerationRequest(
         context=ReportSemanticContext(
             identity=result.identity,
@@ -173,6 +179,9 @@ def report_generation_request(
             analytical_objective=snapshot.objective,
         ),
         analysis_result=result,
+        analysis_window=ReportAnalysisWindow(
+            **{"from": snapshot.analysis_window.from_, "to": snapshot.analysis_window.to}
+        ),
     )
 
 

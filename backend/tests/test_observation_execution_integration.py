@@ -396,7 +396,11 @@ def test_postgresql_success_persists_exact_aggregate_and_report(sessions):
             assert len(run.lens_runs) == 2
             assert len(run.relationship_evaluations) == 1
             assert run.observation_analysis_result is not None
-            assert run.observation_analysis_result.report is not None
+            report = run.observation_analysis_result.report
+            assert report is not None
+            assert report.observation_analysis_result_id == run.observation_analysis_result.id
+            assert report.format == "markdown" and report.content == "# fixture"
+            assert report.generated_at == datetime(2026, 9, 7, tzinfo=UTC)
 
     asyncio.run(scenario())
 

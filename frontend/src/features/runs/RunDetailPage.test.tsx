@@ -189,13 +189,18 @@ describe('RunDetailPage', () => {
     expect(screen.getByRole('link', { name: 'Back to Runs' }).getAttribute('href')).toBe('/runs')
   })
 
-  it('copies exact persisted Markdown while presenting it as a safe document', async () => {
+  it('copies the exact readable persisted Markdown while presenting it as a safe document', async () => {
     const writeText = vi.fn().mockResolvedValue(undefined)
+    const reportContent = '# Observation report\n\nObjective summary: Assess cooling stability.\n\nObserved UTC window: 2026-09-09T09:00:00Z to 2026-09-09T10:00:00Z.\n\n## Findings\n\n### 1. Cooling temperature increased\n\nThe current observation increased during the observed window.\n\n## Technical appendix\n\n- Finding 1 source ID: `finding-1`\n- Metric result · `lens-metric` · `evidence.current`'
     Object.defineProperty(navigator, 'clipboard', { configurable: true, value: { writeText } })
-    renderDetail()
+    const current = detail()
+    renderDetail({ ...current, report: { ...current.report!, content: reportContent } })
     await screen.findByText('Run summary'); await userEvent.click(screen.getByRole('tab', { name: 'Report' })); await userEvent.click(screen.getByRole('button', { name: 'Copy Markdown' }))
-    expect(writeText).toHaveBeenCalledWith('# Durable report')
+    expect(writeText).toHaveBeenCalledWith(reportContent)
     expect(await screen.findByRole('button', { name: 'Copied' })).toBeTruthy()
-    expect(screen.getByRole('heading', { name: 'Durable report' }).tagName).toBe('H1')
+    expect(screen.getByRole('heading', { name: 'Observation report' }).tagName).toBe('H1')
+    expect(screen.getByRole('heading', { name: '1. Cooling temperature increased' })).toBeTruthy()
+    expect(screen.getAllByRole('listitem')).toHaveLength(2)
+    expect(screen.getByText('finding-1').tagName).toBe('CODE')
   })
 })

@@ -3,8 +3,9 @@
 **Тип:** presentation/generation agent  
 **Owner stage:** Report Generation Stage  
 **Статус:** Accepted MVP design  
-**Версия:** 1.0  
-**Актуализирано:** 2026-08-08
+**Версия:** 1.1
+
+**Актуализирано:** 2026-09-14
 
 ## 1. Purpose
 
@@ -17,9 +18,16 @@
 ```text
 ObservationAnalysisResult
 minimal Observation semantic context
+exact UTC analysis_window from the immutable ObservationRun execution snapshot
 ```
 
 Semantic context може да съдържа observation id/name, кратко description и objective. Не се подава full technical configuration.
+
+`analysis_window.from` и `analysis_window.to` са точните UTC граници на същия run,
+без закръгляне. Те са presentation metadata, не observational evidence или baseline.
+Caller-ът ги проектира от frozen execution snapshot и валидира identity correlation
+и положителен интервал преди Report Agent. `generated_at` остава отделно време на
+генериране. Това е ограниченото разширение на ADR-085, прието с ADR-175.
 
 ## 3. Не се подават
 
@@ -31,6 +39,7 @@ raw logs/alerts
 full retrieved RAG context
 Prometheus/Loki/alert-provider queries
 execution policies
+full ObservationRun execution snapshot
 ```
 
 `knowledge_refs`, които вече са част от hypotheses, могат да се представят като references без нов retrieval.

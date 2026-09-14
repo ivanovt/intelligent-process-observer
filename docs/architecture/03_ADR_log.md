@@ -2,7 +2,7 @@
 
 **Проект:** „Интелигентна мулти-агентна система за откриване на аномалии и супервизия на технологични процеси“  
 **Статус на записите:** Accepted, освен ако изрично не е посочено друго  
-**Версия на регистъра:** 6.4
+**Версия на регистъра:** 7.2
 
 ---
 
@@ -3571,6 +3571,50 @@ ADR-173 въведе optional `ObservationDefinition.knowledge_scope` с multipl
 - Existing shared-version scopes запазват meaning при read и run freeze.
 - JSONB колоната и document service-tag моделът остават без schema промяна;
   новият canonical API shape и rollback boundary изискват coordinated deployment.
+
+---
+
+## ADR-175 — Report Agent получава точния UTC прозорец на ObservationRun като минимален контекст
+
+**Status:** Accepted
+
+**Context**
+
+Самостоятелният Markdown отчет трябва да показва кога е наблюдаван процесът, за да може
+инженерът да съпостави findings с monitoring данните. `generated_at` показва кога е
+създаден отчетът и не замества observed analysis window. ADR-085 допуска само
+`ObservationAnalysisResult` и минимален семантичен контекст на Observation; точният
+прозорец на run-а досега не е част от входа на Report Agent.
+
+**Decision**
+
+- Този ADR разширява ADR-085 само за входа на report generation: към
+  `ObservationAnalysisResult` и минималния Observation semantic context се добавят
+  точните UTC `from`/`to` граници на `analysis_window` от immutable execution snapshot
+  на същия `ObservationRun`.
+- Прозорецът е минимален run metadata context за presentation, а не observational
+  evidence. Caller-ът го проектира от frozen run snapshot; Report Agent не получава
+  целия snapshot, не чете текущата mutable Observation definition и не извлича прозореца
+  от Lens results, raw telemetry или persistence по време на rendering.
+- Входът запазва exact Observation/run identity correlation. UTC границите се подават
+  без закръгляне или timezone reinterpretation; липсващ, невалиден или неположителен
+  интервал се reject-ва преди report generation.
+- `generated_at` остава отделен timestamp в минималния `ObservationReport` envelope.
+  Прозорецът може да се представи в Markdown header, без да променя
+  `ObservationAnalysisResult`, `overall_state`, findings, hypotheses, limitations или
+  traceability.
+- Всички останали граници на ADR-085/ADR-087 остават: няма Lens/Relationship results,
+  raw provider data, full Observation configuration, retrieval, нов analysis или
+  recommendations в Report Agent.
+
+**Consequences**
+
+- Отчетът може да идентифицира точно observed UTC window отделно от времето на
+  генериране, без нов аналитичен източник или промяна на public report envelope;
+- report request има още две строго валидирани времеви стойности, но няма full-run
+  контекст или нова persistence/API boundary;
+- решението не фиксира exact Markdown template, engineer/operator variants или
+  localization policy; вече съхранените отчети не се пренаписват.
 
 ---
 

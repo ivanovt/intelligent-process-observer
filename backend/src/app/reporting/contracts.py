@@ -6,7 +6,7 @@ from datetime import UTC, datetime, timedelta
 from typing import Annotated, Literal
 from uuid import UUID
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from app.reasoning.contracts import ObservationAnalysisResult, ObservationIdentity
 
@@ -26,17 +26,41 @@ class ReportSemanticContext(StrictReportingModel):
     analytical_objective: str | None = None
 
 
+class ReportAnalysisWindow(StrictReportingModel):
+    """Exact UTC interval observed by the correlated immutable Observation run."""
+
+    from_: datetime = Field(alias="from")
+    to: datetime
+
+    @field_validator("from_", "to")
+    @classmethod
+    def require_utc(cls, value: datetime) -> datetime:
+        """Require exact UTC timestamps before report generation."""
+        if value.tzinfo is None or value.utcoffset() != timedelta(0):
+            raise ValueError("report analysis window timestamps must be UTC")
+        return value.astimezone(UTC)
+
+    @model_validator(mode="after")
+    def require_forward_window(self) -> ReportAnalysisWindow:
+        """Reject empty and backward report observation intervals."""
+        if self.from_ >= self.to:
+            raise ValueError("report analysis window must be forward")
+        return self
+
+
 class ReportGenerationRequest(StrictReportingModel):
     """Combine one analysis result with its minimal report context."""
 
     context: ReportSemanticContext
     analysis_result: ObservationAnalysisResult
+    analysis_window: ReportAnalysisWindow
 
 
 class FindingPresentation(StrictReportingModel):
     """English presentation text keyed to one source finding."""
 
     finding_id: str = Field(min_length=1)
+    heading: str | None = None
     presentation: str = Field(min_length=1)
 
 
@@ -59,6 +83,7 @@ class ReportPresentationDraft(StrictReportingModel):
 
     overall_state: Literal["no_significant_findings", "significant_findings_present", "uncertain"]
     overall_assessment: str = Field(min_length=1)
+    objective_summary: str | None = None
     findings: tuple[FindingPresentation, ...] = ()
     hypotheses: tuple[HypothesisPresentation, ...] = ()
     limitations: tuple[LimitationPresentation, ...] = ()

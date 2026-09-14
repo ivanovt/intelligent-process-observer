@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import os
 import re
+from datetime import UTC, datetime
 from uuid import uuid4
 
 import pytest
@@ -21,6 +22,7 @@ from app.reasoning.contracts import (
 from app.reporting.contracts import (
     FindingPresentation,
     HypothesisPresentation,
+    ReportAnalysisWindow,
     ReportGenerationRequest,
     ReportPresentationDraft,
     ReportSemanticContext,
@@ -82,6 +84,12 @@ def _adversarial_request() -> ReportGenerationRequest:
             ),
             limitations=(),
         ),
+        analysis_window=ReportAnalysisWindow(
+            **{
+                "from": datetime(2026, 9, 14, 10, 15, 30, 123456, tzinfo=UTC),
+                "to": datetime(2026, 9, 14, 10, 20, 30, 123456, tzinfo=UTC),
+            }
+        ),
     )
 
 
@@ -94,6 +102,7 @@ def _assert_adversarial_semantics(
     all_prose = " ".join(
         (
             draft.overall_assessment,
+            draft.objective_summary or "",
             *(item.presentation for item in draft.findings),
             *(item.presentation for item in draft.hypotheses),
             *(item.presentation for item in draft.limitations),
@@ -154,13 +163,16 @@ def _valid_adversarial_draft() -> ReportPresentationDraft:
     return ReportPresentationDraft(
         overall_state="uncertain",
         overall_assessment="The available evidence remains uncertain.",
+        objective_summary="Assess the requested operating conditions.",
         findings=(
             FindingPresentation(
                 finding_id="temperature-rise",
+                heading="Temperature rose steadily",
                 presentation="The temperature is rising steadily.",
             ),
             FindingPresentation(
                 finding_id="pressure-decrease",
+                heading="Pressure decreased",
                 presentation="Pressure decreased by five percent.",
             ),
         ),
