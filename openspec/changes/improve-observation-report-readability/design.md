@@ -11,7 +11,7 @@ See `proposal.md` for the usability problem and `specs/report-generation/spec.md
 ## Architecture References
 
 - `docs/architecture/08_observation_analysis_result_contract.md`: findings, hypotheses, limitations, and their references remain the only analytical source. No new analysis field is proposed.
-- `docs/architecture/09_report_agent.md` and ADR-085/ADR-087 in `docs/architecture/03_ADR_log.md`: the agent stays presentation-only, without Lens results, retrieval, new reasoning, or recommendations. The observed-window addition is a **pending architecture approval** to admit only immutable run metadata alongside minimal semantic context; it must be resolved before implementation. No architecture file is changed by this plan.
+- `docs/architecture/09_report_agent.md` and ADR-085/ADR-087/ADR-175 in `docs/architecture/03_ADR_log.md`: the agent stays presentation-only, without Lens results, retrieval, new reasoning, or recommendations. ADR-175 approves only the immutable UTC run-window addition alongside minimal semantic context; no other run metadata is admitted.
 - ADR-086 in `docs/architecture/03_ADR_log.md`: output remains one Markdown artifact with the existing minimal envelope, not a structured report schema or engineer/operator variant.
 - ADR-012 in `docs/architecture/03_ADR_log.md` and `docs/architecture/01_observation_lens_concept.md`: reference periods and persisted History are descriptive context, never expected baseline or normality thresholds.
 - ADR-172 in `docs/architecture/03_ADR_log.md` and `docs/ui/ui_implementation_handoff_v1.md`: the browser remains a presentation-only safe-subset view and copies persisted Markdown exactly. New output uses only headings, paragraphs, blockquotes, flat unordered lists, and inline code; no links, raw HTML, tables, nested lists, or browser-side synthesis.
@@ -25,11 +25,11 @@ The execution projector will copy the snapshot's exact UTC `analysis_window` int
 
 Alternative considered: derive the window from Lens results, the current Observation definition, or persistence during rendering. Rejected because it breaks the approved narrow input and can misstate the historical run. Alternative considered: show only `generated_at`. Rejected because it answers when the artifact was created, not when the process was observed.
 
-**Approval dependency:** ADR-085 and `09_report_agent.md` currently name only `ObservationAnalysisResult` plus minimal semantic context. Treat the bounded immutable window as a proposed architecture extension requiring explicit approval before production edits. If approval changes that boundary, revise this OpenSpec change and seek renewed plan approval.
+**Architecture alignment:** ADR-175 now extends ADR-085 only for the immutable UTC run window, and `09_report_agent.md` reflects that boundary. Implementation must reject any broader run-snapshot or analytical input. The OpenSpec planning artifacts still require their separate human approval before production edits.
 
 ### 2. Keep the model's contribution source-keyed and presentational
 
-Extend the strict presentation draft with an optional neutral English objective summary and a short source-keyed heading for each finding. Require a summary only when the admitted objective is present; otherwise use a deterministic generic header. The objective summary is intent context, never evidence or a claim that the objective succeeded or failed. The model may choose the order of its exact-key finding presentations to match objective relevance; deterministic validation checks one-to-one membership, uniqueness, required text, and no undeclared fields. The renderer enumerates that validated order and creates report-local finding numbers. A finding heading remains plain escaped text inside a renderer-owned heading line; the model cannot supply Markdown structure. Existing one-request, no-tool, no-retry policy remains unchanged.
+Extend the strict presentation draft with a conditionally required neutral English objective summary and a short source-keyed heading for each finding. Require a summary when the admitted objective is non-blank; otherwise require its absence and use a deterministic generic header. The objective summary is intent context, never evidence or a claim that the objective succeeded or failed. The model may choose the order of its exact-key finding presentations to match objective relevance; deterministic validation checks one-to-one membership, uniqueness, required text, and no undeclared fields. The renderer enumerates that validated order and creates report-local finding numbers. A finding heading remains plain escaped text inside a renderer-owned heading line; the model cannot supply Markdown structure. Existing one-request, no-tool, no-retry policy remains unchanged.
 
 The prompt/evaluation guidance will require objective evidence first, material auxiliary events second, concise current-observation-first finding prose, preservation of material conflicts, and source-only quantitative claims. It will not introduce a severity score, ranking field, anomaly category, or deterministic keyword classifier. Semantic faithfulness remains subject to representative adversarial evaluation rather than a claim of runtime proof.
 
@@ -51,7 +51,7 @@ Alternative considered: strip escape characters in the browser or Copy action. R
 
 ## Risks / Trade-offs
 
-- [Run-window approval is not granted] → Stop before implementation; obtain an explicit architecture decision and re-review any changed plan. No production code or architecture documentation changes are authorized by this proposal alone.
+- [The implementation admits more run context than ADR-175] → Keep the reporting-owned request to exact UTC window boundaries plus the existing semantic context and reject undeclared fields.
 - [A model-created title or objective summary misstates source meaning] → Keep source-keyed strict fields, explicit prompt constraints, and representative adversarial tests; do not claim deterministic semantic proof or silently repair text.
 - [Objective-led ordering appears to assign severity] → Use reading order only, no priority labels or source-state changes; validate complete exact-key coverage and retain material contrasts.
 - [Appendix compaction loses a locator or source owner] → Build groups from immutable source references, preserve multiplicity and order, and test multi-source and repeated-reference cases.
@@ -60,4 +60,4 @@ Alternative considered: strip escape characters in the browser or Copy action. R
 
 ## Migration Plan
 
-No data migration or public API change is needed. After the architecture decision and explicit OpenSpec approval, deploy the new report request/presentation and renderer together. New runs produce the new Markdown; old persisted reports retain their original content. Rollback restores the prior generator for future runs without rewriting old artifacts.
+No data migration or public API change is needed. After explicit OpenSpec approval, deploy the new report request/presentation and renderer together. New runs produce the new Markdown; old persisted reports retain their original content. Rollback restores the prior generator for future runs without rewriting old artifacts.

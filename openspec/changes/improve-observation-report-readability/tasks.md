@@ -1,6 +1,6 @@
-## 1. Architecture prerequisite
+## 1. Architecture boundary
 
-- [ ] 1.1 Obtain explicit approval for admitting the immutable observed analysis window to the Report Agent's minimal input boundary, and any separately authorized ADR/document update; verify the approved architecture and this OpenSpec change agree before production edits.
+- [ ] 1.1 Confirm the report request and projector design admit only the exact UTC window approved by ADR-175, alongside existing semantic context; verify no full run snapshot, Lens result, or current-definition lookup crosses the Report Agent boundary.
 
 ## 2. Correlated report context
 

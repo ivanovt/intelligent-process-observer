@@ -24,11 +24,11 @@ None.
 ## Architecture References
 
 - `docs/architecture/08_observation_analysis_result_contract.md` — source analytical state, findings, hypotheses, limitations, and traceability semantics remain unchanged.
-- `docs/architecture/09_report_agent.md`; ADR-085, ADR-086, and ADR-087 in `docs/architecture/03_ADR_log.md` — preserve presentation-only generation and the minimal input boundary. **Architectural approval is required** for the proposed addition of immutable ObservationRun analysis-window metadata to report input; it is not present in the currently accepted input list.
+- `docs/architecture/09_report_agent.md`; ADR-085, ADR-086, ADR-087, and ADR-175 in `docs/architecture/03_ADR_log.md` — preserve presentation-only generation and the minimal input boundary. ADR-175 explicitly admits only the immutable UTC ObservationRun analysis window as additional report context.
 - ADR-012 in `docs/architecture/03_ADR_log.md` and `docs/architecture/01_observation_lens_concept.md` — configured reference periods and persisted History are not baselines.
 - ADR-172 in `docs/architecture/03_ADR_log.md` — persisted Markdown and exact Copy Markdown remain the artifact boundary; output stays within the accepted safe browser subset.
 - `docs/architecture/10_open_decisions_and_backlog.md` — this change does not establish engineer/operator template variants or a fixed public Markdown schema.
 
 ## Impact
 
-The report request/presentation contracts, execution-to-report projection, deterministic Markdown renderer, Report Agent guidance, and focused backend tests will change. Existing persisted reports remain immutable and are not rewritten. The browser continues to display persisted Markdown and copy its exact content; no new API, database migration, dependency, renderer framework, analytical field, or provider data access is proposed. Architecture documents remain untouched until the window-input decision is explicitly approved.
+The report request/presentation contracts, execution-to-report projection, deterministic Markdown renderer, Report Agent guidance, and focused backend tests will change. Existing persisted reports remain immutable and are not rewritten. The browser continues to display persisted Markdown and copy its exact content; no new API, database migration, dependency, renderer framework, analytical field, or provider data access is proposed. The approved window-input decision is recorded in ADR-175 and the Report Agent architecture contract.

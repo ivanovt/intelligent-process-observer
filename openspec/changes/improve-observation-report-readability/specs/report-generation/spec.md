@@ -36,7 +36,7 @@ The capability SHALL accept one strict `ObservationAnalysisResult` and minimal c
 
 ### Requirement: Present the complete analysis faithfully in English
 
-The Markdown report SHALL be written in English and SHALL clearly present the Observation identity or an English-presented objective summary, the source `overall_state`, every finding, every hypothesis, every limitation, and all traceability information available on those items. Findings SHALL remain grounded in their source `evidence_refs`. Hypotheses SHALL remain possible explanations, preserve their `supported_by` and `knowledge_refs`, and SHALL NOT be worded as confirmed causes. Empty findings, hypotheses, or limitations SHALL be represented honestly rather than filled with fabricated content. Reordering and presentation-level paraphrasing or translation are permitted only when meaning and certainty are preserved. Raw Observation name, description, or objective text SHALL NOT be copied directly into the final Markdown. A neutral English objective summary MAY be rendered only when supplied through an explicitly declared, validated presentation field; otherwise the deterministic renderer SHALL use the correlated Observation and run identifiers without inventing an objective.
+The Markdown report SHALL be written in English and SHALL clearly present the Observation identity or an English-presented objective summary, the source `overall_state`, every finding, every hypothesis, every limitation, and all traceability information available on those items. Findings SHALL remain grounded in their source `evidence_refs`. Hypotheses SHALL remain possible explanations, preserve their `supported_by` and `knowledge_refs`, and SHALL NOT be worded as confirmed causes. Empty findings, hypotheses, or limitations SHALL be represented honestly rather than filled with fabricated content. Reordering and presentation-level paraphrasing or translation are permitted only when meaning and certainty are preserved. Raw Observation name, description, or objective text SHALL NOT be copied directly into the final Markdown. When a non-blank analytical objective is admitted, the presentation draft SHALL supply a neutral English objective summary through an explicitly declared, validated field, and the renderer SHALL present it. Without an admitted objective, the draft SHALL omit that summary and the renderer SHALL use correlated identifiers without inventing an objective.
 
 #### Scenario: Present a populated result
 
@@ -52,6 +52,18 @@ The Markdown report SHALL be written in English and SHALL clearly present the Ob
 - **WHEN** report generation succeeds
 - **THEN** the header shows the neutral summary rather than raw objective text
 - **AND** the objective summary is not treated as observational evidence
+
+#### Scenario: Reject a missing required objective summary
+
+- **GIVEN** the admitted context has a non-blank analytical objective but the presentation draft omits its English summary
+- **WHEN** the draft is validated
+- **THEN** report generation fails without a partial report
+
+#### Scenario: Avoid an invented objective
+
+- **GIVEN** the admitted context has no analytical objective
+- **WHEN** report generation succeeds
+- **THEN** the header uses deterministic correlated identity instead of an objective summary
 
 #### Scenario: Present a result without findings or hypotheses
 
