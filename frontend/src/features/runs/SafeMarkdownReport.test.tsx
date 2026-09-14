@@ -20,6 +20,15 @@ describe('SafeMarkdownReport', () => {
     expect(screen.getByText(/~~legacy~~/)).toBeTruthy()
   })
 
+  it('renders only well-formed strong emphasis as semantic text and leaves malformed markers inert', () => {
+    render(<SafeMarkdownReport content={'**Finding 1** has `**literal-id**` and **missing end\n\n***unsupported***'} />)
+    expect(screen.getByText('Finding 1').tagName).toBe('STRONG')
+    expect(screen.getByText('**literal-id**').tagName).toBe('CODE')
+    expect(screen.queryByRole('strong', { name: /missing end|unsupported/ })).toBeNull()
+    expect(screen.getByText(/\*\*missing end/)).toBeTruthy()
+    expect(screen.getByText(/\*\*\*unsupported\*\*\*/)).toBeTruthy()
+  })
+
   it('preserves document order in the safe fallback parser', () => {
     expect(parseSafeMarkdown('first\n\n## second\n\n- third').map((block) => block.kind)).toEqual(['paragraph', 'heading', 'list'])
   })
