@@ -16,37 +16,46 @@ function MarkdownBlock({ block }: { block: SafeMarkdownBlock }) {
 }
 
 function inlineText(text: string): ReactNode {
-  const parts: ReactNode[] = []
-  let cursor = 0
-  let key = 0
-  while (cursor < text.length) {
-    const opening = text.indexOf('`', cursor)
-    if (opening === -1) { parts.push(...inlineStrongText(text.slice(cursor), key)); break }
-    if (opening > cursor) { const strong = inlineStrongText(text.slice(cursor, opening), key); parts.push(...strong); key += strong.length }
-    const run = /^`+/.exec(text.slice(opening))![0]
-    const closing = text.indexOf(run, opening + run.length)
-    if (closing === -1) { const strong = inlineStrongText(text.slice(opening), key); parts.push(...strong); break }
-    parts.push(<code key={key++} className="rounded bg-[var(--color-surface)] px-1 py-0.5 font-mono text-[0.9em]">{text.slice(opening + run.length, closing)}</code>)
-    cursor = closing + run.length
-  }
-  return <>{parts}</>
+  return <>{inlineNodes(text, { current: 0 })}</>
 }
 
-function inlineStrongText(text: string, keyStart: number): ReactNode[] {
+function inlineNodes(text: string, key: { current: number }, allowStrong = true): ReactNode[] {
   const parts: ReactNode[] = []
   let cursor = 0
-  let key = keyStart
   while (cursor < text.length) {
-    const opening = text.indexOf('**', cursor)
-    if (opening === -1) { parts.push(decodeRendererEscapes(text.slice(cursor))); break }
-    if (!isStrongDelimiter(text, opening)) { parts.push(decodeRendererEscapes(text.slice(cursor, opening + 2))); cursor = opening + 2; continue }
-    const closing = findStrongClosingDelimiter(text, opening + 2)
-    if (closing === -1 || closing === opening + 2) { parts.push(decodeRendererEscapes(text.slice(cursor))); break }
-    if (opening > cursor) parts.push(decodeRendererEscapes(text.slice(cursor, opening)))
-    parts.push(<strong key={key++}>{decodeRendererEscapes(text.slice(opening + 2, closing))}</strong>)
-    cursor = closing + 2
+    const delimiter = findNextDelimiter(text, cursor, allowStrong)
+    if (delimiter === null) { parts.push(decodeRendererEscapes(text.slice(cursor))); break }
+    if (delimiter.index > cursor) parts.push(decodeRendererEscapes(text.slice(cursor, delimiter.index)))
+    if (delimiter.kind === 'code') {
+      const closing = findCodeClosingDelimiter(text, delimiter.index, delimiter.marker)
+      if (closing === -1) { parts.push(decodeRendererEscapes(text.slice(delimiter.index))); break }
+      parts.push(<code key={key.current++} className="rounded bg-[var(--color-surface)] px-1 py-0.5 font-mono text-[0.9em]">{text.slice(delimiter.index + delimiter.marker.length, closing)}</code>)
+      cursor = closing + delimiter.marker.length
+      continue
+    }
+    const closing = findStrongClosingDelimiter(text, delimiter.index + delimiter.marker.length)
+    if (closing === -1 || closing === delimiter.index + delimiter.marker.length) { parts.push(decodeRendererEscapes(text.slice(delimiter.index))); break }
+    parts.push(<strong key={key.current++}>{inlineNodes(text.slice(delimiter.index + delimiter.marker.length, closing), key, false)}</strong>)
+    cursor = closing + delimiter.marker.length
   }
   return parts
+}
+
+function findNextDelimiter(text: string, start: number, allowStrong: boolean) {
+  for (let index = start; index < text.length; index += 1) {
+    if (text[index] === '`' && !isEscaped(text, index)) return { kind: 'code' as const, index, marker: /^`+/.exec(text.slice(index))![0] }
+    if (allowStrong && text.startsWith('**', index) && isStrongDelimiter(text, index)) return { kind: 'strong' as const, index, marker: '**' }
+  }
+  return null
+}
+
+function findCodeClosingDelimiter(text: string, opening: number, marker: string) {
+  let candidate = text.indexOf(marker, opening + marker.length)
+  while (candidate !== -1) {
+    if (!isEscaped(text, candidate)) return candidate
+    candidate = text.indexOf(marker, candidate + marker.length)
+  }
+  return -1
 }
 
 function findStrongClosingDelimiter(text: string, start: number) {
@@ -58,6 +67,8 @@ function findStrongClosingDelimiter(text: string, start: number) {
   return -1
 }
 
-function isStrongDelimiter(text: string, index: number) { return text[index - 1] !== '*' && text[index + 2] !== '*' }
+function isStrongDelimiter(text: string, index: number) { return !isEscaped(text, index) && text[index - 1] !== '*' && text[index + 2] !== '*' }
+
+function isEscaped(text: string, index: number) { let slashCount = 0; for (let cursor = index - 1; cursor >= 0 && text[cursor] === '\\'; cursor -= 1) slashCount += 1; return slashCount % 2 === 1 }
 
 function decodeRendererEscapes(value: string) { let output = ''; for (let index = 0; index < value.length; index += 1) { if (value[index] === '\\' && index + 1 < value.length && escapable.has(value[index + 1])) { output += value[index + 1]; index += 1 } else output += value[index] } return output }
