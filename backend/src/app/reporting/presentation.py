@@ -50,8 +50,7 @@ def validate_presentation(
     for item in (*draft.findings, *draft.hypotheses, *draft.limitations):
         _validate_presentation_text(item.presentation)
     for item in draft.findings:
-        if item.heading is not None:
-            _validate_presentation_text(item.heading)
+        _required_finding_heading(item.heading)
     return draft
 
 
@@ -65,7 +64,9 @@ def build_report(
     result = request.analysis_result
     findings = tuple(validated.findings)
     finding_text = {item.finding_id: item.presentation for item in findings}
-    finding_heading = {item.finding_id: item.heading for item in findings}
+    finding_heading = {
+        item.finding_id: _required_finding_heading(item.heading) for item in findings
+    }
     hypothesis_text = {item.hypothesis_id: item.presentation for item in validated.hypotheses}
     limitation_text = {item.limitation_index: item.presentation for item in validated.limitations}
     finding_numbers = {item.finding_id: index for index, item in enumerate(findings, start=1)}
@@ -98,7 +99,7 @@ def build_report(
     if not result.findings:
         lines.append(_empty_findings_text(result.overall_state))
     for index, presented_finding in enumerate(findings, start=1):
-        heading = finding_heading[presented_finding.finding_id] or f"Finding {index}"
+        heading = finding_heading[presented_finding.finding_id]
         lines.extend(
             (
                 "",
@@ -199,6 +200,14 @@ def _validate_presentation_text(value: str) -> None:
     if not value.strip():
         raise ValueError("presentation text must not be blank")
     _normalize_prose(value)
+
+
+def _required_finding_heading(value: str | None) -> str:
+    """Require a source-grounded, nonblank heading for every presented finding."""
+    if value is None:
+        raise ValueError("presentation finding heading must be supplied")
+    _validate_presentation_text(value)
+    return value
 
 
 def _presentation_lines(value: str) -> list[str]:

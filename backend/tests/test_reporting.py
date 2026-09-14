@@ -500,14 +500,15 @@ def test_presentation_validator_fails_closed_on_incomplete_or_expanded_membershi
         ("Assess temperature stability.", None, "Temperature increase"),
         ("Assess temperature stability.", "   ", "Temperature increase"),
         (None, "An invented objective.", "Temperature increase"),
+        ("Assess temperature stability.", "Safe summary.", None),
         ("Assess temperature stability.", "Safe summary.", "   "),
         ("Assess temperature stability.", "Safe summary.", "bad\x00heading"),
     ],
 )
-def test_presentation_validator_requires_objective_summary_and_safe_optional_heading(
-    context_objective: str | None, objective_summary: str | None, heading: str
+def test_presentation_validator_requires_objective_summary_and_safe_finding_heading(
+    context_objective: str | None, objective_summary: str | None, heading: str | None
 ) -> None:
-    """Objective summaries and optional headings are nonblank safe presentation text."""
+    """Objective summaries and required headings are nonblank safe presentation text."""
     request = _request()
     request = request.model_copy(
         update={
@@ -569,6 +570,7 @@ def test_renderer_uses_validated_finding_order_and_groups_exact_repeated_evidenc
             ),
             FindingPresentation(
                 finding_id="auxiliary",
+                heading="Auxiliary event observed",
                 presentation="The auxiliary event was observed.",
             ),
         ),
@@ -582,7 +584,10 @@ def test_renderer_uses_validated_finding_order_and_groups_exact_repeated_evidenc
 
     content = build_report(request, draft, NOW).content
 
-    assert content.index("### 1. Objective event") < content.index("### 2. Finding 2")
+    assert content.index("### 1. Objective event") < content.index(
+        "### 2. Auxiliary event observed"
+    )
+    assert "### 2. Finding 2" not in content
     assert "Supported by findings: 1, 2" in content
     finding_one = content.split("### Finding 1 traceability", 1)[1].split(
         "### Finding 2 traceability", 1
