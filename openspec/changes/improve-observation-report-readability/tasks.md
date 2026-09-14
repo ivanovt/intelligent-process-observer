@@ -26,4 +26,4 @@
 
 ## 6. Final local verification
 
-- [ ] 6.1 Run `make check` and record its actual result before archive or pull-request preparation.
+- [x] 6.1 Run `make check` and record its actual result before archive or pull-request preparation.
