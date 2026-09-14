@@ -10,7 +10,7 @@
 ## 3. Source-keyed presentation
 
 - [ ] 3.1 Extend the strict presentation draft with a neutral English objective summary and source-keyed finding headings/order, including absent-objective behavior; verify exact-key, duplicate, unknown-field, blank-text, and source-coverage tests.
-- [ ] 3.2 Refine the single-request Report Agent guidance and representative adversarial cases for objective-first assessment, material auxiliary events, conflicting references, uncertainty, no-significant-findings, concise finding prose, and possible explanations; verify no new analytical claim, ranking, recommendation, tool, retry, or second request is accepted.
+- [x] 3.2 Refine the single-request Report Agent guidance and representative adversarial cases for objective-first assessment, material auxiliary events, conflicting references, uncertainty, no-significant-findings, concise finding prose, and possible explanations; verify no new analytical claim, ranking, recommendation, tool, retry, or second request is accepted.
 
 ## 4. Deterministic Markdown presentation
 
