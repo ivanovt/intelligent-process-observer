@@ -109,7 +109,8 @@ describe('RunDetailPage', () => {
     const firstSnapshot = { ...current, lens_runs: [current.lens_runs[0], second, current.lens_runs[1]] }
     const secondSnapshot = { ...firstSnapshot, lens_runs: [{ ...firstSnapshot.lens_runs[0], result: { ...metricResult, evidence: { ...metricResult.evidence, current: { ...metricResult.evidence.current, mean: 5 } } } }, second, current.lens_runs[1]] }
     const fallbackSnapshot = { ...current, lens_runs: [current.lens_runs[0], current.lens_runs[1]] }
-    const fetchMock = vi.fn().mockResolvedValueOnce(response(firstSnapshot)).mockResolvedValueOnce(response(secondSnapshot)).mockResolvedValueOnce(response(fallbackSnapshot)).mockRejectedValueOnce(new Error('offline'))
+    const reappearedSnapshot = { ...current, lens_runs: [current.lens_runs[0], second, current.lens_runs[1]] }
+    const fetchMock = vi.fn().mockResolvedValueOnce(response(firstSnapshot)).mockResolvedValueOnce(response(secondSnapshot)).mockResolvedValueOnce(response(fallbackSnapshot)).mockResolvedValueOnce(response(reappearedSnapshot)).mockRejectedValueOnce(new Error('offline'))
     vi.stubGlobal('fetch', fetchMock)
     render(<MemoryRouter initialEntries={['/runs/run']}><Routes><Route path="/runs/:observationRunId" element={<RunDetailPage />} /></Routes></MemoryRouter>)
     await screen.findByText('Run summary')
@@ -122,11 +123,24 @@ describe('RunDetailPage', () => {
     await userEvent.click(screen.getByRole('button', { name: 'Refresh' }))
     await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(3))
     expect(screen.getByLabelText('Metric Lens detail: lens-metric')).toBeTruthy()
+    await userEvent.click(screen.getByRole('button', { name: 'Refresh' }))
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(4))
+    expect(screen.getByLabelText('Metric Lens detail: lens-metric')).toBeTruthy()
     const lastUpdated = screen.getByText(/^Last updated /).textContent
     await userEvent.click(screen.getByRole('button', { name: 'Refresh' }))
     await waitFor(() => expect(screen.getByText(/Showing the last successful run detail/)).toBeTruthy())
     expect(screen.getByLabelText('Metric Lens detail: lens-metric')).toBeTruthy()
     expect(screen.getByText(/^Last updated /).textContent).toBe(lastUpdated)
+  })
+
+  it('describes a cancelled Metric Lens without a start or duration as unavailable rather than in progress', async () => {
+    const current = detail()
+    renderDetail({ ...current, lens_runs: [{ ...current.lens_runs[0], status: 'cancelled', started_at: null, finished_at: null, duration_seconds: null, result: null }, current.lens_runs[1]] })
+    await screen.findByText('Run summary')
+    await userEvent.click(screen.getByRole('tab', { name: 'Metrics' }))
+    expect(screen.getAllByText('Not started · Unavailable')).toHaveLength(2)
+    expect(screen.queryByText('Not started · In progress')).toBeNull()
+    expect(screen.getAllByText('This Lens was cancelled before a result artifact was produced.')).toHaveLength(2)
   })
 
   it.each([
