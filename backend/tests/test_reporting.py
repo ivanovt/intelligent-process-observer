@@ -626,9 +626,7 @@ def test_renderer_numbers_multiple_possible_explanations_for_appendix_mapping() 
 
     content = build_report(request, draft, NOW).content
 
-    assert content.index("### Possible explanation 1") < content.index(
-        "### Possible explanation 2"
-    )
+    assert content.index("### Possible explanation 1") < content.index("### Possible explanation 2")
     assert content.index("### Possible explanation 1 traceability") < content.index(
         "### Possible explanation 2 traceability"
     )
