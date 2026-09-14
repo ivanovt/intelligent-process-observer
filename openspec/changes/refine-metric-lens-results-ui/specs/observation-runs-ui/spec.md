@@ -2,7 +2,7 @@
 
 ### Requirement: Browse Metric Lens outcomes within one run
 
-The Run Detail `Metrics` section SHALL show one selectable card for every Metric LensRun in the loaded durable run-detail response, including pending, running, completed, partial, failed, cancelled, and completed-insufficient outcomes. It SHALL show the total Metric LensRun count and whether zero or one card is selected without describing every outcome as analyzed. No card SHALL be selected and no detail pane SHALL be rendered when the section first opens, even when results are present. Selecting a card SHALL identify it visibly and programmatically and open only that card's detail. Dismissing the pane SHALL clear selection and restore the card list to the available content width. With a pane open at desktop width, the card area SHALL remain wider than the pane, as in the supplied mock; at narrow widths, cards and selected detail SHALL remain usable in sequence without horizontal clipping or lost information. An empty Metric collection SHALL retain the run-detail empty-state meaning.
+The Run Detail `Metrics` section SHALL show one selectable card for every Metric LensRun in the loaded durable run-detail response, including pending, running, completed, partial, failed, cancelled, and completed-insufficient outcomes. It SHALL show the total Metric LensRun count and whether zero or one card is selected without describing every outcome as analyzed. No card SHALL be selected and no detail pane SHALL be rendered when the section first opens, even when results are present. Selecting a card SHALL identify it visibly and programmatically and open only that card's detail. Dismissing the pane SHALL clear selection and restore the card list to the available content width. With a pane open at a usable desktop width, including an approximately 1200px browser window with the application sidebar, the card area SHALL remain wider than the pane. The pane SHALL stay at a stable viewport position while the page and card list scroll, SHALL keep its close control reachable, and SHALL allow tall detail content to scroll independently without hiding accepted evidence. The card summary SHALL reflow rather than clip at that split width. At widths too narrow for both readable columns, cards and selected detail SHALL remain usable in sequence without horizontal clipping or lost information. An empty Metric collection SHALL retain the run-detail empty-state meaning.
 
 #### Scenario: Compare mixed outcomes
 
@@ -28,6 +28,14 @@ The Run Detail `Metrics` section SHALL show one selectable card for every Metric
 - **WHEN** the Metrics section is viewed at a narrow viewport
 - **THEN** every Lens item can be selected and its full detail can be read in a stacked layout
 - **AND** no evidence is hidden solely because the side-by-side layout does not fit
+
+#### Scenario: Keep selected detail visible while scrolling desktop cards
+
+- **GIVEN** a run has many Metric cards and one detail pane is open at an approximately 1200px or wider desktop window
+- **WHEN** the user scrolls several cards down the page
+- **THEN** the selected detail stays visible at a stable viewport position while the card list remains scrollable
+- **AND** its close action and all detail evidence remain reachable through the pane's own scroll
+- **AND** the card's semantic band and ordered evidence summary remain readable at the narrower desktop split
 
 ### Requirement: Summarize each Metric Lens without overstating its evidence
 
