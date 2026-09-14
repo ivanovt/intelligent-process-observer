@@ -309,6 +309,24 @@ Quantitative presentation SHALL preserve the source statement's meaning. A symme
 - **THEN** it remains a possible explanation associated with its source key
 - **AND** concise wording does not promote it to a confirmed cause
 
+### Requirement: Mark deterministic report finding facts for safe visual emphasis
+
+The deterministic Markdown renderer SHALL mark report-local finding numbers and factual values it emits with renderer-owned strong-emphasis delimiters. This includes factual Metric/Lens identifiers, UTC timestamps, durations, and numeric measurements with their supplied units when they are rendered as deterministic report content. The renderer SHALL not alter, heuristically parse, or apply Markdown formatting to model-authored or source-authored prose; such prose remains escaped inert text. Strong emphasis is presentation only and SHALL not change finding order, source ownership, traceability, analytical meaning, certainty, or the exact identity/value represented.
+
+#### Scenario: Emphasize deterministic finding facts without changing content
+
+- **GIVEN** a rendered report includes a displayed finding number and deterministic Metric/Lens, timestamp, duration, and numeric measurement values
+- **WHEN** the Markdown report is built
+- **THEN** each applicable renderer-owned factual value is enclosed in valid strong-emphasis Markdown
+- **AND** its visible text, source association, units, and analytical meaning remain unchanged
+
+#### Scenario: Keep model prose inert
+
+- **GIVEN** a model-authored finding presentation contains Markdown-like strong-emphasis syntax or text that resembles a metric, timestamp, duration, or number
+- **WHEN** the report is built
+- **THEN** the model-authored text is escaped as inert prose rather than being reformatted by the renderer
+- **AND** it cannot create additional formatting, document structure, links, or executable content
+
 ### Requirement: Evaluate synthesis guidance against representative trace-backed cases
 
 The finding, overall-state, and report guidance SHALL be covered by deterministic request/prompt tests and representative adversarial evaluation cases. The evaluation set SHALL include objective-aligned direct versus auxiliary Metric evidence, absent Relationship evidence, repetitive current/reference/History facts, conflicting evidence, empty knowledge-grounded hypotheses, symmetric relative change, uncertain evidence availability, and attempts to introduce causal, percentage, severity, recommendation, or confidence language.
