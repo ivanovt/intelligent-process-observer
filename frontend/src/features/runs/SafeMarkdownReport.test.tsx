@@ -20,6 +20,36 @@ describe('SafeMarkdownReport', () => {
     expect(screen.getByText(/~~legacy~~/)).toBeTruthy()
   })
 
+  it('renders only well-formed strong emphasis as semantic text and leaves malformed markers inert', () => {
+    render(<SafeMarkdownReport content={'**Finding 1** has `**literal-id**` and **missing end\n\n***unsupported***'} />)
+    expect(screen.getByText('Finding 1').tagName).toBe('STRONG')
+    expect(screen.getByText('**literal-id**').tagName).toBe('CODE')
+    expect(screen.queryByRole('strong', { name: /missing end|unsupported/ })).toBeNull()
+    expect(screen.getByText(/\*\*missing end/)).toBeTruthy()
+    expect(screen.getByText(/\*\*\*unsupported\*\*\*/)).toBeTruthy()
+  })
+
+  it('preserves backend-owned inline-code facts inside their own semantic strong spans', () => {
+    render(<SafeMarkdownReport content={'- Evidence source type: **`metric_result`**; source ID: **`metric-run`**\n- Observed window (UTC): **`2026-09-07T10:00:00Z`** to **`2026-09-07T12:00:00Z`**.'} />)
+    const firstFact = screen.getByText('metric_result')
+    const secondFact = screen.getByText('metric-run')
+    expect(firstFact.tagName).toBe('CODE')
+    expect(secondFact.tagName).toBe('CODE')
+    expect(firstFact.parentElement?.tagName).toBe('STRONG')
+    expect(secondFact.parentElement?.tagName).toBe('STRONG')
+    expect(firstFact.parentElement?.textContent).toBe('metric_result')
+    expect(secondFact.parentElement?.textContent).toBe('metric-run')
+    expect(firstFact.parentElement?.previousSibling?.textContent).toBe('Evidence source type: ')
+    expect(firstFact.parentElement?.nextSibling?.textContent).toBe('; source ID: ')
+  })
+
+  it('keeps escaped model Markdown delimiters literal and inert', () => {
+    render(<SafeMarkdownReport content={'> Model prose \\`not code\\` and \\*\\*not strong\\*\\*.'} />)
+    expect(screen.getByText('Model prose `not code` and **not strong**.')).toBeTruthy()
+    expect(screen.queryByRole('code')).toBeNull()
+    expect(screen.queryByRole('strong')).toBeNull()
+  })
+
   it('preserves document order in the safe fallback parser', () => {
     expect(parseSafeMarkdown('first\n\n## second\n\n- third').map((block) => block.kind)).toEqual(['paragraph', 'heading', 'list'])
   })

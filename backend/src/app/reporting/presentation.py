@@ -103,7 +103,7 @@ def build_report(
         lines.extend(
             (
                 "",
-                f"### {index}. {_markdown_prose(heading)}",
+                f"### {_markdown_finding_number(index)}. {_markdown_prose(heading)}",
                 *_presentation_lines(finding_text[presented_finding.finding_id]),
             )
         )
@@ -152,7 +152,7 @@ def build_report(
         lines.extend(
             (
                 "",
-                f"### Finding {index} traceability",
+                f"### Finding {_markdown_finding_number(index)} traceability",
                 f"- Source finding ID: {_markdown_opaque(finding.id)}",
             )
         )
@@ -251,7 +251,7 @@ def _normalize_prose(value: str) -> str:
 
 
 def _markdown_opaque(value: UUID | str | int) -> str:
-    """Render an opaque value as exact, inert, human-readable inline code."""
+    """Render a deterministic fact as emphasized, inert inline code."""
     if isinstance(value, UUID):
         serialized_value = str(value)
     elif type(value) is str:
@@ -260,7 +260,17 @@ def _markdown_opaque(value: UUID | str | int) -> str:
         serialized_value = _decimal_integer(value)
     else:  # pragma: no cover - callers are constrained by domain contracts.
         raise TypeError("unsupported opaque value type")
-    return _markdown_inline_code(_display_text(serialized_value))
+    return _markdown_strong(_markdown_inline_code(_display_text(serialized_value)))
+
+
+def _markdown_finding_number(value: int) -> str:
+    """Render a report-local finding number with deterministic strong emphasis."""
+    return _markdown_strong(_decimal_integer(value))
+
+
+def _markdown_strong(value: str) -> str:
+    """Wrap renderer-owned Markdown content in the supported strong subset."""
+    return f"**{value}**"
 
 
 def _markdown_inline_code(value: str) -> str:
@@ -341,7 +351,7 @@ def _inline_values(values: tuple[str, ...]) -> str:
 
 def _finding_numbers(values: tuple[int, ...]) -> str:
     """Render report-local finding numbers as readable cross-references."""
-    return ", ".join(str(value) for value in values)
+    return ", ".join(_markdown_finding_number(value) for value in values)
 
 
 def _state_label(overall_state: str) -> str:

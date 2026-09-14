@@ -257,16 +257,44 @@ def test_renderer_uses_draft_order_and_retains_complete_traceability_without_mut
     assert report.observation_run_id == request.analysis_result.identity.observation_run_id
     assert report.generated_at is NOW
     assert "## Objective" in report.content and "## Overall Assessment" in report.content
-    assert "### 1. Temperature increase observed" in report.content
+    assert "### **1**. Temperature increase observed" in report.content
     assert f"- Source finding ID: {_markdown_opaque('finding-temperature')}" in report.content
     assert f"Evidence source type: {_markdown_opaque('metric_result')}" in report.content
-    assert "Supported by findings: 1" in report.content
+    assert "Supported by findings: **1**" in report.content
     assert (
         f"Knowledge source ID: {_markdown_opaque('manual')}; "
         f"reference: {_markdown_opaque('section-4')}" in report.content
     )
     assert "possible explanation, not a confirmed cause" in report.content
-    assert "- Code: `missing_lens_evidence`" in report.content
+    assert "- Code: **`missing_lens_evidence`**" in report.content
+
+
+def test_renderer_emphasizes_owned_facts_without_formatting_model_prose() -> None:
+    """Only renderer-owned finding facts gain valid strong Markdown delimiters."""
+    request = _request()
+    draft = _draft(request).model_copy(
+        update={
+            "findings": (
+                FindingPresentation(
+                    finding_id="finding-temperature",
+                    heading="Heading **not emphasis** 42ms",
+                    presentation="Model prose **not emphasis** includes 99 ms.",
+                ),
+            ),
+        }
+    )
+
+    content = build_report(request, draft, NOW).content
+
+    assert "### **1**. Heading \\*\\*not emphasis\\*\\* 42ms" in content
+    assert "> Model prose \\*\\*not emphasis\\*\\* includes 99 ms." in content
+    assert "**Model prose" not in content and "**not emphasis**" not in content
+    assert "Evidence source type: **`metric_result`**; source ID: **`metric-run`**" in content
+    assert (
+        "Observed window (UTC): **`2026-09-07T10:00:00Z`** to "
+        "**`2026-09-07T12:00:00Z`**." in content
+    )
+    assert "- Generated at (UTC): **`2026-09-07T12:00:00Z`**" in content
 
 
 def test_renderer_uses_injective_delimiter_safe_traceability_encoding() -> None:
@@ -332,8 +360,8 @@ def test_renderer_uses_injective_delimiter_safe_traceability_encoding() -> None:
     assert _markdown_opaque(uuid_source_id) == _markdown_opaque(string_uuid_source_id)
     assert _markdown_opaque(actual_control_reference) != _markdown_opaque(literal_escape_reference)
     assert _locator_text(delimiter_bearing_locator) != _locator_text(split_locator)
-    assert _markdown_opaque(actual_control) == r"`metric\nrun`"
-    assert _markdown_opaque(literal_escape) == r"`metric\\nrun`"
+    assert _markdown_opaque(actual_control) == r"**`metric\nrun`**"
+    assert _markdown_opaque(literal_escape) == r"**`metric\\nrun`**"
     assert _locator_text(delimiter_bearing_locator) == '`["items / key=other"][0]`'
     assert _locator_text(split_locator) == '`items["other / key=0"]`'
     assert f"source ID: {_markdown_opaque(actual_control)}" in content
@@ -364,8 +392,8 @@ def test_renderer_contains_hostile_identifiers_and_locator_segments_as_inline_co
 
     content = build_report(request, _draft(request), NOW).content
 
-    assert _markdown_opaque(hostile_id).startswith("``")
-    assert _markdown_opaque(hostile_id).endswith("``")
+    assert _markdown_opaque(hostile_id).startswith("**``")
+    assert _markdown_opaque(hostile_id).endswith("``**")
     assert _locator_text(hostile_locator).startswith("``")
     assert r"\n## injected heading" in content
     assert r"\n[link](https://bad.invalid)" in content
@@ -447,7 +475,7 @@ def test_empty_findings_do_not_contradict_a_non_empty_source_assessment(state: s
     report = build_report(request, _draft(request), NOW)
     assert "No individual finding entries were supplied" in report.content
     assert "No significant findings were identified" not in report.content
-    assert f"- Source overall state: `{state}`" in report.content
+    assert f"- Source overall state: {_markdown_opaque(state)}" in report.content
 
 
 def test_renderer_excludes_non_english_and_control_bearing_semantic_context() -> None:
@@ -584,19 +612,22 @@ def test_renderer_uses_validated_finding_order_and_groups_exact_repeated_evidenc
 
     content = build_report(request, draft, NOW).content
 
-    assert content.index("### 1. Objective event") < content.index(
-        "### 2. Auxiliary event observed"
+    assert content.index("### **1**. Objective event") < content.index(
+        "### **2**. Auxiliary event observed"
     )
     assert "### 2. Finding 2" not in content
-    assert "Supported by findings: 1, 2" in content
-    finding_one = content.split("### Finding 1 traceability", 1)[1].split(
-        "### Finding 2 traceability", 1
+    assert "Supported by findings: **1**, **2**" in content
+    finding_one = content.split("### Finding **1** traceability", 1)[1].split(
+        "### Finding **2** traceability", 1
     )[0]
-    assert finding_one.count("Evidence source type: `metric_result`; source ID: `metric-a`") == 1
+    assert (
+        finding_one.count("Evidence source type: **`metric_result`**; source ID: **`metric-a`**")
+        == 1
+    )
     assert finding_one.count("Locator: `two`") == 2
-    assert "Evidence source type: `alert_result`; source ID: `alert-b`" in finding_one
-    assert "Source finding ID: `objective`" in finding_one
-    assert "Knowledge source ID: `manual`; reference: `section-7`" in content
+    assert "Evidence source type: **`alert_result`**; source ID: **`alert-b`**" in finding_one
+    assert "Source finding ID: **`objective`**" in finding_one
+    assert "Knowledge source ID: **`manual`**; reference: **`section-7`**" in content
 
 
 def test_renderer_numbers_multiple_possible_explanations_for_appendix_mapping() -> None:
@@ -636,11 +667,11 @@ def test_renderer_numbers_multiple_possible_explanations_for_appendix_mapping() 
         "### Possible explanation 2 traceability"
     )
     assert (
-        "### Possible explanation 1 traceability\n- Source hypothesis ID: `first-explanation`"
+        "### Possible explanation 1 traceability\n- Source hypothesis ID: **`first-explanation`**"
         in content
     )
     assert (
-        "### Possible explanation 2 traceability\n- Source hypothesis ID: `second-explanation`"
+        "### Possible explanation 2 traceability\n- Source hypothesis ID: **`second-explanation`**"
         in content
     )
 
@@ -680,14 +711,14 @@ def test_renderer_escapes_active_dynamic_markdown_syntax_without_blanket_punctua
         "## Objective",
         "## Overall Assessment",
         "## Findings",
-        "### 1. Temperature increase observed",
+        "### **1**. Temperature increase observed",
         "## Possible Explanations",
         "### Possible explanation 1",
         "## Analysis Limitations",
         "### Limitation 1",
         "## Technical Appendix",
         "### Report details",
-        "### Finding 1 traceability",
+        "### Finding **1** traceability",
         "### Possible explanation 1 traceability",
         "### Limitation 1 traceability",
     ]

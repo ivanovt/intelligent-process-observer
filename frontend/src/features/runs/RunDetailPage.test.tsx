@@ -127,12 +127,40 @@ describe('RunDetailPage', () => {
     expect(screen.getByText('Applicability: applicable')).toBeTruthy()
     expect(screen.getByText('Evaluation state: inconsistent')).toBeTruthy()
     await userEvent.click(screen.getByRole('tab', { name: 'Analysis' }))
+    const references = screen.getByText('References').closest('details')
+    expect(references).not.toBeNull()
+    expect(references?.open).toBe(false)
+    await userEvent.click(screen.getByText('References'))
+    expect(references?.open).toBe(true)
     expect(screen.getByText(/Metric result · lens-metric · evidence.current/)).toBeTruthy()
     expect(screen.getByText(/Relationship evaluation · relationship-1 · expectations\[0\]/)).toBeTruthy()
     expect(screen.getByText(/Knowledge · manual: section 4/)).toBeTruthy()
     await userEvent.click(screen.getByText(/Metric result · lens-metric/))
     expect(screen.getAllByText('Resolved value:').length).toBeGreaterThan(0)
     expect(screen.queryByText(/root cause|recommendation|confidence/i)).toBeNull()
+  })
+
+  it('groups only evidence and relationship controls under each finding references disclosure', async () => {
+    const current = detail()
+    renderDetail({ ...current, analysis: { ...current.analysis!, findings: [{ id: 'two-locators', statement: 'Two exact values remain inspectable', evidence_refs: [{ source_type: 'metric_result', source_id: 'lens-metric', locator: ['evidence', 'current', 'mean'] }, { source_type: 'metric_result', source_id: 'lens-metric', locator: ['current_state', 'trend', 'direction'] }] }, { id: 'no-references', statement: 'No reference finding', evidence_refs: [] }] } })
+    await screen.findByText('Run summary')
+    await userEvent.click(screen.getByRole('tab', { name: 'Analysis' }))
+    expect(screen.getAllByText('References')).toHaveLength(1)
+    const references = screen.getByText('References').closest('details')!
+    expect(references.open).toBe(false)
+    await userEvent.click(screen.getByText('References'))
+    expect(within(references).getByText(/Metric result · lens-metric · evidence.current.mean/)).toBeTruthy()
+    expect(within(references).getByText(/Metric result · lens-metric · current_state.trend.direction/)).toBeTruthy()
+    const controls = references.querySelectorAll('details')
+    expect(controls).toHaveLength(2)
+    expect([...controls].every((control) => !control.open)).toBe(true)
+  })
+
+  it('keeps Summary cards aligned to their own content height', async () => {
+    renderDetail()
+    await screen.findByText('Run summary')
+    const summaryGrid = screen.getByText('Run summary').closest('article')?.parentElement
+    expect(summaryGrid?.className).toContain('items-start')
   })
 
   it('links a recognized historical citation to its immutable version without substituting a newer approval', async () => {
@@ -191,7 +219,7 @@ describe('RunDetailPage', () => {
 
   it('copies the exact readable persisted Markdown while presenting it as a safe document', async () => {
     const writeText = vi.fn().mockResolvedValue(undefined)
-    const reportContent = '# Observation report\n\nObjective summary: Assess cooling stability.\n\nObserved UTC window: 2026-09-09T09:00:00Z to 2026-09-09T10:00:00Z.\n\n## Findings\n\n### 1. Cooling temperature increased\n\nThe current observation increased during the observed window.\n\n## Technical appendix\n\n- Finding 1 source ID: `finding-1`\n- Metric result · `lens-metric` · `evidence.current`'
+    const reportContent = '# Observation report\n\nObjective summary: Assess cooling stability.\n\nObserved UTC window: 2026-09-09T09:00:00Z to 2026-09-09T10:00:00Z.\n\n## Findings\n\n### **1. Cooling temperature increased**\n\nThe current observation increased during the observed window.\n\n## Technical appendix\n\n- Finding 1 source ID: `finding-1`\n- Metric result · `lens-metric` · `evidence.current`'
     Object.defineProperty(navigator, 'clipboard', { configurable: true, value: { writeText } })
     const current = detail()
     renderDetail({ ...current, report: { ...current.report!, content: reportContent } })
@@ -200,6 +228,7 @@ describe('RunDetailPage', () => {
     expect(await screen.findByRole('button', { name: 'Copied' })).toBeTruthy()
     expect(screen.getByRole('heading', { name: 'Observation report' }).tagName).toBe('H1')
     expect(screen.getByRole('heading', { name: '1. Cooling temperature increased' })).toBeTruthy()
+    expect(screen.getByRole('heading', { name: '1. Cooling temperature increased' }).querySelector('strong')?.textContent).toBe('1. Cooling temperature increased')
     expect(screen.getAllByRole('listitem')).toHaveLength(2)
     expect(screen.getByText('finding-1').tagName).toBe('CODE')
   })
