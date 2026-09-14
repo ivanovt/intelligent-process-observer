@@ -23,7 +23,7 @@ TanStack Table — only where advanced tabular behavior is required
 
 Project-owned semantic design tokens use CSS custom properties integrated with Tailwind.
 
-Third-party primitives do not own ObserveAI domain semantics. Project-owned components encapsulate analytical state, execution state, Lens configuration, findings/hypotheses, and traceability concepts.
+Third-party primitives do not own IPO domain semantics. Project-owned components encapsulate analytical state, execution state, Lens configuration, findings/hypotheses, and traceability concepts.
 
 Observation Management, Data Sources, and Runs History/Detail UX in UI Direction v1.4 use the same stack and do not introduce a separate admin design system.
 
@@ -45,7 +45,7 @@ Recharts is the default MVP visualization library for Metric time-series, simple
 
 Positive:
 
-- full control over the accepted ObserveAI visual direction;
+- full control over the accepted IPO visual direction;
 - mainstream React ecosystem;
 - reusable accessible primitives;
 - semantic design tokens and project-owned domain components;

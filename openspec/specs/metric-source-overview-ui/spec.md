@@ -7,11 +7,11 @@ Provide safe read-only visibility and environment-configuration guidance for the
 ## Requirements
 
 ### Requirement: Present Metric sources in the Data Sources product area
-The system SHALL provide a `/data-sources` page within the shared ObserveAI shell and SHALL make the existing `Data Sources` navigation item interactive and active on that route. The page SHALL identify Metric sources as environment-managed Prometheus configuration and SHALL NOT present source create, edit, delete, enable, disable, or credential-management controls.
+The system SHALL provide a `/data-sources` page within the shared IPO shell and SHALL make the existing `Data Sources` navigation item interactive and active on that route. The page SHALL identify Metric sources as environment-managed Prometheus configuration and SHALL NOT present source create, edit, delete, enable, disable, or credential-management controls.
 
 #### Scenario: Open Data Sources
 - **WHEN** a user activates `Data Sources` in the main navigation
-- **THEN** the Data Sources page is shown within the existing ObserveAI shell
+- **THEN** the Data Sources page is shown within the existing IPO shell
 - **AND** the navigation item is marked active
 - **AND** no application-managed source lifecycle control is present
 

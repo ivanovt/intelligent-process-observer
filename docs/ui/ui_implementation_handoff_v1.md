@@ -1,6 +1,6 @@
 # UI Implementation Handoff — v1.10
 
-**Project:** ObserveAI / Master Thesis
+**Project:** IPO (Intelligent Process Observer) / Master Thesis
 **Status:** Accepted living major-v1 implementation handoff for MVP UI Direction v1.10
 **Date:** 2026-09-13
 
@@ -812,7 +812,7 @@ src/
 ```
 
 `components/ui` = generic primitive layer.
-`components/domain` = ObserveAI semantic component layer.
+`components/domain` = IPO semantic component layer.
 `features` = screen/use-case composition.
 
 ## 14. Implementation sequence

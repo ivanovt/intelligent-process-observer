@@ -8,7 +8,7 @@ Let engineers launch Observations, monitor all active and historical runs, and i
 
 ### Requirement: Provide a top-level Runs history screen
 
-The application SHALL activate the existing `Runs` navigation item at `/runs` and present all Observation runs returned by the public API in newest-first order. The screen SHALL use the accepted ObserveAI shell, semantic tokens, lightweight rows/cards, and project-owned execution and analytical state components rather than introduce a separate administrative or visual system.
+The application SHALL activate the existing `Runs` navigation item at `/runs` and present all Observation runs returned by the public API in newest-first order. The screen SHALL use the accepted IPO shell, semantic tokens, lightweight rows/cards, and project-owned execution and analytical state components rather than introduce a separate administrative or visual system.
 
 Each row SHALL present a brief scan-oriented summary: Observation name, compact run identity, analysis window or run time, duration when available, execution status, optional analytical state, and an `Open` action. Execution success SHALL be represented only by `completed`; `failed` and `cancelled` SHALL remain distinct non-success terminal states. “Issues found” SHALL map only to `significant_findings_present`; missing analysis SHALL be labeled unavailable or pending and SHALL never be inferred from execution status.
 

@@ -145,7 +145,7 @@ Run Activity SHALL retain its fourteen-newest-run bound and exact `pending`, `ru
 
 ### Requirement: Treat the visual reference as informative and preserve failure honesty
 
-The refined Overview SHALL follow the accepted ObserveAI shell, typography, semantic tokens, domain components, and responsive behavior. The supplied dashboard screenshot SHALL guide density, white-surface cards, restrained borders/shadows, icon placement, dot/icon-plus-text states, and column proportions, but SHALL NOT override product semantics.
+The refined Overview SHALL follow the accepted IPO shell, typography, semantic tokens, domain components, and responsive behavior. The supplied dashboard screenshot SHALL guide density, white-surface cards, restrained borders/shadows, icon placement, dot/icon-plus-text states, and column proportions, but SHALL NOT override product semantics.
 
 The refinement SHALL NOT add user identity, global time-range control, arbitrary category icons, health classification, ObservationRun `partial`, runtime mutation, credential exposure, data repair, or fabricated findings. Invalid durable runtime data SHALL appear through the explicit resilient Overview limitation contract; it SHALL not be silently dropped, rewritten, or used to weaken the strict Runs API.
 

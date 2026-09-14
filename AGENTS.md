@@ -372,7 +372,7 @@ architecture/UI decision.
 - Prefer project-owned semantic components over one-off Tailwind markup.
 - Use semantic design tokens for domain states instead of scattering raw colors.
 - Third-party UI primitives must adapt to the accepted UI direction, not redefine it.
-- Keep generic primitives separate from ObserveAI domain components.
+- Keep generic primitives separate from IPO domain components.
 
 Examples of project-owned semantic components include:
 `AnalyticalStateBadge`, `ExecutionStatusBadge`, `LensCard`, `FindingCard`,

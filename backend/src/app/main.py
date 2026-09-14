@@ -88,7 +88,7 @@ async def lifespan(app: FastAPI):
             await engine.dispose()
 
 
-app = FastAPI(title="Intelligent Process Observer", lifespan=lifespan)
+app = FastAPI(title="IPO", lifespan=lifespan)
 app.include_router(router)
 app.include_router(knowledge_router)
 app.include_router(observation_runs_router)
