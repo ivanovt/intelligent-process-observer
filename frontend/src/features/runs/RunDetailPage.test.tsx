@@ -276,6 +276,17 @@ describe('RunDetailPage', () => {
     expect(screen.queryByText(/root cause|recommendation|confidence/i)).toBeNull()
   })
 
+  it('emphasizes a finding brief before its first colon in summary and analysis views', async () => {
+    const current = detail()
+    const statement = 'Device connectivity: Connected devices remained stable.'
+    renderDetail({ ...current, analysis: { ...current.analysis!, findings: [{ id: 'named-finding', statement, evidence_refs: [] }] } })
+    await screen.findByText((_content, element) => element?.tagName === 'P' && element.textContent === statement)
+    expect(screen.getByText('Device connectivity:').tagName).toBe('STRONG')
+    await userEvent.click(screen.getByRole('tab', { name: 'Analysis' }))
+    expect(screen.getByText((_content, element) => element?.tagName === 'P' && element.textContent === statement).textContent).toBe(statement)
+    expect(screen.getByText('Device connectivity:').tagName).toBe('STRONG')
+  })
+
   it('groups only evidence and relationship controls under each finding references disclosure', async () => {
     const current = detail()
     renderDetail({ ...current, analysis: { ...current.analysis!, findings: [{ id: 'two-locators', statement: 'Two exact values remain inspectable', evidence_refs: [{ source_type: 'metric_result', source_id: 'lens-metric', locator: ['evidence', 'current', 'mean'] }, { source_type: 'metric_result', source_id: 'lens-metric', locator: ['current_state', 'trend', 'direction'] }] }, { id: 'no-references', statement: 'No reference finding', evidence_refs: [] }] } })
