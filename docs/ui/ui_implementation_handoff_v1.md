@@ -1,14 +1,14 @@
-# UI Implementation Handoff — v1.11
+# UI Implementation Handoff — v1.12
 
 **Project:** IPO (Intelligent Process Observer) / Master Thesis
-**Status:** Accepted living major-v1 implementation handoff for MVP UI Direction v1.11
-**Date:** 2026-09-14
+**Status:** Accepted living major-v1 implementation handoff for MVP UI Direction v1.12
+**Date:** 2026-09-15
 
 ## 1. Purpose
 
 This document translates the accepted current UI direction into implementation-oriented rules for the MVP frontend.
 
-UI Direction v1.10 includes the original monitoring/investigation experience, global run management, Observation Management configuration UX, read-only Data Sources visibility, and manual Knowledge Administration. It retains UI-generated Observation-child identity as typed, compact metadata beside Name, the on-demand secret-safe Prometheus configuration disclosure for each configured source, the global Runs history/launch screen and advisory Metric query preflight, and the existing Run Detail presentation. Observation knowledge scope now pairs each selected service with its own optional version. The frontend must preserve the architecture's semantic boundaries and must not invent new product-level classifications, lifecycle semantics, or administrative capabilities that are not supported by accepted backend contracts.
+UI Direction v1.12 includes the original monitoring/investigation experience, global run management, Observation Management configuration UX, read-only Data Sources visibility, and manual Knowledge Administration. It retains UI-generated Observation-child identity as typed, compact metadata beside Name, the on-demand secret-safe Prometheus configuration disclosure for each configured source, the global Runs history/launch screen and advisory Metric query preflight, and the existing Run Detail presentation. Observation knowledge scope pairs each selected service with its own optional version, General supports optional Observation-level operational context, and Run Observation supports a bounded absolute-UTC window mode. The frontend must preserve the architecture's semantic boundaries and must not invent new product-level classifications, lifecycle semantics, or administrative capabilities that are not supported by accepted backend contracts.
 
 ## 2. Accepted frontend visual stack
 
@@ -376,12 +376,20 @@ Each row shows only scan-oriented identity, time/window, duration when available
 ObservationRun status, optional analytical state, and Open. The list loads the complete
 MVP history without pagination. Filters combine locally and preserve newest-first order.
 
-`Run Observation` opens an accessible dialog. It selects one Observation and either a
-relative range (`5m`, `15m`, `30m`, `1h`, `3h`, `6h`, `12h`, `24h`, `2d`, `7d`) or the
-closed absolute-expression set `now`, `now-15m`, `now-1h`; initial range is `now-15m`
-to `now`. Both endpoints resolve against one captured instant and only concrete UTC
-timestamps are submitted. Unsupported Grafana expressions are rejected rather than
-partially parsed.
+`Run Observation` opens an accessible dialog. It selects one Observation and one of three
+mutually exclusive time-range modes: a relative range (`5m`, `15m`, `30m`, `1h`, `3h`,
+`6h`, `12h`, `24h`, `2d`, `7d`); the closed expression set `now`, `now-15m`, `now-1h`;
+or `Absolute UTC`. The initial relative range remains `now-15m` to `now`. `Absolute UTC`
+uses explicitly UTC-labelled From and To date-time controls with second-level precision.
+Their zone-less control values are strictly treated as UTC calendar values, never as
+browser-local time or an arbitrary timezone; invalid or impossible calendar values are
+rejected rather than normalized. Missing endpoints, From greater than or equal to To, and
+an end later than the single captured validation instant are actionable validation errors.
+Every mode resolves both endpoints against one captured instant where applicable, previews
+the concrete canonical UTC interval, and submits only the existing concrete
+`analysis_window.from` and `analysis_window.to` timestamps. This does not add an API,
+backend, persistence, or timezone-support change. Unsupported Grafana expressions are
+rejected rather than partially parsed.
 
 The dialog loads current Observation Definitions independently from run history and
 distinguishes loading, retryable failure, successful empty, and successful non-empty
@@ -842,7 +850,7 @@ If `add-observation-management-ui` is the first frontend OpenSpec change, it may
 
 ## 15. Versioning and change-control rule
 
-**UI Direction v1.11 is the accepted current direction.**
+**UI Direction v1.12 is the accepted current direction.**
 
 Implementation may make minor technical adjustments for responsive fit, accessibility, browser behavior, real data length and actual API constraints, but must not silently change:
 

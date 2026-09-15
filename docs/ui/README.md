@@ -5,11 +5,11 @@ This directory contains the accepted current UI direction, frontend technology d
 ## Files
 
 - `frontend_ui_stack_adr.md` — accepted frontend visual technology stack and related trade-offs.
-- `ui_implementation_handoff_v1.md` — living major-v1 implementation handoff (currently v1.11) covering monitoring/investigation, run management, Observation Management, Data Sources, and Knowledge Administration UX.
+- `ui_implementation_handoff_v1.md` — living major-v1 implementation handoff (currently v1.12) covering monitoring/investigation, run management, Observation Management, Data Sources, and Knowledge Administration UX.
 
 ## Status
 
-**UI Direction v1.11 is the accepted current direction.**
+**UI Direction v1.12 is the accepted current direction.**
 
 v1.2 retained the monitoring/investigation and Observation Management direction, and added:
 
@@ -91,6 +91,14 @@ collapsed populated text, and appears in Review and read-only definition inspect
 text is submitted only in the final aggregate create/replacement request and is not a new
 navigation item, nested editor, or standalone save action.
 
+v1.12 retains the complete v1.11 direction and extends the existing Run Observation dialog
+with a third, explicitly UTC `Absolute UTC` time-range mode. It accepts exact calendar
+From/To values with second-level precision, previews the canonical UTC interval, validates
+missing, invalid, reversed, and future-facing intervals against one captured instant, and
+submits the existing concrete `analysis_window.from` and `analysis_window.to` timestamps.
+It does not add an API, backend, persistence, arbitrary-timezone, or browser-local-time
+interpretation change; relative presets and the closed expression vocabulary remain intact.
+
 The implementation must preserve accepted information architecture, terminology, analytical/execution semantics, aggregate ownership, Lens configuration boundaries, and evidence/knowledge boundaries.
 
 Minor implementation adjustments are allowed for responsive fit, accessibility, browser behavior, real data length, and actual API constraints. Meaningful visual, UX, or semantic changes require an explicit UI version change.
@@ -111,7 +119,7 @@ Observation UI - Master Thesis
 https://magicpath.ai/files/447597481925181440
 ```
 
-MagicPath can guide look and feel, but an approved change does not require 1:1 canvas parity or synchronization. Historical v1.1 through v1.10 wording remains historical; ADR-167 and this current v1.11 documentation govern new work.
+MagicPath can guide look and feel, but an approved change does not require 1:1 canvas parity or synchronization. Historical v1.1 through v1.11 wording remains historical; ADR-167 and this current v1.12 documentation govern new work.
 
 ## Usage
 
