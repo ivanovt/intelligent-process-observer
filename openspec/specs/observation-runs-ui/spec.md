@@ -68,9 +68,9 @@ The Runs screen SHALL provide a `Run Observation` action that opens an accessibl
 
 Every returned definition SHALL appear exactly once in deterministic API order, including an Observation with no prior run. Current run history SHALL only annotate/disable definitions known to have `pending|running` runs; stale or racing history remains subject to authoritative server conflict handling. Closing the dialog SHALL abort an in-flight definition request and SHALL NOT launch or mutate a run.
 
-The dialog SHALL contain an Observation selector and a two-part time-range chooser. Relative choices SHALL include `Last 5 minutes`, `Last 15 minutes`, `Last 30 minutes`, `Last 1 hour`, `Last 3 hours`, `Last 6 hours`, `Last 12 hours`, `Last 24 hours`, `Last 2 days`, and `Last 7 days`. The absolute side SHALL contain `From` and `To` expression fields and support exactly `now`, `now-15m`, and `now-1h`; the initial range SHALL be `now-15m` to `now`.
+The dialog SHALL contain an Observation selector and three mutually exclusive time-range modes. `Relative range` SHALL include `Last 5 minutes`, `Last 15 minutes`, `Last 30 minutes`, `Last 1 hour`, `Last 3 hours`, `Last 6 hours`, `Last 12 hours`, `Last 24 hours`, `Last 2 days`, and `Last 7 days`. `Expressions` SHALL contain `From` and `To` fields and support exactly `now`, `now-15m`, and `now-1h`. `Absolute UTC` SHALL contain explicitly UTC-labeled `From` and `To` date-time fields that accept valid calendar values with second-level precision and do not interpret them in the browser's local timezone. The initial mode SHALL remain `Relative range` with `Last 15 minutes`, equivalent at confirmation to `now-15m` through `now`.
 
-The client SHALL resolve the selected preset or supported expressions against one captured current instant at confirmation, produce aware UTC timestamps, require `from < to` and a non-future end, show the resolved range for review, and submit only concrete timestamps to `POST /api/v1/observation-runs`. It SHALL reject unsupported Grafana expressions rather than partially parse or normalize them.
+The client SHALL resolve the selected mode against one captured current instant per validation or confirmation attempt, produce aware UTC timestamps, require `from < to` and a non-future end, show the concrete UTC range for review, and submit only those concrete timestamps to `POST /api/v1/observation-runs`. It SHALL reject an absent or invalid absolute endpoint and unsupported Grafana expressions rather than partially parse, normalize, or guess them. Switching among modes SHALL NOT reinterpret an absolute wall-clock value as browser-local time.
 
 Observation choices SHALL identify any currently active Observation and disable it with explanatory text. The server SHALL remain authoritative: a race returning `409 Conflict` SHALL update the feedback with the existing active run and SHALL NOT be treated as successful duplicate execution.
 
@@ -117,6 +117,30 @@ Observation choices SHALL identify any currently active Observation and disable 
 - **WHEN** a user enters `now-15m` for From and `now` for To and confirms
 - **THEN** both expressions resolve from the same captured current instant
 - **AND** the submitted window spans exactly 15 minutes
+
+#### Scenario: Launch an absolute UTC interval
+
+- **WHEN** a user enters `2026-09-10 10:00:00 UTC` for From and `2026-09-10 17:00:00 UTC` for To and confirms after that interval
+- **THEN** the dialog previews and submits the exact canonical UTC timestamps `2026-09-10T10:00:00.000Z` and `2026-09-10T17:00:00.000Z`
+- **AND** the values are unchanged by the browser's local timezone
+
+#### Scenario: Reject an incomplete or invalid absolute interval
+
+- **WHEN** either absolute endpoint is absent or is not a valid UTC calendar date-time
+- **THEN** the dialog presents actionable validation feedback and disables confirmation
+- **AND** sends no launch request
+
+#### Scenario: Reject a reversed absolute interval
+
+- **WHEN** an absolute From value is equal to or later than its To value
+- **THEN** the dialog explains that From must be earlier than To
+- **AND** sends no launch request
+
+#### Scenario: Reject a future absolute interval
+
+- **WHEN** an absolute To value is later than the captured current instant
+- **THEN** the dialog explains that To cannot be in the future
+- **AND** sends no launch request
 
 #### Scenario: Reject unsupported date math
 
