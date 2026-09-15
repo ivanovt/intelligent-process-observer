@@ -5,6 +5,8 @@ export interface PollingState<T> {
   readonly error: unknown | null
   readonly loading: boolean
   readonly refreshing: boolean
+  /** Client receipt time in milliseconds for the latest successful network load. */
+  readonly lastSuccessfulAt?: number | null
 }
 
 export interface SequentialPollingOptions<T> {
@@ -17,8 +19,9 @@ export interface SequentialPollingOptions<T> {
 
 /** Loads durable data sequentially and follows active work without overlapping requests. */
 export function useSequentialPolling<T>({ load, isActive, merge, resourceKey }: SequentialPollingOptions<T>) {
-  const [state, setState] = useState<PollingState<T>>({ data: null, error: null, loading: true, refreshing: false })
+  const [state, setState] = useState<PollingState<T>>({ data: null, error: null, loading: true, refreshing: false, lastSuccessfulAt: null })
   const stateRef = useRef(state)
+  const previousResourceKey = useRef(resourceKey)
   const mounted = useRef(false)
   const inFlight = useRef(false)
   const queued = useRef(false)
@@ -56,12 +59,12 @@ export function useSequentialPolling<T>({ load, isActive, merge, resourceKey }: 
         const priorData = stateRef.current.data
         const data = merge(priorData, incoming)
         if (priorData !== null && isActive(priorData) && !isActive(data)) finalRefreshPending.current = true
-        setCurrent({ data, error: null, loading: false, refreshing: false })
+        setCurrent({ data, error: null, loading: false, refreshing: false, lastSuccessfulAt: Date.now() })
       })
       .catch((error: unknown) => {
         if (!mounted.current || nextController.signal.aborted || (error instanceof DOMException && error.name === 'AbortError')) return
         const current = stateRef.current
-        setCurrent({ data: current.data, error, loading: current.data === null, refreshing: false })
+        setCurrent({ ...current, error, loading: current.data === null, refreshing: false })
       })
       .finally(() => {
         if (controller.current === nextController) controller.current = null
@@ -84,7 +87,7 @@ export function useSequentialPolling<T>({ load, isActive, merge, resourceKey }: 
 
   const replaceData = useCallback((updater: (previous: T | null) => T) => {
     const data = updater(stateRef.current.data)
-    setCurrent({ data, error: null, loading: false, refreshing: stateRef.current.refreshing })
+    setCurrent({ ...stateRef.current, data, error: null, loading: false, refreshing: stateRef.current.refreshing })
     clearTimer()
     if (isActive(data)) timer.current = setTimeout(() => refreshRef.current(), 5_000)
   }, [clearTimer, isActive, setCurrent])
@@ -95,13 +98,17 @@ export function useSequentialPolling<T>({ load, isActive, merge, resourceKey }: 
 
   useEffect(() => {
     mounted.current = true
+    if (previousResourceKey.current !== resourceKey) {
+      previousResourceKey.current = resourceKey
+      setCurrent({ ...stateRef.current, lastSuccessfulAt: null })
+    }
     refresh()
     return () => {
       mounted.current = false
       clearTimer()
       controller.current?.abort()
     }
-  }, [clearTimer, refresh, resourceKey])
+  }, [clearTimer, refresh, resourceKey, setCurrent])
 
   return { state, refresh, replaceData }
 }
