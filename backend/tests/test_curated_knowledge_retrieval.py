@@ -12,9 +12,16 @@ from sqlalchemy.dialects import postgresql
 import app.infrastructure.knowledge.retrieval as retrieval_module
 from app.infrastructure.knowledge.retrieval import (
     _MAX_SERIALIZED_BYTES,
+    _RELAXED_LEXICAL_ADMISSION_MINIMUM,
+    _RELAXED_MINIMUM_MATCHED_LEXEMES,
+    _RELAXED_SEMANTIC_ADMISSION_MAXIMUM_DISTANCE,
     CuratedKnowledgeReferenceResolver,
     _Candidate,
     _eligible_chunks,
+    _is_relaxed_admitted,
+    _merge_ranked_candidates,
+    _normalized_query_lexemes,
+    _relaxed_tsquery,
     _serialize_admitted_candidates,
     _serialized_batch_bytes,
     build_curated_knowledge_reference,
@@ -40,6 +47,7 @@ def candidate(
     semantic_distance: float | None = 0.2,
     lexical_position: int | None = 1,
     semantic_position: int | None = 1,
+    matched_lexeme_count: int | None = None,
 ) -> _Candidate:
     """Build one metadata-eligible candidate with deterministic source provenance."""
     return _Candidate(
@@ -54,6 +62,7 @@ def candidate(
         semantic_distance=semantic_distance,
         lexical_position=lexical_position,
         semantic_position=semantic_position,
+        matched_lexeme_count=matched_lexeme_count,
     )
 
 
@@ -177,6 +186,411 @@ def test_unrelated_candidates_do_not_pass_rank_fusion_admission() -> None:
         )
     )
     assert items == ()
+
+
+def test_relaxed_admission_requires_all_signals_at_their_exact_boundaries() -> None:
+    """Fallback admission remains conjunctive and includes only its semantic equality boundary."""
+    admitted = candidate(
+        1,
+        lexical_rank=_RELAXED_LEXICAL_ADMISSION_MINIMUM + 0.001,
+        semantic_distance=_RELAXED_SEMANTIC_ADMISSION_MAXIMUM_DISTANCE,
+        matched_lexeme_count=_RELAXED_MINIMUM_MATCHED_LEXEMES,
+    )
+    assert _is_relaxed_admitted(admitted)
+    assert not _is_relaxed_admitted(
+        candidate(
+            2,
+            lexical_rank=_RELAXED_LEXICAL_ADMISSION_MINIMUM,
+            semantic_distance=_RELAXED_SEMANTIC_ADMISSION_MAXIMUM_DISTANCE,
+            matched_lexeme_count=_RELAXED_MINIMUM_MATCHED_LEXEMES,
+        )
+    )
+    assert not _is_relaxed_admitted(
+        candidate(
+            3,
+            lexical_rank=_RELAXED_LEXICAL_ADMISSION_MINIMUM + 0.001,
+            semantic_distance=_RELAXED_SEMANTIC_ADMISSION_MAXIMUM_DISTANCE + 0.001,
+            matched_lexeme_count=_RELAXED_MINIMUM_MATCHED_LEXEMES,
+        )
+    )
+    assert not _is_relaxed_admitted(
+        candidate(
+            4,
+            lexical_rank=_RELAXED_LEXICAL_ADMISSION_MINIMUM + 0.001,
+            semantic_distance=_RELAXED_SEMANTIC_ADMISSION_MAXIMUM_DISTANCE,
+            matched_lexeme_count=_RELAXED_MINIMUM_MATCHED_LEXEMES - 1,
+        )
+    )
+
+
+def test_strict_hybrid_candidate_count_is_the_deduplicated_branch_union() -> None:
+    """Strict aggregate candidates retain both top-32 branches before admission or serialization."""
+    lexical = [
+        _row(1, lexical_rank=0.1, semantic_distance=0.4),
+        _row(2, lexical_rank=0.1, semantic_distance=0.4),
+    ]
+    semantic = [
+        _row(2, lexical_rank=0.1, semantic_distance=0.2),
+        _row(3, lexical_rank=0.1, semantic_distance=0.2),
+    ]
+
+    overlapping = _merge_ranked_candidates(lexical, semantic)
+    disjoint = _merge_ranked_candidates(
+        lexical,
+        [
+            _row(3, lexical_rank=0.1, semantic_distance=0.2),
+            _row(4, lexical_rank=0.1, semantic_distance=0.2),
+        ],
+    )
+
+    assert [item.ordinal for item in overlapping] == [1, 2, 3]
+    assert overlapping[1].semantic_position == 1
+    assert len(disjoint) == 4
+
+
+def test_relaxed_query_uses_database_normalization_and_deterministic_disjunction() -> None:
+    """Punctuation and repeated terms are normalized by PostgreSQL before an OR query is built."""
+
+    class Rows:
+        def all(self) -> list[SimpleNamespace]:
+            return [
+                SimpleNamespace(_mapping={"lexeme": "cooling"}),
+                SimpleNamespace(_mapping={"lexeme": "pressure"}),
+            ]
+
+    class Session:
+        async def execute(self, statement: object) -> Rows:
+            self.statement = statement
+            return Rows()
+
+    session = Session()
+    lexemes = asyncio.run(_normalized_query_lexemes(session, "Cooling, cooling! pressure?"))
+    normalized_sql = str(session.statement.compile(dialect=postgresql.dialect()))
+    compiled_tsquery = _relaxed_tsquery(lexemes).compile(dialect=postgresql.dialect())
+    tsquery_sql = str(compiled_tsquery)
+
+    assert lexemes == ("cooling", "pressure")
+    assert "to_tsvector" in normalized_sql
+    assert "tsvector_to_array" in normalized_sql
+    assert "unnest" in normalized_sql
+    assert "to_tsquery" in tsquery_sql
+    assert "cooling | pressure" in compiled_tsquery.params.values()
+
+
+def test_strict_admission_skips_relaxed_search_and_emits_strict_decision() -> None:
+    """The existing strict path returns unchanged without evaluating fallback SQL."""
+
+    class Rows:
+        def __init__(self, rows: list[SimpleNamespace]) -> None:
+            self._rows = rows
+
+        def all(self) -> list[SimpleNamespace]:
+            return self._rows
+
+    class Session:
+        def __init__(self) -> None:
+            self.calls: list[object] = []
+            self.results = [
+                Rows([_row(1, lexical_rank=0.1, semantic_distance=0.4)]),
+                Rows([]),
+            ]
+
+        async def execute(self, statement: object) -> Rows:
+            self.calls.append(statement)
+            return self.results.pop(0)
+
+    class SessionFactory:
+        def __init__(self, session: Session) -> None:
+            self._session = session
+
+        def __call__(self) -> SessionFactory:
+            return self
+
+        async def __aenter__(self) -> Session:
+            return self._session
+
+        async def __aexit__(self, *_args: object) -> None:
+            return None
+
+    class Embedder:
+        async def embed_query(self, _query: str) -> tuple[float, ...]:
+            return (1.0,)
+
+    class Emitter:
+        def __init__(self) -> None:
+            self.events: list[object] = []
+
+        def emit(self, event: object) -> None:
+            self.events.append(event)
+
+    session = Session()
+    emitter = Emitter()
+    observation_run_id = UUID("aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa")
+    retriever = retrieval_module.CuratedKnowledgeRetriever(
+        SessionFactory(session),  # type: ignore[arg-type]
+        Embedder(),
+        scope=None,
+        observation_run_id=observation_run_id,
+        emitter=emitter,  # type: ignore[arg-type]
+    )
+
+    items = asyncio.run(retriever.retrieve(_request()))
+
+    assert [item.statement for item in items] == ["passage 1"]
+    assert len(session.calls) == 2
+    event = emitter.events[0]
+    assert event.category == "strict_admitted"
+    assert event.observation_run_id == observation_run_id
+    assert event.agent_role == "observation_reasoning"
+    assert event.phase == "hypotheses"
+    assert event.component == "curated_knowledge_retrieval"
+    assert event.relaxed_candidate_count is None
+    assert event.relaxed_admitted_count is None
+
+
+def test_relaxed_admission_reuses_one_embedding_and_rejects_single_term_candidates() -> None:
+    """A verbose strict miss recovers only a two-term, semantically close fallback candidate."""
+
+    class Rows:
+        def __init__(self, rows: list[SimpleNamespace]) -> None:
+            self._rows = rows
+
+        def all(self) -> list[SimpleNamespace]:
+            return self._rows
+
+    class Session:
+        def __init__(self) -> None:
+            self.statements: list[object] = []
+            self.results = [
+                Rows([]),
+                Rows([_row(1, lexical_rank=0.0, semantic_distance=0.4)]),
+                Rows(
+                    [
+                        SimpleNamespace(_mapping={"lexeme": "cooling"}),
+                        SimpleNamespace(_mapping={"lexeme": "pressure"}),
+                        SimpleNamespace(_mapping={"lexeme": "verbose"}),
+                    ]
+                ),
+                Rows(
+                    [
+                        _row(
+                            2,
+                            lexical_rank=_RELAXED_LEXICAL_ADMISSION_MINIMUM + 0.001,
+                            semantic_distance=_RELAXED_SEMANTIC_ADMISSION_MAXIMUM_DISTANCE,
+                            matched_lexeme_count=2,
+                        ),
+                        _row(
+                            3,
+                            lexical_rank=_RELAXED_LEXICAL_ADMISSION_MINIMUM + 0.001,
+                            semantic_distance=0.4,
+                            matched_lexeme_count=1,
+                        ),
+                    ]
+                ),
+            ]
+
+        async def execute(self, statement: object) -> Rows:
+            self.statements.append(statement)
+            return self.results.pop(0)
+
+    class SessionFactory:
+        def __init__(self, session: Session) -> None:
+            self._session = session
+
+        def __call__(self) -> SessionFactory:
+            return self
+
+        async def __aenter__(self) -> Session:
+            return self._session
+
+        async def __aexit__(self, *_args: object) -> None:
+            return None
+
+    class Embedder:
+        def __init__(self) -> None:
+            self.calls = 0
+
+        async def embed_query(self, _query: str) -> tuple[float, ...]:
+            self.calls += 1
+            return (1.0,)
+
+    class Emitter:
+        def __init__(self) -> None:
+            self.events: list[object] = []
+
+        def emit(self, event: object) -> None:
+            self.events.append(event)
+
+    session = Session()
+    embedder = Embedder()
+    emitter = Emitter()
+    retriever = retrieval_module.CuratedKnowledgeRetriever(
+        SessionFactory(session),  # type: ignore[arg-type]
+        embedder,
+        scope=None,
+        emitter=emitter,  # type: ignore[arg-type]
+    )
+
+    items = asyncio.run(retriever.retrieve(_request()))
+
+    assert [item.statement for item in items] == ["passage 2"]
+    assert embedder.calls == 1
+    event = emitter.events[0]
+    assert event.category == "relaxed_admitted"
+    assert event.strict_candidate_count == 1
+    assert event.strict_admitted_count == 0
+    assert event.relaxed_candidate_count == 2
+    assert event.relaxed_admitted_count == 1
+    relaxed_sql = str(session.statements[-1].compile(dialect=postgresql.dialect()))
+    assert "CASE WHEN" in relaxed_sql
+    assert "matched_lexeme_count" in relaxed_sql
+    assert "embedding IS NOT NULL" in relaxed_sql
+    assert "ORDER BY" in relaxed_sql
+
+
+def test_no_match_reports_evaluated_relaxed_counts_without_fabricating_knowledge() -> None:
+    """An insufficient normalized query is a successful empty retrieval and no-match decision."""
+
+    class Rows:
+        def __init__(self, rows: list[SimpleNamespace]) -> None:
+            self._rows = rows
+
+        def all(self) -> list[SimpleNamespace]:
+            return self._rows
+
+    class Session:
+        def __init__(self) -> None:
+            self.results = [
+                Rows([]),
+                Rows([_row(1, lexical_rank=0.0, semantic_distance=0.4)]),
+                Rows([SimpleNamespace(_mapping={"lexeme": "cooling"})]),
+            ]
+
+        async def execute(self, _statement: object) -> Rows:
+            return self.results.pop(0)
+
+    class SessionFactory:
+        def __init__(self, session: Session) -> None:
+            self._session = session
+
+        def __call__(self) -> SessionFactory:
+            return self
+
+        async def __aenter__(self) -> Session:
+            return self._session
+
+        async def __aexit__(self, *_args: object) -> None:
+            return None
+
+    class Embedder:
+        async def embed_query(self, _query: str) -> tuple[float, ...]:
+            return (1.0,)
+
+    class Emitter:
+        def __init__(self) -> None:
+            self.events: list[object] = []
+
+        def emit(self, event: object) -> None:
+            self.events.append(event)
+
+    emitter = Emitter()
+    retriever = retrieval_module.CuratedKnowledgeRetriever(
+        SessionFactory(Session()),  # type: ignore[arg-type]
+        Embedder(),
+        scope=None,
+        emitter=emitter,  # type: ignore[arg-type]
+    )
+
+    assert asyncio.run(retriever.retrieve(_request())) == ()
+    event = emitter.events[0]
+    assert event.category == "no_match"
+    assert event.strict_candidate_count == 1
+    assert event.strict_admitted_count == 0
+    assert event.relaxed_candidate_count == 0
+    assert event.relaxed_admitted_count == 0
+    assert event.returned_passage_count == 0
+
+
+def test_retrieval_outcome_is_unchanged_when_decision_emission_fails() -> None:
+    """Operational event failures remain non-authoritative after a strict selection."""
+
+    class Rows:
+        def __init__(self, rows: list[SimpleNamespace]) -> None:
+            self._rows = rows
+
+        def all(self) -> list[SimpleNamespace]:
+            return self._rows
+
+    class Session:
+        def __init__(self) -> None:
+            self.results = [
+                Rows([_row(1, lexical_rank=0.1, semantic_distance=0.4)]),
+                Rows([]),
+            ]
+
+        async def execute(self, _statement: object) -> Rows:
+            return self.results.pop(0)
+
+    class SessionFactory:
+        def __init__(self, session: Session) -> None:
+            self._session = session
+
+        def __call__(self) -> SessionFactory:
+            return self
+
+        async def __aenter__(self) -> Session:
+            return self._session
+
+        async def __aexit__(self, *_args: object) -> None:
+            return None
+
+    class Embedder:
+        async def embed_query(self, _query: str) -> tuple[float, ...]:
+            return (1.0,)
+
+    class FailingEmitter:
+        def emit(self, _event: object) -> None:
+            raise RuntimeError("diagnostic sink unavailable")
+
+    retriever = retrieval_module.CuratedKnowledgeRetriever(
+        SessionFactory(Session()),  # type: ignore[arg-type]
+        Embedder(),
+        scope=None,
+        emitter=FailingEmitter(),  # type: ignore[arg-type]
+    )
+
+    assert [item.statement for item in asyncio.run(retriever.retrieve(_request()))] == ["passage 1"]
+
+
+def _request() -> KnowledgeRetrievalRequest:
+    """Create one valid findings-grounded retrieval request for infrastructure tests."""
+    return KnowledgeRetrievalRequest(
+        query="verbose cooling pressure condition", finding_ids=("finding-1",)
+    )
+
+
+def _row(
+    ordinal: int,
+    *,
+    lexical_rank: float,
+    semantic_distance: float,
+    matched_lexeme_count: int | None = None,
+) -> SimpleNamespace:
+    """Build a lightweight SQL row compatible with the retriever's row mapper."""
+    mapping: dict[str, object] = {
+        "chunk_id": UUID(f"00000000-0000-0000-0000-{ordinal:012d}"),
+        "document_id": _DOCUMENT_ID,
+        "version": 3,
+        "ordinal": ordinal,
+        "text": f"passage {ordinal}",
+        "page_number": None,
+        "page_ordinal": None,
+        "lexical_rank": lexical_rank,
+        "semantic_distance": semantic_distance,
+    }
+    if matched_lexeme_count is not None:
+        mapping["matched_lexeme_count"] = matched_lexeme_count
+    return SimpleNamespace(_mapping=mapping)
 
 
 def test_rank_fusion_limits_to_four_whole_passages_without_truncation() -> None:

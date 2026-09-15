@@ -11,11 +11,13 @@ from uuid import UUID, uuid4
 import pytest
 from alembic import command
 from alembic.config import Config
-from sqlalchemy import select
+from sqlalchemy import Float, cast, func, select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
 from app.core.settings import get_settings
 from app.infrastructure.knowledge.retrieval import (
+    _RELAXED_SEMANTIC_ADMISSION_MAXIMUM_DISTANCE,
+    _SEMANTIC_ADMISSION_MAXIMUM_DISTANCE,
     CuratedKnowledgeReferenceResolver,
     CuratedKnowledgeRetriever,
     _eligible_chunks,
@@ -28,6 +30,7 @@ from app.infrastructure.persistence.models import (
     KnowledgeDocumentServiceTagModel,
     KnowledgeDocumentVersionModel,
 )
+from app.knowledge.contracts import KnowledgeRetrievalRequest
 from app.knowledge.management_contracts import (
     KnowledgeScope,
     KnowledgeServiceScope,
@@ -37,6 +40,7 @@ from app.knowledge.management_contracts import (
 _BACKEND_ROOT = Path(__file__).resolve().parents[1]
 _EMBEDDING = [1.0, *([0.0] * 1_535)]
 _UNRELATED_EMBEDDING = [0.0, 1.0, *([0.0] * 1_534)]
+_RELAXED_EMBEDDING = [0.6, 0.8, *([0.0] * 1_534)]
 
 
 @pytest.fixture(scope="module")
@@ -132,6 +136,14 @@ async def _eligible_texts(session: AsyncSession, scope: KnowledgeScope | None) -
     """Read PostgreSQL's actual metadata-first eligibility result for one scope."""
     eligible = _eligible_chunks(scope).cte("eligible")
     return set(await session.scalars(select(eligible.c.text)))
+
+
+class _ControlledEmbedder:
+    """Return one deterministic query embedding without a provider request."""
+
+    async def embed_query(self, _text: str) -> tuple[float, ...]:
+        """Return the vector calibrated to require relaxed hybrid admission."""
+        return tuple(_EMBEDDING)
 
 
 def test_postgresql_retrieval_eligibility_admits_only_approved_global_or_matching_tags(
@@ -260,10 +272,139 @@ def test_postgresql_retrieval_eligibility_admits_only_approved_global_or_matchin
                     embedder=object(),
                     scope=None,  # type: ignore[arg-type]
                 )
-                candidates = await retriever._search_candidates(  # noqa: SLF001
+                candidates = await retriever._search_strict_candidates(  # noqa: SLF001
                     session, "wholly-unrelated-query", _UNRELATED_EMBEDDING
                 )
                 assert _serialize_admitted_candidates(candidates) == ()
+            finally:
+                await transaction.rollback()
+
+    asyncio.run(scenario())
+
+
+def test_postgresql_relaxed_retrieval_recovers_scoped_blocked_login_guidance(
+    session_factory: async_sessionmaker[AsyncSession],
+) -> None:
+    """Recover a scoped, versioned runbook chunk only after strict admission is empty."""
+
+    async def scenario() -> None:
+        query = (
+            "mprm-server finding: request workers have blocked threads while pending logins "
+            "accumulate after deployment; identify the remediation and release escalation context"
+        )
+        relevant_text = (
+            "When mprm-server worker threads are blocked during pending logins, inspect identity "
+            "provider session capacity before retrying requests."
+        )
+        scope = KnowledgeScope(
+            services=(KnowledgeServiceScope(service_id="mprm-server", service_version="2.x"),)
+        )
+        async with session_factory() as session:
+            transaction = await session.begin()
+            try:
+                relevant_document = KnowledgeDocumentModel(id=uuid4())
+                relevant_version = _version(
+                    relevant_document.id,
+                    7,
+                    "approved",
+                    source_name="mprm-server login runbook v2",
+                )
+                unrelated_document = KnowledgeDocumentModel(id=uuid4())
+                unrelated_version = _version(
+                    unrelated_document.id,
+                    1,
+                    "approved",
+                    source_name="mprm-server cache runbook v2",
+                )
+                out_of_scope_document = KnowledgeDocumentModel(id=uuid4())
+                out_of_scope_version = _version(
+                    out_of_scope_document.id,
+                    4,
+                    "approved",
+                    source_name="other-service login runbook v2",
+                )
+                relevant_chunk = _chunk(relevant_version, 11, relevant_text)
+                relevant_chunk.embedding = _RELAXED_EMBEDDING
+                unrelated_chunk = _chunk(
+                    unrelated_version,
+                    1,
+                    "mprm-server cache warming and report scheduling guidance.",
+                )
+                unrelated_chunk.embedding = _UNRELATED_EMBEDDING
+                out_of_scope_chunk = _chunk(out_of_scope_version, 3, relevant_text)
+                session.add_all(
+                    (
+                        relevant_document,
+                        unrelated_document,
+                        out_of_scope_document,
+                        relevant_version,
+                        unrelated_version,
+                        out_of_scope_version,
+                        relevant_chunk,
+                        unrelated_chunk,
+                        out_of_scope_chunk,
+                        _tag(relevant_version, "mprm-server", ["2.x"]),
+                        _tag(unrelated_version, "mprm-server", ["2.x"]),
+                        _tag(out_of_scope_version, "another-service", ["2.x"]),
+                    )
+                )
+                await session.flush()
+
+                eligible = _eligible_chunks(scope).cte("scoped_eligible")
+                strict_chunk_ids = list(
+                    await session.scalars(
+                        select(eligible.c.chunk_id).where(
+                            eligible.c.search_vector.op("@@")(
+                                func.websearch_to_tsquery("simple", query)
+                            )
+                        )
+                    )
+                )
+                assert strict_chunk_ids == []
+                target_distance = await session.scalar(
+                    select(
+                        cast(
+                            eligible.c.embedding.op("<=>")(_EMBEDDING),
+                            Float,
+                        )
+                    ).where(eligible.c.chunk_id == relevant_chunk.id)
+                )
+                assert target_distance is not None
+                assert _SEMANTIC_ADMISSION_MAXIMUM_DISTANCE < target_distance
+                assert target_distance <= _RELAXED_SEMANTIC_ADMISSION_MAXIMUM_DISTANCE
+
+                connection = await session.connection()
+                transaction_bound_factory = async_sessionmaker(connection, expire_on_commit=False)
+                retriever = CuratedKnowledgeRetriever(
+                    transaction_bound_factory,
+                    _ControlledEmbedder(),
+                    scope=scope,
+                )
+                strict_candidates = await retriever._search_strict_candidates(  # noqa: SLF001
+                    session,
+                    query,
+                    _EMBEDDING,
+                )
+                assert _serialize_admitted_candidates(strict_candidates) == ()
+                items = await retriever.retrieve(
+                    KnowledgeRetrievalRequest(query=query, finding_ids=("finding-42",))
+                )
+
+                assert [item.statement for item in items] == [relevant_text]
+                reference = items[0].references[0]
+                assert reference == build_curated_knowledge_reference(
+                    relevant_document.id,
+                    7,
+                    ordinal=11,
+                    page_number=None,
+                    page_ordinal=None,
+                )
+                resolved = await CuratedKnowledgeReferenceResolver().resolve(session, reference)
+                assert resolved is not None
+                assert resolved.document_id == relevant_document.id
+                assert resolved.version == 7
+                assert resolved.ordinal == 11
+                assert resolved.text == relevant_text
             finally:
                 await transaction.rollback()
 

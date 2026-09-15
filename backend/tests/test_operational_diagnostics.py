@@ -7,6 +7,8 @@ import logging
 from datetime import UTC, datetime
 from uuid import UUID
 
+import pytest
+
 from app.core.diagnostics import DiagnosticEvent, OperationalEventEmitter, format_safe_traceback
 from app.core.settings import Settings
 
@@ -38,6 +40,146 @@ def test_emitter_writes_deterministic_json_with_utc_timestamp_and_uuid_scalars()
         '"observation_run_id":"00000000-0000-0000-0000-000000000001",'
         '"timestamp":"2026-09-11T09:08:07.123Z"}'
     ]
+
+
+def test_emitter_includes_only_bounded_retrieval_decision_counts() -> None:
+    """Curated retrieval diagnostics retain aggregate strategy data without content."""
+    messages: list[str] = []
+    logger = logging.getLogger("test.operational.retrieval-decision")
+    logger.handlers = [_CollectingHandler(messages)]
+    logger.setLevel(logging.DEBUG)
+    logger.propagate = False
+    run_id = UUID("00000000-0000-0000-0000-000000000001")
+
+    OperationalEventEmitter(
+        logger=logger, now=lambda: datetime(2026, 9, 11, 9, 8, 7, tzinfo=UTC)
+    ).emit(
+        DiagnosticEvent(
+            event="knowledge_retrieval_decision",
+            category="relaxed_admitted",
+            level="INFO",
+            observation_run_id=run_id,
+            agent_role="observation_reasoning",
+            phase="hypotheses",
+            component="curated_knowledge_retrieval",
+            strict_candidate_count=64,
+            strict_admitted_count=0,
+            relaxed_candidate_count=3,
+            relaxed_admitted_count=1,
+            returned_passage_count=1,
+        )
+    )
+
+    payload = json.loads(messages[0])
+    assert payload == {
+        "agent_role": "observation_reasoning",
+        "category": "relaxed_admitted",
+        "component": "curated_knowledge_retrieval",
+        "event": "knowledge_retrieval_decision",
+        "level": "info",
+        "observation_run_id": "00000000-0000-0000-0000-000000000001",
+        "phase": "hypotheses",
+        "relaxed_admitted_count": 1,
+        "relaxed_candidate_count": 3,
+        "returned_passage_count": 1,
+        "strict_admitted_count": 0,
+        "strict_candidate_count": 64,
+        "timestamp": "2026-09-11T09:08:07.000Z",
+    }
+    assert not {
+        "query",
+        "content",
+        "passage",
+        "source",
+        "score",
+        "distance",
+        "embedding",
+        "credential",
+    }.intersection(payload)
+
+
+def test_emitter_omits_unevaluated_retrieval_path_counts() -> None:
+    """Strict decisions do not imply that a relaxed search ran."""
+    messages: list[str] = []
+    logger = logging.getLogger("test.operational.retrieval-omission")
+    logger.handlers = [_CollectingHandler(messages)]
+    logger.setLevel(logging.DEBUG)
+    logger.propagate = False
+
+    OperationalEventEmitter(logger=logger).emit(
+        DiagnosticEvent(
+            event="curated_knowledge_retrieval_completed",
+            category="strict_admitted",
+            level="INFO",
+            strict_candidate_count=1,
+            strict_admitted_count=1,
+            returned_passage_count=1,
+        )
+    )
+
+    payload = json.loads(messages[0])
+    assert "relaxed_candidate_count" not in payload
+    assert "relaxed_admitted_count" not in payload
+
+
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [
+        ("strict_candidate_count", 64),
+        ("strict_admitted_count", 64),
+        ("relaxed_candidate_count", 32),
+        ("relaxed_admitted_count", 32),
+        ("returned_passage_count", 4),
+    ],
+)
+def test_emitter_accepts_retrieval_count_boundaries(field: str, value: int) -> None:
+    """Each controlled retrieval count retains its documented inclusive upper bound."""
+    messages: list[str] = []
+    logger = logging.getLogger(f"test.operational.retrieval-boundary.{field}")
+    logger.handlers = [_CollectingHandler(messages)]
+    logger.setLevel(logging.DEBUG)
+    logger.propagate = False
+
+    OperationalEventEmitter(logger=logger).emit(
+        DiagnosticEvent(
+            event="curated_knowledge_retrieval_completed",
+            category="no_match",
+            **{field: value},  # type: ignore[arg-type]
+        )
+    )
+
+    assert json.loads(messages[0])[field] == value
+
+
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [
+        ("strict_candidate_count", -1),
+        ("strict_candidate_count", 65),
+        ("strict_admitted_count", 65),
+        ("relaxed_candidate_count", True),
+        ("relaxed_admitted_count", 33),
+        ("returned_passage_count", 5),
+        ("returned_passage_count", True),
+    ],
+)
+def test_emitter_safely_omits_invalid_retrieval_counts(field: str, value: object) -> None:
+    """Invalid retrieval aggregates cannot turn diagnostics into an arbitrary log channel."""
+    messages: list[str] = []
+    logger = logging.getLogger(f"test.operational.retrieval-invalid.{field}.{value}")
+    logger.handlers = [_CollectingHandler(messages)]
+    logger.setLevel(logging.DEBUG)
+    logger.propagate = False
+
+    OperationalEventEmitter(logger=logger).emit(
+        DiagnosticEvent(
+            event="curated_knowledge_retrieval_completed",
+            category="no_match",
+            **{field: value},  # type: ignore[arg-type]
+        )
+    )
+
+    assert messages == []
 
 
 def test_traceback_preserves_stack_and_type_without_exception_message_content() -> None:

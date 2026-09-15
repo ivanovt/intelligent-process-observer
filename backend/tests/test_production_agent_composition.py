@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+from uuid import UUID
 
 import pytest
 from pydantic import ValidationError
@@ -171,22 +172,29 @@ def test_empty_knowledge_retriever_returns_a_valid_empty_tuple_without_calls() -
 
 def test_composition_creates_an_isolated_curated_retriever_for_each_run_scope() -> None:
     """A scope chooses retrieval candidates per run without mutating the shared executor."""
+    emitter = OperationalEventEmitter()
     composition = build_production_execution_composition(
         settings=Settings(openrouter_api_key="composition-test-secret", agent_trace_enabled=False),
         session_factory=async_sessionmaker(),
+        emitter=emitter,
     )
     scope = KnowledgeScope(
         services=(KnowledgeServiceScope(service_id="mprm-server", service_version="2.x"),)
     )
 
-    first = composition.knowledge_retriever_factory(scope)
-    second = composition.knowledge_retriever_factory(None)
+    run_id = UUID("00000000-0000-0000-0000-000000000001")
+    first = composition.knowledge_retriever_factory(scope, run_id)
+    second = composition.knowledge_retriever_factory(None, None)
 
     assert isinstance(first, CuratedKnowledgeRetriever)
     assert isinstance(second, CuratedKnowledgeRetriever)
     assert first is not second
     assert first._scope == scope
     assert second._scope is None
+    assert first._observation_run_id == run_id
+    assert second._observation_run_id is None
+    assert first._emitter is emitter
+    assert second._emitter is emitter
 
 
 def test_missing_embedding_configuration_uses_empty_retriever_factory() -> None:
@@ -198,7 +206,7 @@ def test_missing_embedding_configuration_uses_empty_retriever_factory() -> None:
 
     assert isinstance(
         composition.knowledge_retriever_factory(
-            KnowledgeScope(services=(KnowledgeServiceScope(service_id="mprm-server"),))
+            KnowledgeScope(services=(KnowledgeServiceScope(service_id="mprm-server"),)), None
         ),
         EmptyKnowledgeRetriever,
     )

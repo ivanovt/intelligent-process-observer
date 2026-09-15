@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from dataclasses import dataclass
+from uuid import UUID
 
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
@@ -52,7 +53,7 @@ class ProductionExecutionComposition:
     alert_agent: object
     reasoning_executor: ObservationReasoningExecutor
     report_executor: ReportGenerationExecutor
-    knowledge_retriever_factory: Callable[[KnowledgeScope | None], KnowledgeRetriever]
+    knowledge_retriever_factory: Callable[[KnowledgeScope | None, UUID | None], KnowledgeRetriever]
     trace_recorder: AgentTraceRecorder
 
 
@@ -97,8 +98,10 @@ def build_production_execution_composition(
         agent=alert_agent,
         emitter=emitter,
     )
-    knowledge_retriever_factory = _knowledge_retriever_factory(settings, session_factory)
-    knowledge_retriever = knowledge_retriever_factory(None)
+    knowledge_retriever_factory = _knowledge_retriever_factory(
+        settings, session_factory, emitter=emitter
+    )
+    knowledge_retriever = knowledge_retriever_factory(None, None)
     reasoning_executor = ObservationReasoningExecutor(
         reasoning_agent,
         knowledge_retriever,
@@ -134,16 +137,21 @@ def build_production_execution_composition(
 
 
 def _knowledge_retriever_factory(
-    settings: Settings, session_factory: async_sessionmaker[AsyncSession]
-) -> Callable[[KnowledgeScope | None], KnowledgeRetriever]:
+    settings: Settings,
+    session_factory: async_sessionmaker[AsyncSession],
+    *,
+    emitter: OperationalEventEmitter,
+) -> Callable[[KnowledgeScope | None, UUID | None], KnowledgeRetriever]:
     """Compose an isolated curated retriever only when embeddings are usable at startup."""
     embedder = OpenRouterEmbeddingAdapter(settings)
     if not embedder.is_available:
-        return lambda _scope: EmptyKnowledgeRetriever()
-    return lambda scope: CuratedKnowledgeRetriever(
+        return lambda _scope, _observation_run_id: EmptyKnowledgeRetriever()
+    return lambda scope, observation_run_id: CuratedKnowledgeRetriever(
         session_factory,
         embedder,
         scope=scope,
+        observation_run_id=observation_run_id,
+        emitter=emitter,
     )
 
 

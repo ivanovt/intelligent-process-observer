@@ -360,10 +360,12 @@ def test_scoped_run_retrieval_persists_cited_hypothesis_and_freezes_scope(
                 )
                 observation_id = definition.id
 
-            scopes: list[KnowledgeScope | None] = []
+            retriever_factory_calls: list[tuple[KnowledgeScope | None, object]] = []
 
-            def retriever_factory(scope: KnowledgeScope | None) -> CuratedKnowledgeRetriever:
-                scopes.append(scope)
+            def retriever_factory(
+                scope: KnowledgeScope | None, observation_run_id
+            ) -> CuratedKnowledgeRetriever:
+                retriever_factory_calls.append((scope, observation_run_id))
                 return CuratedKnowledgeRetriever(session_factory, embeddings, scope=scope)
 
             agent = CitedReasoningAgent()
@@ -398,7 +400,7 @@ def test_scoped_run_retrieval_persists_cited_hypothesis_and_freezes_scope(
             outcome = await orchestrator.continue_execution(initialized, policy)
 
             assert outcome.status == "completed"
-            assert scopes == [original_scope]
+            assert retriever_factory_calls == [(original_scope, run_id)]
             assert agent.finding_request is not None and agent.overall_request is not None
             assert "knowledge_scope" not in agent.finding_request.model_dump()
             assert "knowledge_scope" not in agent.overall_request.model_dump()
@@ -462,7 +464,7 @@ def test_scoped_run_retrieval_persists_cited_hypothesis_and_freezes_scope(
             )
             unavailable = await BoundedRetrievalExecutor(
                 frozenset(("finding-1",)),
-                unavailable_composition.knowledge_retriever_factory(original_scope),
+                unavailable_composition.knowledge_retriever_factory(original_scope, None),
             ).execute(
                 KnowledgeRetrievalRequest(
                     query="cooling pressure guidance", finding_ids=("finding-1",)
