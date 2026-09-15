@@ -33,4 +33,41 @@ describe('resolveTimeRange', () => {
     expect(resolveTimeRange({ kind: 'expressions', from: 'now', to: 'now' }, () => instant)).toEqual({ ok: false, error: 'From must be earlier than To.' })
     expect(resolveTimeRange({ kind: 'expressions', from: 'now', to: 'now-1h' }, () => instant)).toEqual({ ok: false, error: 'From must be earlier than To.' })
   })
+
+  it('resolves the exact absolute UTC example without browser-local interpretation', () => {
+    const clock = vi.fn(() => new Date('2026-09-10T18:00:00.000Z'))
+    expect(resolveTimeRange({ kind: 'absolute', from: '2026-09-10T10:00:00', to: '2026-09-10T17:00:00' }, clock)).toEqual({
+      ok: true,
+      value: { from: '2026-09-10T10:00:00.000Z', to: '2026-09-10T17:00:00.000Z' },
+    })
+    expect(clock).toHaveBeenCalledOnce()
+  })
+
+  it('preserves supplied second precision and treats minute precision as zero seconds', () => {
+    const clock = () => new Date('2026-09-10T18:00:00.000Z')
+    expect(resolveTimeRange({ kind: 'absolute', from: '2026-09-10T10:00', to: '2026-09-10T17:00:45' }, clock)).toEqual({
+      ok: true,
+      value: { from: '2026-09-10T10:00:00.000Z', to: '2026-09-10T17:00:45.000Z' },
+    })
+  })
+
+  it('rejects missing, malformed, and impossible absolute UTC endpoints', () => {
+    const clock = () => new Date('2026-09-10T18:00:00.000Z')
+    for (const input of [
+      { from: '', to: '2026-09-10T17:00:00' },
+      { from: '2026-09-10T10:00:00', to: '' },
+      { from: '2026-09-10 10:00:00', to: '2026-09-10T17:00:00' },
+      { from: '2026-02-29T10:00:00', to: '2026-09-10T17:00:00' },
+      { from: '2026-09-10T10:00:00Z', to: '2026-09-10T17:00:00' },
+    ]) {
+      expect(resolveTimeRange({ kind: 'absolute', ...input }, clock)).toEqual({ ok: false, error: 'Enter valid UTC date-times for From and To.' })
+    }
+  })
+
+  it('applies the shared ordering and future validation to absolute UTC windows', () => {
+    const clock = () => new Date('2026-09-10T17:00:00.000Z')
+    expect(resolveTimeRange({ kind: 'absolute', from: '2026-09-10T17:00:00', to: '2026-09-10T17:00:00' }, clock)).toEqual({ ok: false, error: 'From must be earlier than To.' })
+    expect(resolveTimeRange({ kind: 'absolute', from: '2026-09-10T17:00:00', to: '2026-09-10T10:00:00' }, clock)).toEqual({ ok: false, error: 'From must be earlier than To.' })
+    expect(resolveTimeRange({ kind: 'absolute', from: '2026-09-10T10:00:00', to: '2026-09-10T17:00:01' }, clock)).toEqual({ ok: false, error: 'To cannot be in the future.' })
+  })
 })

@@ -1,4 +1,4 @@
-import { render, screen, waitFor } from '@testing-library/react'
+import { fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { useState } from 'react'
 import userEvent from '@testing-library/user-event'
 import { MemoryRouter } from 'react-router-dom'
@@ -85,6 +85,48 @@ describe('RunObservationDialog', () => {
     await userEvent.click(screen.getByRole('button', { name: 'Run Observation' }))
     expect(await screen.findByText(/already has an active run/)).toBeTruthy()
     expect(onLaunch).toHaveBeenCalledTimes(1)
+  })
+
+  it('requires complete absolute UTC fields and shows validation feedback before launch', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(response(definitions)))
+    const { onLaunch } = renderDialog({ activeRuns: [] })
+    await userEvent.selectOptions(await screen.findByLabelText('Observation to run'), 'never-run')
+    await userEvent.click(screen.getByLabelText('Absolute UTC'))
+
+    const from = screen.getByLabelText('From (UTC)') as HTMLInputElement
+    const to = screen.getByLabelText('To (UTC)') as HTMLInputElement
+    expect(from.type).toBe('datetime-local')
+    expect(from.step).toBe('1')
+    expect(to.type).toBe('datetime-local')
+    expect(to.step).toBe('1')
+    expect(from.value).toBe('')
+    expect(to.value).toBe('')
+    expect((screen.getByRole('button', { name: 'Run Observation' }) as HTMLButtonElement).disabled).toBe(true)
+    expect(screen.getByRole('alert')).toBeTruthy()
+
+    fireEvent.change(from, { target: { value: '2026-09-09T10:00:00' } })
+    fireEvent.change(to, { target: { value: '2026-09-09T13:00:00' } })
+    expect((screen.getByRole('button', { name: 'Run Observation' }) as HTMLButtonElement).disabled).toBe(true)
+    expect(screen.getByText('To cannot be in the future.')).toBeTruthy()
+    expect(onLaunch).not.toHaveBeenCalled()
+  })
+
+  it('submits an exact absolute UTC interval and retains it after a launch failure', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(response(definitions)))
+    const { onLaunch } = renderDialog({ activeRuns: [] })
+    await userEvent.selectOptions(await screen.findByLabelText('Observation to run'), 'never-run')
+    await userEvent.click(screen.getByLabelText('Absolute UTC'))
+    const from = screen.getByLabelText('From (UTC)') as HTMLInputElement
+    const to = screen.getByLabelText('To (UTC)') as HTMLInputElement
+    fireEvent.change(from, { target: { value: '2026-09-09T10:00:00' } })
+    fireEvent.change(to, { target: { value: '2026-09-09T11:00:00' } })
+
+    onLaunch.mockRejectedValueOnce(new Error('unavailable'))
+    await userEvent.click(screen.getByRole('button', { name: 'Run Observation' }))
+    await screen.findByText(/Unable to launch this Observation/)
+    expect(onLaunch).toHaveBeenCalledWith({ observation_id: 'never-run', analysis_window: { from: '2026-09-09T10:00:00.000Z', to: '2026-09-09T11:00:00.000Z' } })
+    expect(from.value).toBe('2026-09-09T10:00')
+    expect(to.value).toBe('2026-09-09T11:00')
   })
 
   it('aborts an in-flight definition request when closed and starts a fresh request when reopened', async () => {
