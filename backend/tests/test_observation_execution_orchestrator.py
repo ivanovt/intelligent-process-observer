@@ -117,6 +117,63 @@ def test_public_execute_has_only_fresh_request_and_policy_inputs() -> None:
     )
 
 
+def test_orchestrator_constructs_retriever_with_frozen_scope_and_observation_run_id(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Per-run retrievers receive the committed run correlation before reasoning begins."""
+    run_id = uuid4()
+    scope = SimpleNamespace(name="frozen-knowledge-scope")
+    initialized = SimpleNamespace(
+        assignments=(), snapshot=SimpleNamespace(knowledge_scope=scope), observation_run_id=run_id
+    )
+    retriever = object()
+    factory_calls: list[tuple[object, object]] = []
+
+    async def fanout(*args, **kwargs):
+        return ()
+
+    async def gate(*args, **kwargs):
+        return SimpleNamespace(usable=(), unavailable=())
+
+    async def relationships(*args, **kwargs):
+        return ()
+
+    async def reasoning(*args, **kwargs):
+        assert kwargs["retriever"] is retriever
+        return ReasoningSuccess(result=_analysis_result(uuid4(), run_id))
+
+    async def report(*args, **kwargs):
+        return CompletedObservationExecutionOutcome(run_id)
+
+    def retriever_factory(requested_scope, requested_run_id):
+        factory_calls.append((requested_scope, requested_run_id))
+        return retriever
+
+    monkeypatch.setattr("app.execution.orchestrator.fan_out_lens_runs", fanout)
+    monkeypatch.setattr("app.execution.orchestrator.enforce_usable_results_gate", gate)
+    monkeypatch.setattr(
+        "app.execution.orchestrator.evaluate_and_persist_relationships", relationships
+    )
+    monkeypatch.setattr("app.execution.orchestrator.invoke_and_persist_reasoning", reasoning)
+    monkeypatch.setattr("app.execution.orchestrator.generate_and_persist_report", report)
+    orchestrator = ObservationExecutionOrchestrator(
+        session_factory=_Factory(),
+        definition_loader=None,
+        runtime_repository=None,
+        metric_adapter=None,
+        alert_adapter=None,
+        relationship_evaluator=None,
+        reasoning_executor=None,
+        report_executor=None,
+        knowledge_retriever_factory=retriever_factory,
+    )
+
+    outcome = asyncio.run(orchestrator.continue_execution(initialized, None))
+
+    assert isinstance(outcome, CompletedObservationExecutionOutcome)
+    assert factory_calls == [(scope, run_id)]
+
+
 class _UnexpectedBaseException(BaseException):
     pass
 

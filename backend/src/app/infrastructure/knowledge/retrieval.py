@@ -9,11 +9,12 @@ from dataclasses import dataclass, replace
 from typing import Protocol
 from uuid import UUID
 
-from sqlalchemy import Float, and_, cast, exists, func, or_, select
+from sqlalchemy import Float, Integer, and_, case, cast, exists, func, literal, or_, select
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from sqlalchemy.sql import Select
 
+from app.core.diagnostics import DiagnosticEvent, OperationalEventEmitter
 from app.infrastructure.persistence.models import (
     KnowledgeChunkModel,
     KnowledgeDocumentServiceTagModel,
@@ -38,6 +39,9 @@ _MARKDOWN_REFERENCE_PATTERN = re.compile(r"^md:chunk:(?P<chunk>[1-9][0-9]*)$")
 
 _LEXICAL_ADMISSION_MINIMUM = 0.05
 _SEMANTIC_ADMISSION_MAXIMUM_DISTANCE = 0.35
+_RELAXED_LEXICAL_ADMISSION_MINIMUM = 0.01
+_RELAXED_SEMANTIC_ADMISSION_MAXIMUM_DISTANCE = 0.45
+_RELAXED_MINIMUM_MATCHED_LEXEMES = 2
 _CANDIDATE_LIMIT = 32
 _RECIPROCAL_RANK_K = 60
 _MAX_PASSAGES = 4
@@ -91,6 +95,7 @@ class _Candidate:
     semantic_distance: float | None = None
     lexical_position: int | None = None
     semantic_position: int | None = None
+    matched_lexeme_count: int | None = None
 
 
 def build_curated_knowledge_reference(
@@ -203,11 +208,15 @@ class CuratedKnowledgeRetriever:
         embedder: QueryEmbedder,
         *,
         scope: KnowledgeScope | None,
+        observation_run_id: UUID | None = None,
+        emitter: OperationalEventEmitter | None = None,
     ) -> None:
         """Bind server-owned storage, embedding, and frozen scope dependencies."""
         self._session_factory = session_factory
         self._embedder = embedder
         self._scope = scope
+        self._observation_run_id = observation_run_id
+        self._emitter = emitter or OperationalEventEmitter()
 
     async def retrieve(
         self, request: KnowledgeRetrievalRequest
@@ -216,10 +225,34 @@ class CuratedKnowledgeRetriever:
         async with asyncio.timeout(_RETRIEVAL_DEADLINE_SECONDS):
             embedding = await self._embedder.embed_query(request.query)
             async with self._session_factory() as session:
-                candidates = await self._search_candidates(session, request.query, embedding)
-            return _serialize_admitted_candidates(candidates)
+                strict_candidates = await self._search_strict_candidates(
+                    session, request.query, embedding
+                )
+                strict_admitted = _strict_admitted_candidates(strict_candidates)
+                relaxed_candidates: tuple[_Candidate, ...] | None = None
+                relaxed_admitted: tuple[_Candidate, ...] = ()
+                selected_candidates = strict_admitted
+                if not strict_admitted:
+                    relaxed_candidates = await self._search_relaxed_candidates(
+                        session, request.query, embedding
+                    )
+                    relaxed_admitted = _relaxed_admitted_candidates(relaxed_candidates)
+                    selected_candidates = relaxed_admitted
+            items = _serialize_candidates(selected_candidates)
+            self._emit_retrieval_decision(
+                strict_candidate_count=len(strict_candidates),
+                strict_admitted_count=len(strict_admitted),
+                relaxed_candidate_count=(
+                    len(relaxed_candidates) if relaxed_candidates is not None else None
+                ),
+                relaxed_admitted_count=(
+                    len(relaxed_admitted) if relaxed_candidates is not None else None
+                ),
+                returned_passage_count=len(items),
+            )
+            return items
 
-    async def _search_candidates(
+    async def _search_strict_candidates(
         self,
         session: AsyncSession,
         query: str,
@@ -270,6 +303,109 @@ class CuratedKnowledgeRetriever:
         semantic_rows = (await session.execute(semantic_statement)).all()
         return _merge_ranked_candidates(lexical_rows, semantic_rows)
 
+    async def _search_relaxed_candidates(
+        self,
+        session: AsyncSession,
+        query: str,
+        embedding: Sequence[float],
+    ) -> tuple[_Candidate, ...]:
+        """Return deterministic disjunctive candidates from database-normalized query terms."""
+        lexemes = await _normalized_query_lexemes(session, query)
+        if len(lexemes) < _RELAXED_MINIMUM_MATCHED_LEXEMES:
+            return ()
+        eligible = _eligible_chunks(self._scope).cte("eligible_knowledge_chunks")
+        tsquery = _relaxed_tsquery(lexemes)
+        lexical_rank = cast(func.ts_rank_cd(eligible.c.search_vector, tsquery, 32), Float).label(
+            "lexical_rank"
+        )
+        semantic_distance = cast(eligible.c.embedding.op("<=>")(list(embedding)), Float).label(
+            "semantic_distance"
+        )
+        matched_lexeme_count = cast(
+            sum(
+                (
+                    case(
+                        (
+                            eligible.c.search_vector.op("@@")(func.to_tsquery("simple", lexeme)),
+                            1,
+                        ),
+                        else_=0,
+                    )
+                    for lexeme in lexemes
+                ),
+                start=literal(0),
+            ),
+            Integer,
+        ).label("matched_lexeme_count")
+        statement = (
+            select(
+                eligible.c.chunk_id,
+                eligible.c.document_id,
+                eligible.c.version,
+                eligible.c.ordinal,
+                eligible.c.text,
+                eligible.c.page_number,
+                eligible.c.page_ordinal,
+                lexical_rank,
+                semantic_distance,
+                matched_lexeme_count,
+            )
+            .where(
+                eligible.c.embedding.is_not(None),
+                eligible.c.search_vector.op("@@")(tsquery),
+            )
+            .order_by(
+                lexical_rank.desc(),
+                eligible.c.document_id,
+                eligible.c.version,
+                eligible.c.ordinal,
+            )
+            .limit(_CANDIDATE_LIMIT)
+        )
+        rows = (await session.execute(statement)).all()
+        return tuple(
+            _candidate_from_row(row, lexical_position=position)
+            for position, row in enumerate(rows, start=1)
+        )
+
+    def _emit_retrieval_decision(
+        self,
+        *,
+        strict_candidate_count: int,
+        strict_admitted_count: int,
+        relaxed_candidate_count: int | None,
+        relaxed_admitted_count: int | None,
+        returned_passage_count: int,
+    ) -> None:
+        """Emit one non-authoritative, aggregate-only completed-retrieval decision."""
+        category = (
+            "strict_admitted"
+            if strict_admitted_count
+            else "relaxed_admitted"
+            if relaxed_admitted_count
+            else "no_match"
+        )
+        try:
+            self._emitter.emit(
+                DiagnosticEvent(
+                    event="knowledge_retrieval_decision",
+                    category=category,
+                    level="INFO",
+                    observation_run_id=self._observation_run_id,
+                    agent_role="observation_reasoning",
+                    phase="hypotheses",
+                    component="curated_knowledge_retrieval",
+                    strict_candidate_count=strict_candidate_count,
+                    strict_admitted_count=strict_admitted_count,
+                    relaxed_candidate_count=relaxed_candidate_count,
+                    relaxed_admitted_count=relaxed_admitted_count,
+                    returned_passage_count=returned_passage_count,
+                )
+            )
+        except Exception:
+            # A diagnostic boundary must not alter a successful retrieval outcome.
+            return
+
 
 def _eligible_chunks(scope: KnowledgeScope | None) -> Select[tuple[object, ...]]:
     """Select only approved chunks allowed by immutable global/service/version metadata."""
@@ -315,6 +451,19 @@ def _eligible_chunks(scope: KnowledgeScope | None) -> Select[tuple[object, ...]]
     )
 
 
+async def _normalized_query_lexemes(session: AsyncSession, query: str) -> tuple[str, ...]:
+    """Project PostgreSQL ``simple``-normalized query lexemes in deterministic order."""
+    lexeme = func.unnest(func.tsvector_to_array(func.to_tsvector("simple", query))).label("lexeme")
+    statement = select(lexeme).distinct().order_by(lexeme)
+    rows = (await session.execute(statement)).all()
+    return tuple(str(row._mapping["lexeme"]) for row in rows)  # type: ignore[union-attr]
+
+
+def _relaxed_tsquery(lexemes: Sequence[str]) -> object:
+    """Build a disjunctive PostgreSQL query from already normalized lexemes."""
+    return func.to_tsquery("simple", " | ".join(lexemes))
+
+
 def _merge_ranked_candidates(
     lexical_rows: Sequence[object], semantic_rows: Sequence[object]
 ) -> tuple[_Candidate, ...]:
@@ -358,6 +507,9 @@ def _candidate_from_row(
         semantic_distance=float(mapping["semantic_distance"]),
         lexical_position=lexical_position,
         semantic_position=semantic_position,
+        matched_lexeme_count=(
+            int(mapping["matched_lexeme_count"]) if "matched_lexeme_count" in mapping else None
+        ),
     )
 
 
@@ -365,8 +517,12 @@ def _serialize_admitted_candidates(
     candidates: Sequence[_Candidate],
 ) -> tuple[RetrievedKnowledgeItem, ...]:
     """Fuse admitted candidates then choose complete items that fit the fixed byte budget."""
-    admitted = [candidate for candidate in candidates if _is_admitted(candidate)]
-    ranked = sorted(admitted, key=_fusion_sort_key)
+    return _serialize_candidates(_strict_admitted_candidates(candidates))
+
+
+def _serialize_candidates(candidates: Sequence[_Candidate]) -> tuple[RetrievedKnowledgeItem, ...]:
+    """Rank already admitted candidates then serialize only complete bounded passages."""
+    ranked = sorted(candidates, key=_fusion_sort_key)
     selected: list[RetrievedKnowledgeItem] = []
     for candidate in ranked:
         if len(selected) == _MAX_PASSAGES:
@@ -389,6 +545,16 @@ def _serialize_admitted_candidates(
     return tuple(selected)
 
 
+def _strict_admitted_candidates(candidates: Sequence[_Candidate]) -> tuple[_Candidate, ...]:
+    """Return candidates admitted by the unchanged initial hybrid policy."""
+    return tuple(candidate for candidate in candidates if _is_admitted(candidate))
+
+
+def _relaxed_admitted_candidates(candidates: Sequence[_Candidate]) -> tuple[_Candidate, ...]:
+    """Return fallback candidates that satisfy every fixed relaxed relevance signal."""
+    return tuple(candidate for candidate in candidates if _is_relaxed_admitted(candidate))
+
+
 def _is_admitted(candidate: _Candidate) -> bool:
     """Apply relevance thresholds before a candidate can participate in rank fusion."""
     return (
@@ -396,6 +562,18 @@ def _is_admitted(candidate: _Candidate) -> bool:
     ) or (
         candidate.semantic_distance is not None
         and candidate.semantic_distance <= _SEMANTIC_ADMISSION_MAXIMUM_DISTANCE
+    )
+
+
+def _is_relaxed_admitted(candidate: _Candidate) -> bool:
+    """Apply the fixed lexical-count, lexical-rank, and semantic-distance fallback gate."""
+    return (
+        candidate.matched_lexeme_count is not None
+        and candidate.matched_lexeme_count >= _RELAXED_MINIMUM_MATCHED_LEXEMES
+        and candidate.lexical_rank is not None
+        and candidate.lexical_rank > _RELAXED_LEXICAL_ADMISSION_MINIMUM
+        and candidate.semantic_distance is not None
+        and candidate.semantic_distance <= _RELAXED_SEMANTIC_ADMISSION_MAXIMUM_DISTANCE
     )
 
 

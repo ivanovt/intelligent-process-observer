@@ -6,6 +6,7 @@ import asyncio
 from collections.abc import Callable
 from contextlib import AbstractAsyncContextManager
 from typing import Protocol
+from uuid import UUID
 
 from app.core.diagnostics import DiagnosticEvent, OperationalEventEmitter
 from app.execution.contracts import (
@@ -66,8 +67,9 @@ class ObservationExecutionOrchestrator:
         relationship_evaluator,
         reasoning_executor,
         report_executor,
-        knowledge_retriever_factory: Callable[[KnowledgeScope | None], KnowledgeRetriever]
-        | None = None,
+        knowledge_retriever_factory: (
+            Callable[[KnowledgeScope | None, UUID | None], KnowledgeRetriever] | None
+        ) = None,
         emitter: OperationalEventEmitter | None = None,
     ) -> None:
         self._session_factory = session_factory
@@ -154,7 +156,9 @@ class ObservationExecutionOrchestrator:
 
             stage = "observation_reasoning"
             retriever = (
-                self._knowledge_retriever_factory(initialized.snapshot.knowledge_scope)
+                self._knowledge_retriever_factory(
+                    initialized.snapshot.knowledge_scope, initialized.observation_run_id
+                )
                 if self._knowledge_retriever_factory is not None
                 else None
             )

@@ -17,6 +17,9 @@ _LOGGER_NAME = "app.operational"
 _TRACEBACK_LIMIT = 12_000
 _STRING_LIMIT = 256
 _REDACTION_MARKER = "[REDACTED]"
+_STRICT_RETRIEVAL_CANDIDATE_COUNT_LIMIT = 64
+_RELAXED_RETRIEVAL_CANDIDATE_COUNT_LIMIT = 32
+_RETRIEVAL_RETURNED_PASSAGE_COUNT_LIMIT = 4
 
 EventLevel = Literal["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"]
 
@@ -42,6 +45,11 @@ class DiagnosticEvent:
     duration_ms: int | None = None
     http_status: int | None = None
     observed_series_count: int | None = None
+    strict_candidate_count: int | None = None
+    strict_admitted_count: int | None = None
+    relaxed_candidate_count: int | None = None
+    relaxed_admitted_count: int | None = None
+    returned_passage_count: int | None = None
     exception_type: str | None = None
 
 
@@ -137,6 +145,21 @@ def _event_payload(
         "duration_ms": event.duration_ms,
         "http_status": event.http_status,
         "observed_series_count": event.observed_series_count,
+        "strict_candidate_count": _bounded_count(
+            event.strict_candidate_count, limit=_STRICT_RETRIEVAL_CANDIDATE_COUNT_LIMIT
+        ),
+        "strict_admitted_count": _bounded_count(
+            event.strict_admitted_count, limit=_STRICT_RETRIEVAL_CANDIDATE_COUNT_LIMIT
+        ),
+        "relaxed_candidate_count": _bounded_count(
+            event.relaxed_candidate_count, limit=_RELAXED_RETRIEVAL_CANDIDATE_COUNT_LIMIT
+        ),
+        "relaxed_admitted_count": _bounded_count(
+            event.relaxed_admitted_count, limit=_RELAXED_RETRIEVAL_CANDIDATE_COUNT_LIMIT
+        ),
+        "returned_passage_count": _bounded_count(
+            event.returned_passage_count, limit=_RETRIEVAL_RETURNED_PASSAGE_COUNT_LIMIT
+        ),
         "exception_type": event.exception_type,
     }
     payload = {key: _scalar(value) for key, value in values.items() if value is not None}
@@ -165,6 +188,14 @@ def _scalar(value: object) -> str | int | float:
     if isinstance(value, float) and math.isfinite(value):
         return value
     raise TypeError(f"unsupported operational event scalar: {type(value).__name__}")
+
+
+def _bounded_count(value: int | None, *, limit: int) -> int | None:
+    if value is None:
+        return None
+    if isinstance(value, bool) or not isinstance(value, int) or not 0 <= value <= limit:
+        raise TypeError("operational retrieval counts must be bounded non-negative integers")
+    return value
 
 
 def _safe_text(value: str) -> str:
